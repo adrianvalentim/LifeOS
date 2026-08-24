@@ -5,7 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>LifeOS</title>
   <link rel="icon" href="data:,">
+  <script>
+    try {
+      const readPreferenceCookie = (name) => document.cookie
+        .split('; ')
+        .find((item) => item.startsWith(`${name}=`))
+        ?.slice(name.length + 1);
+      const cookieTheme = readPreferenceCookie('lifeosTheme');
+      document.documentElement.dataset.theme = cookieTheme === 'dark' || cookieTheme === 'light'
+        ? cookieTheme
+        : localStorage.getItem('lifeos.theme') === 'dark' ? 'dark' : 'light';
+    } catch {
+      document.documentElement.dataset.theme = 'light';
+    }
+  </script>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/projects.css">
   <link rel="stylesheet" href="/reading.css">
   <script type="module" src="/app.js"></script>
 </head>

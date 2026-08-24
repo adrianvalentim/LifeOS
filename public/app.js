@@ -1,4 +1,17 @@
-import { createReadingUiState, renderReading } from './reading.js';
+import {
+  createProjectsUiState,
+  PROJECT_BOARD_STATUSES,
+  projectsWithStatus,
+  renderProjects as renderProjectsWorkspace,
+} from './projects.js';
+import {
+  createReadingUiState,
+  READING_BOARD_STATUSES,
+  readingFinishedInYear,
+  readingWithBookPosition,
+  readingWithBookStatus,
+  renderReading,
+} from './reading.js';
 
 const VALID_TABS = ['today', 'projects', 'reading', 'analytics', 'almanac'];
 let state = null;
@@ -9,6 +22,9 @@ let recommendationDismissed = false;
 let pageError = null;
 let stateRefreshTimer = null;
 let eventSource = null;
+let projectPointerDrag = null;
+let readingPointerDrag = null;
+const projectsUi = createProjectsUiState();
 const readingUi = createReadingUiState();
 
 const codex = {
@@ -32,13 +48,17 @@ const codex = {
 const app = document.getElementById('app');
 const THREAD_STORAGE_KEY = 'lifeos.codex.threadId';
 const RAIL_STORAGE_KEY = 'lifeos.codex.railCollapsed';
+const THEME_STORAGE_KEY = 'lifeos.theme';
+const THEME_COOKIE = 'lifeosTheme';
 let codexRailCollapsed = localStorage.getItem(RAIL_STORAGE_KEY) === 'true';
+let activeTheme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
 
 void init();
 
 async function init() {
   const params = new URLSearchParams(location.search);
   activeRange = ['week', 'month', 'quarter', 'year'].includes(params.get('range')) ? params.get('range') : 'week';
+  projectsUi.view = params.get('projectView') === 'kanban' ? 'kanban' : 'list';
   readingUi.view = params.get('view') === 'library' ? 'library' : 'kanban';
   try {
     state = await fetchState(activeRange);
@@ -51,6 +71,11 @@ async function init() {
   }
 
   window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && projectsUi.selectedProjectId) {
+      projectsUi.selectedProjectId = null;
+      render();
+      return;
+    }
     if (event.key === 'Escape' && readingUi.deleteBookId) {
       readingUi.deleteBookId = null;
       render();
@@ -63,11 +88,7 @@ async function init() {
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault();
-      if (codexRailCollapsed) {
-        codexRailCollapsed = false;
-        localStorage.setItem(RAIL_STORAGE_KEY, 'false');
-        render();
-      }
+      if (codexRailCollapsed) setCodexRailCollapsed(false);
       requestAnimationFrame(() => document.querySelector('.chat-input')?.focus());
     }
   });
@@ -75,6 +96,7 @@ async function init() {
     const next = new URLSearchParams(location.search);
     activeTab = validTab(next.get('tab')) || 'projects';
     activeRange = ['week', 'month', 'quarter', 'year'].includes(next.get('range')) ? next.get('range') : 'week';
+    projectsUi.view = next.get('projectView') === 'kanban' ? 'kanban' : 'list';
     readingUi.view = next.get('view') === 'library' ? 'library' : 'kanban';
     state = await fetchState(activeRange);
     render();
@@ -93,6 +115,14 @@ async function apiJson(url, options = {}) {
 }
 
 function render() {
+  const focusedProjectId = document.activeElement
+    ?.closest?.('[data-project-drag-id]')
+    ?.dataset.projectDragId;
+  const focusedReadingBookId = document.activeElement
+    ?.closest?.('[data-reading-drag-id]')
+    ?.dataset.readingDragId;
+  cancelProjectPointerDrag();
+  cancelReadingPointerDrag();
   app.className = `lifeos${codexRailCollapsed ? ' rail-collapsed' : ''}`;
   app.innerHTML = `
     ${renderMasthead()}
@@ -106,6 +136,16 @@ function render() {
   bindPageEvents();
   bindChatEvents();
   scrollChatToEnd();
+  if (focusedProjectId) {
+    [...document.querySelectorAll('[data-project-drag-id]')]
+      .find((card) => card.dataset.projectDragId === focusedProjectId)
+      ?.focus();
+  }
+  if (focusedReadingBookId) {
+    [...document.querySelectorAll('[data-reading-drag-id]')]
+      .find((card) => card.dataset.readingDragId === focusedReadingBookId)
+      ?.focus();
+  }
 }
 
 function renderChatRegion() {
@@ -117,6 +157,13 @@ function renderChatRegion() {
 }
 
 function bindPageEvents() {
+  document.querySelector('[data-theme-toggle]')?.addEventListener('click', () => {
+    activeTheme = activeTheme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = activeTheme;
+    localStorage.setItem(THEME_STORAGE_KEY, activeTheme);
+    writePreferenceCookie(THEME_COOKIE, activeTheme);
+    render();
+  });
   document.querySelectorAll('[data-tab]').forEach((button) => {
     button.addEventListener('click', () => {
       activeTab = button.dataset.tab;
@@ -168,7 +215,219 @@ function bindPageEvents() {
     pageError = null;
     render();
   });
+  bindProjectEvents();
   bindReadingEvents();
+}
+
+function writePreferenceCookie(name, value) {
+  document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=31536000; SameSite=Strict`;
+}
+
+function bindProjectEvents() {
+  if (activeTab !== 'projects') return;
+
+  document.querySelectorAll('[data-project-view]').forEach((button) => {
+    button.addEventListener('click', () => {
+      projectsUi.view = button.dataset.projectView;
+      projectsUi.selectedProjectId = null;
+      updateLocation();
+      render();
+    });
+  });
+  document.querySelectorAll('[data-project-detail]').forEach((card) => {
+    card.addEventListener('click', () => {
+      projectsUi.selectedProjectId = card.dataset.projectDetail;
+      render();
+      document.querySelector('.project-detail-close')?.focus();
+    });
+    card.addEventListener('keydown', (event) => {
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      if (!['Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      projectsUi.selectedProjectId = card.dataset.projectDetail;
+      render();
+      document.querySelector('.project-detail-close')?.focus();
+    });
+  });
+  document.querySelectorAll('[data-project-detail-close]').forEach((control) => {
+    control.addEventListener('click', (event) => {
+      if (control.classList.contains('project-detail-backdrop') && event.target !== control) return;
+      projectsUi.selectedProjectId = null;
+      render();
+    });
+  });
+  document.querySelectorAll('[data-project-status-project]').forEach((select) => {
+    select.addEventListener('change', () => {
+      void changeProjectStatus(select.dataset.projectStatusProject, select.value, { optimistic: true });
+    });
+  });
+  bindProjectDragAndDrop();
+}
+
+function bindProjectDragAndDrop() {
+  if (projectsUi.view !== 'kanban' || projectsUi.movingProjectId) return;
+  document.querySelectorAll('[data-project-drag-id]').forEach((card) => {
+    card.addEventListener('pointerdown', (event) => beginProjectPointerDrag(event, card));
+    card.addEventListener('keydown', (event) => moveProjectCardWithKeyboard(event, card));
+    card.addEventListener('click', (event) => {
+      if (card.dataset.projectDragSuppressClick !== 'true') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      delete card.dataset.projectDragSuppressClick;
+    }, true);
+  });
+}
+
+function beginProjectPointerDrag(event, card) {
+  if (event.isPrimary === false || (event.pointerType === 'mouse' && event.button !== 0)) return;
+  cancelProjectPointerDrag();
+
+  const drag = {
+    projectId: card.dataset.projectDragId,
+    card,
+    pointerId: event.pointerId,
+    pointerType: event.pointerType,
+    originStatus: card.dataset.projectDragStatus,
+    startX: event.clientX,
+    startY: event.clientY,
+    started: false,
+    preview: null,
+    targetColumn: null,
+  };
+  drag.move = (moveEvent) => moveProjectPointerDrag(moveEvent, drag);
+  drag.end = (endEvent) => endProjectPointerDrag(endEvent, drag, true);
+  drag.cancel = (cancelEvent) => endProjectPointerDrag(cancelEvent, drag, false);
+  projectPointerDrag = drag;
+  window.addEventListener('pointermove', drag.move, { passive: false });
+  window.addEventListener('pointerup', drag.end);
+  window.addEventListener('pointercancel', drag.cancel);
+}
+
+function moveProjectPointerDrag(event, drag) {
+  if (projectPointerDrag !== drag || event.pointerId !== drag.pointerId) return;
+  const deltaX = event.clientX - drag.startX;
+  const deltaY = event.clientY - drag.startY;
+
+  if (!drag.started) {
+    if (drag.pointerType !== 'mouse' && Math.abs(deltaY) > Math.abs(deltaX)) {
+      cancelProjectPointerDrag();
+      return;
+    }
+    if (Math.hypot(deltaX, deltaY) < 7) return;
+    startProjectPointerDrag(drag);
+  }
+
+  event.preventDefault();
+  drag.preview.style.transform = `translate3d(${event.clientX + 14}px, ${event.clientY + 14}px, 0)`;
+  updateProjectDropTarget(drag, event.clientX, event.clientY);
+}
+
+function startProjectPointerDrag(drag) {
+  drag.started = true;
+  drag.card.dataset.projectDragSuppressClick = 'true';
+  drag.card.classList.add('dragging');
+  drag.card.setPointerCapture?.(drag.pointerId);
+  document.body.classList.add('project-drag-active');
+
+  const board = drag.card.closest('.project-board');
+  board?.classList.add('is-dragging');
+  board?.querySelectorAll('[data-project-drop-status]').forEach((column) => {
+    column.classList.add(column.dataset.projectDropStatus === drag.originStatus ? 'drop-current' : 'drop-available');
+  });
+
+  const preview = drag.card.cloneNode(true);
+  preview.removeAttribute('data-project-drag-id');
+  preview.removeAttribute('data-project-detail');
+  preview.removeAttribute('aria-busy');
+  preview.className = 'project-board-card project-drag-preview';
+  preview.setAttribute('aria-hidden', 'true');
+  preview.style.width = `${drag.card.getBoundingClientRect().width}px`;
+  document.body.append(preview);
+  drag.preview = preview;
+}
+
+function updateProjectDropTarget(drag, clientX, clientY) {
+  const hovered = document.elementFromPoint(clientX, clientY)?.closest('[data-project-drop-status]') || null;
+  if (drag.targetColumn === hovered) return;
+  drag.targetColumn?.classList.remove('drag-over');
+  drag.targetColumn = hovered;
+  drag.targetColumn?.classList.add('drag-over');
+}
+
+function endProjectPointerDrag(event, drag, shouldDrop) {
+  if (projectPointerDrag !== drag || event.pointerId !== drag.pointerId) return;
+  if (drag.started) event.preventDefault();
+  const status = shouldDrop ? drag.targetColumn?.dataset.projectDropStatus : null;
+  const { projectId, card } = drag;
+  cancelProjectPointerDrag();
+
+  if (drag.started) {
+    card.dataset.projectDragSuppressClick = 'true';
+    setTimeout(() => {
+      if (card.isConnected) delete card.dataset.projectDragSuppressClick;
+    }, 0);
+  }
+  if (status) void changeProjectStatus(projectId, status, { optimistic: true });
+}
+
+function cancelProjectPointerDrag() {
+  const drag = projectPointerDrag;
+  if (!drag) return;
+  projectPointerDrag = null;
+  window.removeEventListener('pointermove', drag.move);
+  window.removeEventListener('pointerup', drag.end);
+  window.removeEventListener('pointercancel', drag.cancel);
+  drag.targetColumn?.classList.remove('drag-over');
+  drag.card.classList.remove('dragging');
+  if (drag.card.hasPointerCapture?.(drag.pointerId)) drag.card.releasePointerCapture(drag.pointerId);
+  drag.preview?.remove();
+  document.body.classList.remove('project-drag-active');
+  document.querySelector('.project-board')?.classList.remove('is-dragging');
+  document.querySelectorAll('.project-column.drop-current, .project-column.drop-available').forEach((column) => {
+    column.classList.remove('drop-current', 'drop-available');
+  });
+}
+
+function moveProjectCardWithKeyboard(event, card) {
+  if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || projectsUi.movingProjectId) return;
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  const statusIndex = PROJECT_BOARD_STATUSES.indexOf(card.dataset.projectDragStatus);
+  const offset = event.key === 'ArrowLeft' ? -1 : 1;
+  const nextStatus = PROJECT_BOARD_STATUSES[statusIndex + offset];
+  if (!nextStatus) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void changeProjectStatus(card.dataset.projectDragId, nextStatus, { optimistic: true, restoreFocus: true });
+}
+
+async function changeProjectStatus(projectId, status, { optimistic = false, restoreFocus = false } = {}) {
+  const current = state.projects.find((project) => project.id === projectId);
+  if (current?.status === status || projectsUi.movingProjectId) return;
+  pageError = null;
+  const previousState = state;
+  if (optimistic) {
+    projectsUi.movingProjectId = projectId;
+    state = projectsWithStatus(state, projectId, status);
+    renderProjectMove(projectId, restoreFocus);
+  }
+  try {
+    state = await apiJson('/api/projects/status', jsonRequest({ projectId, status }));
+    projectsUi.movingProjectId = null;
+    renderProjectMove(projectId, restoreFocus);
+  } catch (error) {
+    if (optimistic) state = previousState;
+    projectsUi.movingProjectId = null;
+    pageError = error.message;
+    renderProjectMove(projectId, restoreFocus);
+  }
+}
+
+function renderProjectMove(projectId, restoreFocus) {
+  render();
+  if (!restoreFocus) return;
+  [...document.querySelectorAll('[data-project-drag-id]')]
+    .find((card) => card.dataset.projectDragId === projectId)
+    ?.focus();
 }
 
 function bindReadingEvents() {
@@ -199,12 +458,21 @@ function bindReadingEvents() {
   document.querySelectorAll('[data-reading-status-book]').forEach((select) => {
     select.addEventListener('change', () => void changeReadingStatus(select.dataset.readingStatusBook, select.value, select));
   });
-  document.querySelectorAll('[data-reading-reorder]').forEach((button) => {
-    button.addEventListener('click', () => void reorderReading(button.dataset.bookId, button.dataset.readingReorder, button));
-  });
   document.querySelectorAll('[data-reading-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       readingUi.filter = button.dataset.readingFilter;
+      render();
+    });
+  });
+  document.querySelectorAll('[data-reading-sort]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.readingSort;
+      if (readingUi.sortKey === key) {
+        readingUi.sortDirection = readingUi.sortDirection === 'asc' ? 'desc' : 'asc';
+      } else {
+        readingUi.sortKey = key;
+        readingUi.sortDirection = ['cover', 'addedAt', 'finishedAt'].includes(key) ? 'desc' : 'asc';
+      }
       render();
     });
   });
@@ -247,6 +515,11 @@ function bindReadingEvents() {
       if (!book) return;
       const normalized = button.dataset.readingTagRemove.toLowerCase();
       void updateReadingTags(book.id, (book.tags || []).filter((tag) => tag.toLowerCase() !== normalized), button);
+    });
+  });
+  document.querySelectorAll('[data-reading-finished-date-book]').forEach((input) => {
+    input.addEventListener('change', () => {
+      void updateReadingFinishedDate(input.dataset.readingFinishedDateBook, input.value || null, input);
     });
   });
   document.querySelector('[data-reading-delete-request]')?.addEventListener('click', (event) => {
@@ -311,25 +584,28 @@ async function addCatalogBook(index, button) {
   }
 }
 
-async function changeReadingStatus(bookId, status, control = null) {
+async function changeReadingStatus(bookId, status, control = null, { optimistic = false } = {}) {
   const current = state.reading.books.find((book) => book.id === bookId);
-  if (current?.status === status) return;
+  if (current?.status === status || readingUi.movingBookId) return;
   pageError = null;
-  if (control) control.disabled = true;
+  const previousState = state;
+  if (optimistic) {
+    readingUi.movingBookId = bookId;
+    state = { ...state, reading: readingWithBookStatus(state.reading, bookId, status) };
+    render();
+  } else if (control) {
+    control.disabled = true;
+  }
   try {
     state = await apiJson('/api/reading/books/status', jsonRequest({ bookId, status }));
+    readingUi.movingBookId = null;
     render();
   } catch (error) {
+    if (optimistic) state = previousState;
+    readingUi.movingBookId = null;
     pageError = error.message;
     render();
   }
-}
-
-async function reorderReading(bookId, direction, button) {
-  await runPageAction(button, async () => {
-    state = await apiJson('/api/reading/books/reorder', jsonRequest({ bookId, direction }));
-    render();
-  });
 }
 
 async function updateReadingTags(bookId, tags, control) {
@@ -339,6 +615,21 @@ async function updateReadingTags(bookId, tags, control) {
     state = await apiJson('/api/reading/books/tags', jsonRequest({ bookId, tags }));
     render();
   } catch (error) {
+    pageError = error.message;
+    render();
+  }
+}
+
+async function updateReadingFinishedDate(bookId, date, control) {
+  pageError = null;
+  readingUi.updatingDateBookId = bookId;
+  if (control) control.disabled = true;
+  try {
+    state = await apiJson('/api/reading/books/finished-date', jsonRequest({ bookId, date }));
+    readingUi.updatingDateBookId = null;
+    render();
+  } catch (error) {
+    readingUi.updatingDateBookId = null;
     pageError = error.message;
     render();
   }
@@ -374,30 +665,219 @@ function applyReadingLocalFilter() {
 }
 
 function bindReadingDragAndDrop() {
+  if (readingUi.movingBookId) return;
   document.querySelectorAll('[data-reading-drag-id]').forEach((card) => {
-    card.addEventListener('dragstart', (event) => {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', card.dataset.readingDragId);
-      card.classList.add('dragging');
-    });
-    card.addEventListener('dragend', () => card.classList.remove('dragging'));
-  });
-  document.querySelectorAll('[data-reading-drop-status]').forEach((column) => {
-    column.addEventListener('dragover', (event) => {
+    card.addEventListener('pointerdown', (event) => beginReadingPointerDrag(event, card));
+    card.addEventListener('keydown', (event) => moveReadingCardWithKeyboard(event, card));
+    card.addEventListener('click', (event) => {
+      if (card.dataset.readingDragSuppressClick !== 'true') return;
       event.preventDefault();
-      event.dataTransfer.dropEffect = 'move';
-      column.classList.add('drag-over');
-    });
-    column.addEventListener('dragleave', (event) => {
-      if (!column.contains(event.relatedTarget)) column.classList.remove('drag-over');
-    });
-    column.addEventListener('drop', (event) => {
-      event.preventDefault();
-      column.classList.remove('drag-over');
-      const bookId = event.dataTransfer.getData('text/plain');
-      if (bookId) void changeReadingStatus(bookId, column.dataset.readingDropStatus);
-    });
+      event.stopImmediatePropagation();
+      delete card.dataset.readingDragSuppressClick;
+    }, true);
   });
+}
+
+function beginReadingPointerDrag(event, card) {
+  if (event.isPrimary === false || (event.pointerType === 'mouse' && event.button !== 0)) return;
+  cancelReadingPointerDrag();
+
+  const drag = {
+    bookId: card.dataset.readingDragId,
+    card,
+    pointerId: event.pointerId,
+    pointerType: event.pointerType,
+    originStatus: card.dataset.readingDragStatus,
+    startX: event.clientX,
+    startY: event.clientY,
+    started: false,
+    preview: null,
+    targetColumn: null,
+    targetBeforeCard: null,
+    targetColumnBody: null,
+    beforeBookId: null,
+  };
+  drag.move = (moveEvent) => moveReadingPointerDrag(moveEvent, drag);
+  drag.end = (endEvent) => endReadingPointerDrag(endEvent, drag, true);
+  drag.cancel = (cancelEvent) => endReadingPointerDrag(cancelEvent, drag, false);
+  readingPointerDrag = drag;
+  window.addEventListener('pointermove', drag.move, { passive: false });
+  window.addEventListener('pointerup', drag.end);
+  window.addEventListener('pointercancel', drag.cancel);
+}
+
+function moveReadingPointerDrag(event, drag) {
+  if (readingPointerDrag !== drag || event.pointerId !== drag.pointerId) return;
+  const deltaX = event.clientX - drag.startX;
+  const deltaY = event.clientY - drag.startY;
+
+  if (!drag.started) {
+    if (drag.pointerType !== 'mouse' && Math.abs(deltaY) > Math.abs(deltaX)) {
+      cancelReadingPointerDrag();
+      return;
+    }
+    if (Math.hypot(deltaX, deltaY) < 7) return;
+    startReadingPointerDrag(drag);
+  }
+
+  event.preventDefault();
+  drag.preview.style.transform = `translate3d(${event.clientX + 14}px, ${event.clientY + 14}px, 0)`;
+  updateReadingDropTarget(drag, event.clientX, event.clientY);
+}
+
+function startReadingPointerDrag(drag) {
+  drag.started = true;
+  drag.card.dataset.readingDragSuppressClick = 'true';
+  drag.card.classList.add('dragging');
+  drag.card.setPointerCapture?.(drag.pointerId);
+  document.body.classList.add('reading-drag-active');
+
+  const board = drag.card.closest('.reading-board');
+  board?.classList.add('is-dragging');
+  board?.querySelectorAll('[data-reading-drop-status]').forEach((column) => {
+    column.classList.add(column.dataset.readingDropStatus === drag.originStatus ? 'drop-current' : 'drop-available');
+  });
+
+  const preview = drag.card.cloneNode(true);
+  preview.removeAttribute('data-reading-drag-id');
+  preview.removeAttribute('aria-busy');
+  preview.className = 'reading-card reading-drag-preview';
+  preview.setAttribute('aria-hidden', 'true');
+  preview.style.width = `${drag.card.getBoundingClientRect().width}px`;
+  preview.querySelectorAll('button, select, input, a').forEach((control) => control.setAttribute('tabindex', '-1'));
+  document.body.append(preview);
+  drag.preview = preview;
+}
+
+function updateReadingDropTarget(drag, clientX, clientY) {
+  const hovered = document.elementFromPoint(clientX, clientY)?.closest('[data-reading-drop-status]') || null;
+  const cards = hovered
+    ? [...hovered.querySelectorAll('[data-reading-drag-id]')].filter((card) => card !== drag.card)
+    : [];
+  const beforeCard = cards.find((card) => {
+    const bounds = card.getBoundingClientRect();
+    return clientY < bounds.top + bounds.height / 2;
+  }) || null;
+  const columnBody = hovered?.querySelector('.reading-column-body') || null;
+  if (drag.targetColumn === hovered && drag.targetBeforeCard === beforeCard) return;
+  drag.targetColumn?.classList.remove('drag-over');
+  drag.targetBeforeCard?.classList.remove('drop-before');
+  drag.targetColumnBody?.classList.remove('drop-at-end');
+  drag.targetColumn = hovered;
+  drag.targetBeforeCard = beforeCard;
+  drag.targetColumnBody = columnBody;
+  drag.beforeBookId = beforeCard?.dataset.readingDragId || null;
+  drag.targetColumn?.classList.add('drag-over');
+  if (beforeCard) beforeCard.classList.add('drop-before');
+  else columnBody?.classList.add('drop-at-end');
+}
+
+function endReadingPointerDrag(event, drag, shouldDrop) {
+  if (readingPointerDrag !== drag || event.pointerId !== drag.pointerId) return;
+  if (drag.started) event.preventDefault();
+  const status = shouldDrop ? drag.targetColumn?.dataset.readingDropStatus : null;
+  const beforeBookId = shouldDrop ? drag.beforeBookId : null;
+  const { bookId, card } = drag;
+  cancelReadingPointerDrag();
+
+  if (drag.started) {
+    card.dataset.readingDragSuppressClick = 'true';
+    setTimeout(() => {
+      if (card.isConnected) delete card.dataset.readingDragSuppressClick;
+    }, 0);
+  }
+  if (status) void positionReadingBook(bookId, status, beforeBookId);
+}
+
+function cancelReadingPointerDrag() {
+  const drag = readingPointerDrag;
+  if (!drag) return;
+  readingPointerDrag = null;
+  window.removeEventListener('pointermove', drag.move);
+  window.removeEventListener('pointerup', drag.end);
+  window.removeEventListener('pointercancel', drag.cancel);
+  drag.targetColumn?.classList.remove('drag-over');
+  drag.targetBeforeCard?.classList.remove('drop-before');
+  drag.targetColumnBody?.classList.remove('drop-at-end');
+  drag.card.classList.remove('dragging');
+  if (drag.card.hasPointerCapture?.(drag.pointerId)) drag.card.releasePointerCapture(drag.pointerId);
+  drag.preview?.remove();
+  document.body.classList.remove('reading-drag-active');
+  document.querySelector('.reading-board')?.classList.remove('is-dragging');
+  document.querySelectorAll('.reading-column.drop-current, .reading-column.drop-available').forEach((column) => {
+    column.classList.remove('drop-current', 'drop-available');
+  });
+}
+
+function moveReadingCardWithKeyboard(event, card) {
+  if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || readingUi.movingBookId) return;
+  if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+
+  const bookId = card.dataset.readingDragId;
+  const status = card.dataset.readingDragStatus;
+  const statusIndex = READING_BOARD_STATUSES.indexOf(status);
+  let nextStatus = status;
+  let beforeBookId = null;
+
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    const offset = event.key === 'ArrowLeft' ? -1 : 1;
+    nextStatus = READING_BOARD_STATUSES[statusIndex + offset];
+    if (!nextStatus) return;
+  } else {
+    const siblings = orderedReadingBooks(status);
+    const index = siblings.findIndex((book) => book.id === bookId);
+    if (event.key === 'ArrowUp') {
+      if (index <= 0) return;
+      beforeBookId = siblings[index - 1].id;
+    } else {
+      if (index < 0 || index >= siblings.length - 1) return;
+      beforeBookId = siblings[index + 2]?.id || null;
+    }
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  void positionReadingBook(bookId, nextStatus, beforeBookId, { restoreFocus: true });
+}
+
+function orderedReadingBooks(status) {
+  const currentYear = String(state.meta.today).slice(0, 4);
+  return state.reading.books
+    .filter((book) => book.status === status && (
+      status !== 'finished'
+      || readingFinishedInYear(book, currentYear, state.meta.timezone)
+    ))
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0) || a.title.localeCompare(b.title));
+}
+
+async function positionReadingBook(bookId, status, beforeBookId, { restoreFocus = false } = {}) {
+  if (readingUi.movingBookId) return;
+  const positioned = readingWithBookPosition(state.reading, bookId, status, beforeBookId);
+  if (positioned === state.reading) return;
+
+  pageError = null;
+  const previousState = state;
+  readingUi.movingBookId = bookId;
+  state = { ...state, reading: positioned };
+  renderReadingPosition(bookId, restoreFocus);
+  try {
+    state = await apiJson('/api/reading/books/reorder', jsonRequest({ bookId, status, beforeBookId }));
+    readingUi.movingBookId = null;
+    renderReadingPosition(bookId, restoreFocus);
+  } catch (error) {
+    state = previousState;
+    readingUi.movingBookId = null;
+    pageError = error.message;
+    renderReadingPosition(bookId, restoreFocus);
+  }
+}
+
+function renderReadingPosition(bookId, restoreFocus) {
+  render();
+  if (!restoreFocus) return;
+  [...document.querySelectorAll('[data-reading-drag-id]')]
+    .find((card) => card.dataset.readingDragId === bookId)
+    ?.focus();
 }
 
 async function runPageAction(button, action) {
@@ -417,6 +897,7 @@ function updateLocation() {
   const params = new URLSearchParams();
   if (activeTab !== 'projects') params.set('tab', activeTab);
   if (activeRange !== 'week') params.set('range', activeRange);
+  if (activeTab === 'projects' && projectsUi.view !== 'list') params.set('projectView', projectsUi.view);
   if (activeTab === 'reading' && readingUi.view !== 'kanban') params.set('view', readingUi.view);
   const query = params.toString();
   history.pushState(null, '', query ? `?${query}` : location.pathname);
@@ -426,17 +907,19 @@ function renderMasthead() {
   const date = formatDateLong(state.meta.today);
   return `
     <header class="masthead">
-      <div class="masthead-side">
-        <span>Week <b>${state.meta.weekNumber}</b></span>
-        <span>No. <b>${state.meta.issueNumber}</b></span>
-        ${state.meta.demo ? '<span class="demo-tag">Demo data</span>' : ''}
-      </div>
+        <div class="masthead-side">
+          <span>Week <b>${state.meta.weekNumber}</b></span>
+          <span>No. <b>${state.meta.issueNumber}</b></span>
+        </div>
       <div class="masthead-name">
         ${escapeHtml(state.meta.appName)}
-        <span class="masthead-sub">${escapeHtml(state.meta.tagline)}</span>
       </div>
       <div class="masthead-side right">
         <span><b>${date.weekday}</b>, ${date.rest}</span>
+        <button class="theme-toggle" data-theme-toggle type="button" aria-label="Switch to ${activeTheme === 'dark' ? 'light' : 'dark'} mode">
+          <span class="theme-toggle-mark" aria-hidden="true"></span>
+          ${activeTheme === 'dark' ? 'Light' : 'Dark'}
+        </button>
       </div>
     </header>
   `;
@@ -446,71 +929,36 @@ function renderTabs() {
   const tabs = [
     ['today', 'Today'],
     ['projects', 'Projects'],
-    ['reading', 'Reading'],
     ['analytics', 'Analytics'],
     ['almanac', 'Almanac'],
+    ['reading', 'Readings'],
   ];
   const meta = {
     today: state.activeSession ? 'A focused session is running' : 'What now and what has happened',
     projects: `${titleNumber(state.summary.activeCount)} active - ${titleNumber(state.summary.criticalCount)} critical`,
-    reading: `${state.reading.summary.byStatus.reading} reading - ${state.reading.summary.byStatus.next_up} next up`,
     analytics: 'Where the hours actually went',
     almanac: 'A record of what got done',
   };
+  const activeMeta = meta[activeTab];
   return `
     <nav class="tabs" aria-label="LifeOS sections">
       ${tabs.map(([id, label]) => `
         <button class="tab ${id === activeTab ? 'active' : ''}" data-tab="${id}" type="button">${label}</button>
       `).join('')}
-      <div class="tab-meta"><span class="smallcaps">${escapeHtml(meta[activeTab] || '')}</span></div>
+      ${activeMeta ? `<div class="tab-meta"><span class="smallcaps">${escapeHtml(activeMeta)}</span></div>` : ''}
     </nav>
   `;
 }
 
 function renderPage() {
   if (activeTab === 'today') return renderToday();
-  if (activeTab === 'reading') return renderReading(state.reading, readingUi);
+  if (activeTab === 'reading') return renderReading(state.reading, readingUi, {
+    today: state.meta.today,
+    timeZone: state.meta.timezone,
+  });
   if (activeTab === 'analytics') return renderAnalytics();
   if (activeTab === 'almanac') return renderAlmanac();
-  return renderProjects();
-}
-
-function renderProjects() {
-  return `<div class="projects-grid">${state.projects.map(renderProject).join('')}</div>`;
-}
-
-function renderProject(project) {
-  const domain = state.domains[project.domain];
-  const healthColor = cssHealth(project.health);
-  const due = project.dueInDays == null ? '-' : project.dueInDays < 0 ? `${Math.abs(project.dueInDays)}d late` : `${project.dueInDays}d`;
-  const lastClass = project.lastTouchedLabel.includes('h ago') || project.lastTouchedLabel.includes('m ago') ? 'healthy' : project.health === 'critical' ? 'critical' : '';
-  const dueClass = project.dueInDays != null && project.dueInDays <= 3 ? 'critical' : '';
-  return `
-    <article class="project-entry" style="--domain:${domain.color}">
-      <div class="swatch"></div>
-      <div>
-        <div class="project-head">
-          <div class="project-name">${escapeHtml(project.name)}</div>
-          <div class="project-domain">${escapeHtml(domain.label)}</div>
-          <div class="health-tag" style="color:${healthColor}"><span class="status-dot"></span>${escapeHtml(project.health)}</div>
-        </div>
-        <div class="project-subtitle">${escapeHtml(project.subtitle)}</div>
-        <div class="project-note">${escapeHtml(project.note)}</div>
-        <div class="project-stats">
-          <span class="stat"><span class="stat-k">Last</span><span class="stat-v ${lastClass}">${escapeHtml(project.lastTouchedLabel)}</span></span>
-          <span class="stat"><span class="stat-k">Week</span><span class="stat-v">${escapeHtml(project.weekHoursLabel)}</span></span>
-          <span class="stat"><span class="stat-k">Due</span><span class="stat-v ${dueClass}">${escapeHtml(due)}</span></span>
-          ${project.streak > 0 ? `<span class="stat"><span class="stat-k">Streak</span><span class="stat-v" style="color:var(--accent)">${project.streak}d</span></span>` : ''}
-        </div>
-        ${project.progress == null ? '' : `
-          <div class="progress" style="--progress:${Math.round(project.progress * 100)}%">
-            <div class="bar"><i class="bar-fill"></i></div>
-            <span class="pct">${Math.round(project.progress * 100)}%</span>
-          </div>
-        `}
-      </div>
-    </article>
-  `;
+  return renderProjectsWorkspace(state.projects, state.domains, projectsUi);
 }
 
 function renderToday() {
@@ -848,10 +1296,7 @@ function renderServerRequest(request, index) {
 
 function bindChatEvents() {
   document.querySelector('[data-codex-rail-toggle]')?.addEventListener('click', () => {
-    codexRailCollapsed = !codexRailCollapsed;
-    localStorage.setItem(RAIL_STORAGE_KEY, String(codexRailCollapsed));
-    render();
-    requestAnimationFrame(() => document.querySelector('[data-codex-rail-toggle]')?.focus());
+    setCodexRailCollapsed(!codexRailCollapsed, { focusToggle: true });
   });
   const input = document.querySelector('.chat-input');
   input?.addEventListener('input', () => {
@@ -892,6 +1337,24 @@ function bindChatEvents() {
       void respondToCodexRequest(request, { answers });
     });
   });
+}
+
+function setCodexRailCollapsed(collapsed, { focusToggle = false } = {}) {
+  codexRailCollapsed = collapsed;
+  localStorage.setItem(RAIL_STORAGE_KEY, String(collapsed));
+  app.classList.toggle('rail-collapsed', collapsed);
+
+  const chat = document.querySelector('.chat');
+  const panel = document.querySelector('#codex-rail-content');
+  const toggle = document.querySelector('[data-codex-rail-toggle]');
+  chat?.classList.toggle('is-collapsed', collapsed);
+  if (panel) panel.hidden = collapsed;
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.setAttribute('aria-label', collapsed ? 'Open Codex panel' : 'Collapse Codex panel');
+    toggle.title = collapsed ? 'Open Codex' : 'Collapse Codex';
+  }
+  if (focusToggle) requestAnimationFrame(() => toggle?.focus());
 }
 
 async function bootstrapCodex() {

@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 import {
   ACTIVITY_TYPES,
+  addProjectCategory,
+  buildCategoryStats,
   buildState,
+  deleteProject,
   findProject,
   formatHours,
   formatMinutes,
   getState,
   logTime,
   readStore,
+  requireProject,
+  setProjectStatus,
   startSession,
   stopSession,
 } from '../src/lifeos-data.mjs';
@@ -28,6 +33,8 @@ try {
     await logCommand(args.slice(1));
   } else if (command === 'session') {
     await sessionCommand(args.slice(1));
+  } else if (command === 'storage') {
+    await storageCommand(args.slice(1));
   } else {
     throw new Error(`Unknown command: ${command}`);
   }
@@ -41,21 +48,98 @@ function printHelp() {
 
 Usage:
   lifeos projects [--health] [--json]
-  lifeos stats [--project "Portia"] [--range week|month|quarter|year] [--json]
+  lifeos projects categorize --project "Portia" --category "Infinitamente"
+  lifeos projects status --project "Vulcano" --status done
+  lifeos projects delete --project "Infinitamente" --preserve-category "Infinitamente"
+  lifeos stats [--project "Portia" | --category "Infinitamente"] [--range week|month|quarter|year] [--json]
   lifeos recommend [--json]
   lifeos log --project "Portia" --duration 90 --type creative --desc "Act III draft"
   lifeos session start --project "Portia" --type creative --desc "Act III draft"
   lifeos session stop
+  lifeos storage status [--json]
+  lifeos storage configure-backup --path "/path/to/Google Drive/LifeOS Backups"
+  lifeos storage disable-backup
 
 Activity types:
   ${ACTIVITY_TYPES.join(', ')}
 `);
 }
 
+async function storageCommand(flags) {
+  const { backUpStore, configureBackupDirectory, disableBackupDirectory, getStorageStatus } = await import('../src/lifeos-storage.mjs');
+  const action = flags[0] || 'status';
+  const parsed = parseFlags(flags.slice(1));
+  if (action === 'configure-backup') {
+    if (!parsed.path) throw new Error('storage configure-backup requires --path.');
+    const status = await configureBackupDirectory(parsed.path, await readStore());
+    console.log(`Cloud snapshots enabled: ${status.backupDirectory}`);
+    console.log(`Latest snapshot: ${status.latestSnapshotAt || 'created'}`);
+    return;
+  }
+  if (action === 'disable-backup') {
+    await disableBackupDirectory();
+    console.log('Cloud snapshots disabled. Existing backups were preserved.');
+    return;
+  }
+  if (action === 'backup-now') {
+    const result = await backUpStore(await readStore());
+    if (!result.configured) throw new Error('No cloud backup directory is configured.');
+    if (!result.ok) throw new Error(`Cloud backup failed: ${result.error}`);
+    console.log(`Snapshot written: ${result.latestPath}`);
+    return;
+  }
+  if (action !== 'status') throw new Error(`Unknown storage action: ${action}`);
+  const status = await getStorageStatus();
+  if (parsed.json) {
+    console.log(JSON.stringify(status, null, 2));
+    return;
+  }
+  console.log(`Personal data: ${status.storePath}`);
+  console.log(`Cloud backup: ${status.backupConfigured ? status.backupDirectory : 'not configured'}`);
+  console.log(`Latest snapshot: ${status.latestSnapshotAt || '-'}`);
+  if (status.lastBackup?.ok === false) console.log(`Last backup error: ${status.lastBackup.error}`);
+  if (!status.backupConfigured && status.detectedGoogleDrives.length) {
+    console.log('Detected Google Drive folders:');
+    for (const drive of status.detectedGoogleDrives) console.log(`  ${drive}`);
+  }
+}
+
 async function projectsCommand(flags) {
-  const json = flags.includes('--json');
+  const action = flags[0]?.startsWith('--') || !flags[0] ? 'list' : flags[0];
+  const parsed = parseFlags(action === 'list' ? flags : flags.slice(1));
+
+  if (action !== 'list') {
+    if (!parsed.project) throw new Error(`projects ${action} requires --project.`);
+    const store = await readStore();
+    const project = requireProject(store, parsed.project);
+    if (action === 'categorize') {
+      if (!parsed.category) throw new Error('projects categorize requires --category.');
+      const result = await addProjectCategory({ projectId: project.id, category: parsed.category });
+      console.log(`Categorized ${result.project.name} as ${result.category.label}.`);
+      return;
+    }
+    if (action === 'status') {
+      if (!parsed.status) throw new Error('projects status requires --status.');
+      const result = await setProjectStatus({ projectId: project.id, status: parsed.status });
+      console.log(`${result.project.name} is ${result.project.status}.`);
+      return;
+    }
+    if (action === 'delete') {
+      const result = await deleteProject({
+        projectId: project.id,
+        preserveCategory: parsed['preserve-category'],
+      });
+      const preserved = result.preservedEntryCount
+        ? ` Preserved ${result.preservedEntryCount} time entries${result.preservedCategory ? ` under ${result.preservedCategory.label}` : ''}.`
+        : '';
+      console.log(`Deleted project ${result.project.name}.${preserved}`);
+      return;
+    }
+    throw new Error(`Unknown projects action: ${action}`);
+  }
+
   const state = await getState();
-  if (json) {
+  if (parsed.json) {
     console.log(JSON.stringify(state.projects, null, 2));
     return;
   }
@@ -68,6 +152,17 @@ async function projectsCommand(flags) {
 
 async function statsCommand(flags) {
   const parsed = parseFlags(flags);
+  if (parsed.category) {
+    const stats = buildCategoryStats(await readStore(), parsed.category, { range: parsed.range || 'week' });
+    if (parsed.json) {
+      console.log(JSON.stringify(stats, null, 2));
+      return;
+    }
+    console.log(`${stats.category.label}`);
+    console.log(`  ${stats.rangeLabel}: ${stats.totalLabel} across ${stats.entryCount} entries`);
+    console.log(`  projects: ${stats.projects.length ? stats.projects.map((project) => project.name).join(', ') : '-'}`);
+    return;
+  }
   const state = await getState(undefined, { range: parsed.range || 'week' });
   if (parsed.json) {
     console.log(JSON.stringify(state.summary, null, 2));

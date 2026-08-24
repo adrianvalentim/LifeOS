@@ -1,6 +1,6 @@
 {
   "meta": {
-    "schemaVersion": 4,
+    "schemaVersion": 6,
     "appName": "LifeOS",
     "tagline": "A personal almanac",
     "timezone": "America/Sao_Paulo",
@@ -40,6 +40,7 @@
       "color": "#5e4a9c"
     }
   },
+  "categories": {},
   "settings": {
     "deepTarget": 0.65,
     "defaultDailyPlanHours": 8,
@@ -62,7 +63,8 @@
       "name": "Portia",
       "subtitle": "Short film - script",
       "domain": "filmmaking",
-      "status": "active",
+      "categoryIds": [],
+      "status": "next_up",
       "priority": 5,
       "plannedHours": 6,
       "deadline": "2026-08-25",
@@ -75,7 +77,8 @@
       "name": "Substack",
       "subtitle": "Essay: Slow time",
       "domain": "content",
-      "status": "active",
+      "categoryIds": [],
+      "status": "next_up",
       "priority": 4,
       "plannedHours": 4,
       "deadline": "2026-08-25",
@@ -88,7 +91,8 @@
       "name": "Curriculum 2026",
       "subtitle": "Graduate ML syllabus",
       "domain": "education",
-      "status": "active",
+      "categoryIds": [],
+      "status": "next_up",
       "priority": 3,
       "plannedHours": 4,
       "deadline": "2026-09-12",
@@ -101,7 +105,8 @@
       "name": "SF Move",
       "subtitle": "Relocation logistics",
       "domain": "personal",
-      "status": "active",
+      "categoryIds": [],
+      "status": "next_up",
       "priority": 3,
       "plannedHours": 2,
       "deadline": "2026-10-17",
@@ -114,7 +119,8 @@
       "name": "Vulcano",
       "subtitle": "Documentary feature",
       "domain": "filmmaking",
-      "status": "active",
+      "categoryIds": [],
+      "status": "next_up",
       "priority": 4,
       "plannedHours": 12,
       "deadline": "2026-09-19",
@@ -127,7 +133,8 @@
       "name": "Mech Interp Lab",
       "subtitle": "Graduate supervision",
       "domain": "research",
-      "status": "active",
+      "categoryIds": [],
+      "status": "next_up",
       "priority": 4,
       "plannedHours": 8,
       "deadline": null,
@@ -140,7 +147,8 @@
       "name": "Infinitamente",
       "subtitle": "YouTube channel",
       "domain": "content",
-      "status": "active",
+      "categoryIds": [],
+      "status": "next_up",
       "priority": 4,
       "plannedHours": 6,
       "deadline": "2026-08-27",
@@ -153,7 +161,8 @@
       "name": "The Long Now",
       "subtitle": "Podcast - ep. 23",
       "domain": "content",
-      "status": "active",
+      "categoryIds": [],
+      "status": "next_up",
       "priority": 3,
       "plannedHours": 3,
       "deadline": "2026-08-31",
@@ -166,7 +175,8 @@
       "name": "Aurora Store",
       "subtitle": "Online shop - ops",
       "domain": "business",
-      "status": "active",
+      "categoryIds": [],
+      "status": "next_up",
       "priority": 2,
       "plannedHours": 3,
       "deadline": null,
@@ -556,6 +566,7 @@
     {
       "id": "demo-history-2026-06-29-portia",
       "projectId": "portia",
+      "categoryIds": [],
       "date": "2026-06-29",
       "time": null,
       "durationMinutes": 246,
@@ -569,6 +580,7 @@
     {
       "id": "demo-history-2026-06-29-substack",
       "projectId": "substack",
+      "categoryIds": [],
       "date": "2026-06-29",
       "time": null,
       "durationMinutes": 150,
@@ -582,6 +594,7 @@
     {
       "id": "demo-history-2026-06-29-curriculum",
       "projectId": "curriculum",
+      "categoryIds": [],
       "date": "2026-06-29",
       "time": null,
       "durationMinutes": 192,
@@ -595,6 +608,7 @@
     {
       "id": "demo-history-2026-06-29-vulcano",
       "projectId": "vulcano",
+      "categoryIds": [],
       "date": "2026-06-29",
       "time": null,
       "durationMinutes": 492,
@@ -608,6 +622,7 @@
     {
       "id": "demo-history-2026-06-29-mechinterp",
       "projectId": "mechinterp",
+      "categoryIds": [],
       "date": "2026-06-29",
       "time": null,
       "durationMinutes": 390,
@@ -621,6 +636,7 @@
     {
       "id": "demo-history-2026-06-29-infinitamente",
       "projectId": "infinitamente",
+      "categoryIds": [],
       "date": "2026-06-29",
       "time": null,
       "durationMinutes": 348,
@@ -634,6 +650,7 @@
     {
       "id": "demo-history-2026-06-29-longnow",
       "projectId": "longnow",
+      "categoryIds": [],
       "date": "2026-06-29",
       "time": null,
       "durationMinutes": 210,
@@ -647,6 +664,7 @@
     {
       "id": "demo-history-2026-06-29-aurora",
       "projectId": "aurora",
+      "categoryIds": [],
       "date": "2026-06-29",
       "time": null,
       "durationMinutes": 240,
@@ -660,6 +678,7 @@
     {
       "id": "demo-history-2026-07-06-portia",
       "projectId": "portia",
+      "categoryIds": [],
       "date": "2026-07-06",
       "time": null,
       "durationMinutes": 192,
@@ -673,6 +692,7 @@
     {
       "id": "demo-history-2026-07-06-substack",
       "projectId": "substack",
+      "categoryIds": [],
       "date": "2026-07-06",
       "time": null,
       "durationMinutes": 120,
@@ -686,6 +706,7 @@
     {
       "id": "demo-history-2026-07-06-curriculum",
       "projectId": "curriculum",
+      "categoryIds": [],
       "date": "2026-07-06",
       "time": null,
       "durationMinutes": 240,
@@ -699,6 +720,7 @@
     {
       "id": "demo-history-2026-07-06-vulcano",
       "projectId": "vulcano",
+      "categoryIds": [],
       "date": "2026-07-06",
       "time": null,
       "durationMinutes": 546,
@@ -712,6 +734,7 @@
     {
       "id": "demo-history-2026-07-06-mechinterp",
       "projectId": "mechinterp",
+      "categoryIds": [],
       "date": "2026-07-06",
       "time": null,
       "durationMinutes": 432,
@@ -725,6 +748,7 @@
     {
       "id": "demo-history-2026-07-06-infinitamente",
       "projectId": "infinitamente",
+      "categoryIds": [],
       "date": "2026-07-06",
       "time": null,
       "durationMinutes": 360,
@@ -738,6 +762,7 @@
     {
       "id": "demo-history-2026-07-06-longnow",
       "projectId": "longnow",
+      "categoryIds": [],
       "date": "2026-07-06",
       "time": null,
       "durationMinutes": 180,
@@ -751,6 +776,7 @@
     {
       "id": "demo-history-2026-07-06-aurora",
       "projectId": "aurora",
+      "categoryIds": [],
       "date": "2026-07-06",
       "time": null,
       "durationMinutes": 228,
@@ -764,6 +790,7 @@
     {
       "id": "demo-history-2026-07-13-portia",
       "projectId": "portia",
+      "categoryIds": [],
       "date": "2026-07-13",
       "time": null,
       "durationMinutes": 168,
@@ -777,6 +804,7 @@
     {
       "id": "demo-history-2026-07-13-substack",
       "projectId": "substack",
+      "categoryIds": [],
       "date": "2026-07-13",
       "time": null,
       "durationMinutes": 90,
@@ -790,6 +818,7 @@
     {
       "id": "demo-history-2026-07-13-curriculum",
       "projectId": "curriculum",
+      "categoryIds": [],
       "date": "2026-07-13",
       "time": null,
       "durationMinutes": 228,
@@ -803,6 +832,7 @@
     {
       "id": "demo-history-2026-07-13-sfprep",
       "projectId": "sfprep",
+      "categoryIds": [],
       "date": "2026-07-13",
       "time": null,
       "durationMinutes": 30,
@@ -816,6 +846,7 @@
     {
       "id": "demo-history-2026-07-13-vulcano",
       "projectId": "vulcano",
+      "categoryIds": [],
       "date": "2026-07-13",
       "time": null,
       "durationMinutes": 678,
@@ -829,6 +860,7 @@
     {
       "id": "demo-history-2026-07-13-mechinterp",
       "projectId": "mechinterp",
+      "categoryIds": [],
       "date": "2026-07-13",
       "time": null,
       "durationMinutes": 480,
@@ -842,6 +874,7 @@
     {
       "id": "demo-history-2026-07-13-infinitamente",
       "projectId": "infinitamente",
+      "categoryIds": [],
       "date": "2026-07-13",
       "time": null,
       "durationMinutes": 432,
@@ -855,6 +888,7 @@
     {
       "id": "demo-history-2026-07-13-longnow",
       "projectId": "longnow",
+      "categoryIds": [],
       "date": "2026-07-13",
       "time": null,
       "durationMinutes": 168,
@@ -868,6 +902,7 @@
     {
       "id": "demo-history-2026-07-13-aurora",
       "projectId": "aurora",
+      "categoryIds": [],
       "date": "2026-07-13",
       "time": null,
       "durationMinutes": 192,
@@ -881,6 +916,7 @@
     {
       "id": "demo-history-2026-07-20-portia",
       "projectId": "portia",
+      "categoryIds": [],
       "date": "2026-07-20",
       "time": null,
       "durationMinutes": 96,
@@ -894,6 +930,7 @@
     {
       "id": "demo-history-2026-07-20-substack",
       "projectId": "substack",
+      "categoryIds": [],
       "date": "2026-07-20",
       "time": null,
       "durationMinutes": 60,
@@ -907,6 +944,7 @@
     {
       "id": "demo-history-2026-07-20-curriculum",
       "projectId": "curriculum",
+      "categoryIds": [],
       "date": "2026-07-20",
       "time": null,
       "durationMinutes": 210,
@@ -920,6 +958,7 @@
     {
       "id": "demo-history-2026-07-20-sfprep",
       "projectId": "sfprep",
+      "categoryIds": [],
       "date": "2026-07-20",
       "time": null,
       "durationMinutes": 60,
@@ -933,6 +972,7 @@
     {
       "id": "demo-history-2026-07-20-vulcano",
       "projectId": "vulcano",
+      "categoryIds": [],
       "date": "2026-07-20",
       "time": null,
       "durationMinutes": 648,
@@ -946,6 +986,7 @@
     {
       "id": "demo-history-2026-07-20-mechinterp",
       "projectId": "mechinterp",
+      "categoryIds": [],
       "date": "2026-07-20",
       "time": null,
       "durationMinutes": 444,
@@ -959,6 +1000,7 @@
     {
       "id": "demo-history-2026-07-20-infinitamente",
       "projectId": "infinitamente",
+      "categoryIds": [],
       "date": "2026-07-20",
       "time": null,
       "durationMinutes": 390,
@@ -972,6 +1014,7 @@
     {
       "id": "demo-history-2026-07-20-longnow",
       "projectId": "longnow",
+      "categoryIds": [],
       "date": "2026-07-20",
       "time": null,
       "durationMinutes": 192,
@@ -985,6 +1028,7 @@
     {
       "id": "demo-history-2026-07-20-aurora",
       "projectId": "aurora",
+      "categoryIds": [],
       "date": "2026-07-20",
       "time": null,
       "durationMinutes": 270,
@@ -998,6 +1042,7 @@
     {
       "id": "demo-history-2026-07-27-portia",
       "projectId": "portia",
+      "categoryIds": [],
       "date": "2026-07-27",
       "time": null,
       "durationMinutes": 60,
@@ -1011,6 +1056,7 @@
     {
       "id": "demo-history-2026-07-27-substack",
       "projectId": "substack",
+      "categoryIds": [],
       "date": "2026-07-27",
       "time": null,
       "durationMinutes": 48,
@@ -1024,6 +1070,7 @@
     {
       "id": "demo-history-2026-07-27-curriculum",
       "projectId": "curriculum",
+      "categoryIds": [],
       "date": "2026-07-27",
       "time": null,
       "durationMinutes": 150,
@@ -1037,6 +1084,7 @@
     {
       "id": "demo-history-2026-07-27-sfprep",
       "projectId": "sfprep",
+      "categoryIds": [],
       "date": "2026-07-27",
       "time": null,
       "durationMinutes": 48,
@@ -1050,6 +1098,7 @@
     {
       "id": "demo-history-2026-07-27-vulcano",
       "projectId": "vulcano",
+      "categoryIds": [],
       "date": "2026-07-27",
       "time": null,
       "durationMinutes": 744,
@@ -1063,6 +1112,7 @@
     {
       "id": "demo-history-2026-07-27-mechinterp",
       "projectId": "mechinterp",
+      "categoryIds": [],
       "date": "2026-07-27",
       "time": null,
       "durationMinutes": 420,
@@ -1076,6 +1126,7 @@
     {
       "id": "demo-history-2026-07-27-infinitamente",
       "projectId": "infinitamente",
+      "categoryIds": [],
       "date": "2026-07-27",
       "time": null,
       "durationMinutes": 360,
@@ -1089,6 +1140,7 @@
     {
       "id": "demo-history-2026-07-27-longnow",
       "projectId": "longnow",
+      "categoryIds": [],
       "date": "2026-07-27",
       "time": null,
       "durationMinutes": 180,
@@ -1102,6 +1154,7 @@
     {
       "id": "demo-history-2026-07-27-aurora",
       "projectId": "aurora",
+      "categoryIds": [],
       "date": "2026-07-27",
       "time": null,
       "durationMinutes": 240,
@@ -1115,6 +1168,7 @@
     {
       "id": "demo-history-2026-08-03-portia",
       "projectId": "portia",
+      "categoryIds": [],
       "date": "2026-08-03",
       "time": null,
       "durationMinutes": 24,
@@ -1128,6 +1182,7 @@
     {
       "id": "demo-history-2026-08-03-substack",
       "projectId": "substack",
+      "categoryIds": [],
       "date": "2026-08-03",
       "time": null,
       "durationMinutes": 42,
@@ -1141,6 +1196,7 @@
     {
       "id": "demo-history-2026-08-03-curriculum",
       "projectId": "curriculum",
+      "categoryIds": [],
       "date": "2026-08-03",
       "time": null,
       "durationMinutes": 120,
@@ -1154,6 +1210,7 @@
     {
       "id": "demo-history-2026-08-03-sfprep",
       "projectId": "sfprep",
+      "categoryIds": [],
       "date": "2026-08-03",
       "time": null,
       "durationMinutes": 90,
@@ -1167,6 +1224,7 @@
     {
       "id": "demo-history-2026-08-03-vulcano",
       "projectId": "vulcano",
+      "categoryIds": [],
       "date": "2026-08-03",
       "time": null,
       "durationMinutes": 780,
@@ -1180,6 +1238,7 @@
     {
       "id": "demo-history-2026-08-03-mechinterp",
       "projectId": "mechinterp",
+      "categoryIds": [],
       "date": "2026-08-03",
       "time": null,
       "durationMinutes": 498,
@@ -1193,6 +1252,7 @@
     {
       "id": "demo-history-2026-08-03-infinitamente",
       "projectId": "infinitamente",
+      "categoryIds": [],
       "date": "2026-08-03",
       "time": null,
       "durationMinutes": 408,
@@ -1206,6 +1266,7 @@
     {
       "id": "demo-history-2026-08-03-longnow",
       "projectId": "longnow",
+      "categoryIds": [],
       "date": "2026-08-03",
       "time": null,
       "durationMinutes": 210,
@@ -1219,6 +1280,7 @@
     {
       "id": "demo-history-2026-08-03-aurora",
       "projectId": "aurora",
+      "categoryIds": [],
       "date": "2026-08-03",
       "time": null,
       "durationMinutes": 210,
@@ -1232,6 +1294,7 @@
     {
       "id": "demo-history-2026-08-10-substack",
       "projectId": "substack",
+      "categoryIds": [],
       "date": "2026-08-10",
       "time": null,
       "durationMinutes": 72,
@@ -1245,6 +1308,7 @@
     {
       "id": "demo-history-2026-08-10-curriculum",
       "projectId": "curriculum",
+      "categoryIds": [],
       "date": "2026-08-10",
       "time": null,
       "durationMinutes": 90,
@@ -1258,6 +1322,7 @@
     {
       "id": "demo-history-2026-08-10-sfprep",
       "projectId": "sfprep",
+      "categoryIds": [],
       "date": "2026-08-10",
       "time": null,
       "durationMinutes": 72,
@@ -1271,6 +1336,7 @@
     {
       "id": "demo-history-2026-08-10-vulcano",
       "projectId": "vulcano",
+      "categoryIds": [],
       "date": "2026-08-10",
       "time": null,
       "durationMinutes": 714,
@@ -1284,6 +1350,7 @@
     {
       "id": "demo-history-2026-08-10-mechinterp",
       "projectId": "mechinterp",
+      "categoryIds": [],
       "date": "2026-08-10",
       "time": null,
       "durationMinutes": 486,
@@ -1297,6 +1364,7 @@
     {
       "id": "demo-history-2026-08-10-infinitamente",
       "projectId": "infinitamente",
+      "categoryIds": [],
       "date": "2026-08-10",
       "time": null,
       "durationMinutes": 420,
@@ -1310,6 +1378,7 @@
     {
       "id": "demo-history-2026-08-10-longnow",
       "projectId": "longnow",
+      "categoryIds": [],
       "date": "2026-08-10",
       "time": null,
       "durationMinutes": 180,
@@ -1323,6 +1392,7 @@
     {
       "id": "demo-history-2026-08-10-aurora",
       "projectId": "aurora",
+      "categoryIds": [],
       "date": "2026-08-10",
       "time": null,
       "durationMinutes": 252,
@@ -1336,6 +1406,7 @@
     {
       "id": "demo-session-2026-08-17-0830-substack",
       "projectId": "substack",
+      "categoryIds": [],
       "date": "2026-08-17",
       "time": "08:30",
       "durationMinutes": 30,
@@ -1348,6 +1419,7 @@
     {
       "id": "demo-session-2026-08-17-0915-vulcano",
       "projectId": "vulcano",
+      "categoryIds": [],
       "date": "2026-08-17",
       "time": "09:15",
       "durationMinutes": 240,
@@ -1360,6 +1432,7 @@
     {
       "id": "demo-session-2026-08-17-1400-mechinterp",
       "projectId": "mechinterp",
+      "categoryIds": [],
       "date": "2026-08-17",
       "time": "14:00",
       "durationMinutes": 120,
@@ -1372,6 +1445,7 @@
     {
       "id": "demo-session-2026-08-18-0830-curriculum",
       "projectId": "curriculum",
+      "categoryIds": [],
       "date": "2026-08-18",
       "time": "08:30",
       "durationMinutes": 102,
@@ -1384,6 +1458,7 @@
     {
       "id": "demo-session-2026-08-18-1030-vulcano",
       "projectId": "vulcano",
+      "categoryIds": [],
       "date": "2026-08-18",
       "time": "10:30",
       "durationMinutes": 180,
@@ -1396,6 +1471,7 @@
     {
       "id": "demo-session-2026-08-18-1500-mechinterp",
       "projectId": "mechinterp",
+      "categoryIds": [],
       "date": "2026-08-18",
       "time": "15:00",
       "durationMinutes": 120,
@@ -1408,6 +1484,7 @@
     {
       "id": "demo-session-2026-08-19-0845-sfprep",
       "projectId": "sfprep",
+      "categoryIds": [],
       "date": "2026-08-19",
       "time": "08:45",
       "durationMinutes": 72,
@@ -1420,6 +1497,7 @@
     {
       "id": "demo-session-2026-08-19-1015-vulcano",
       "projectId": "vulcano",
+      "categoryIds": [],
       "date": "2026-08-19",
       "time": "10:15",
       "durationMinutes": 120,
@@ -1432,6 +1510,7 @@
     {
       "id": "demo-session-2026-08-19-1400-mechinterp",
       "projectId": "mechinterp",
+      "categoryIds": [],
       "date": "2026-08-19",
       "time": "14:00",
       "durationMinutes": 120,
@@ -1444,6 +1523,7 @@
     {
       "id": "demo-session-2026-08-20-0830-vulcano",
       "projectId": "vulcano",
+      "categoryIds": [],
       "date": "2026-08-20",
       "time": "08:30",
       "durationMinutes": 192,
@@ -1456,6 +1536,7 @@
     {
       "id": "demo-session-2026-08-20-1330-infinitamente",
       "projectId": "infinitamente",
+      "categoryIds": [],
       "date": "2026-08-20",
       "time": "13:30",
       "durationMinutes": 180,
@@ -1468,6 +1549,7 @@
     {
       "id": "demo-session-2026-08-21-0800-vulcano",
       "projectId": "vulcano",
+      "categoryIds": [],
       "date": "2026-08-21",
       "time": "08:00",
       "durationMinutes": 120,
@@ -1480,6 +1562,7 @@
     {
       "id": "demo-session-2026-08-21-1015-infinitamente",
       "projectId": "infinitamente",
+      "categoryIds": [],
       "date": "2026-08-21",
       "time": "10:15",
       "durationMinutes": 204,
@@ -1492,6 +1575,7 @@
     {
       "id": "demo-session-2026-08-21-1400-longnow",
       "projectId": "longnow",
+      "categoryIds": [],
       "date": "2026-08-21",
       "time": "14:00",
       "durationMinutes": 141,
@@ -1504,6 +1588,7 @@
     {
       "id": "demo-session-2026-08-21-1630-aurora",
       "projectId": "aurora",
+      "categoryIds": [],
       "date": "2026-08-21",
       "time": "16:30",
       "durationMinutes": 234,
@@ -1516,6 +1601,7 @@
     {
       "id": "demo-session-2026-08-22-0702-longnow",
       "projectId": "longnow",
+      "categoryIds": [],
       "date": "2026-08-22",
       "time": "07:02",
       "durationMinutes": 45,
@@ -1528,6 +1614,7 @@
     {
       "id": "demo-session-2026-08-22-0747-inbox",
       "projectId": null,
+      "categoryIds": [],
       "date": "2026-08-22",
       "time": "07:47",
       "durationMinutes": 28,
@@ -1540,6 +1627,7 @@
     {
       "id": "demo-session-2026-08-22-0815-mechinterp",
       "projectId": "mechinterp",
+      "categoryIds": [],
       "date": "2026-08-22",
       "time": "08:15",
       "durationMinutes": 19,
@@ -1552,6 +1640,7 @@
     {
       "id": "demo-session-2026-08-22-0900-mechinterp",
       "projectId": "mechinterp",
+      "categoryIds": [],
       "date": "2026-08-22",
       "time": "09:00",
       "durationMinutes": 89,

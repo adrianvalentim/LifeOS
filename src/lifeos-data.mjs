@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { copyFile, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import {
+  DEFAULT_STORE_PATH,
+  DEMO_STORE_PATH,
+  ROOT_DIR,
+  backUpStore,
+  initializeDefaultStore,
+} from './lifeos-storage.mjs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-export const ROOT_DIR = path.resolve(__dirname, '..');
-export const DEFAULT_STORE_PATH = path.join(ROOT_DIR, 'data', 'lifeos.json');
-export const DEMO_STORE_PATH = path.join(ROOT_DIR, 'data', 'lifeos.demo.json');
-export const CURRENT_SCHEMA_VERSION = 4;
+export { DEFAULT_STORE_PATH, DEMO_STORE_PATH, ROOT_DIR } from './lifeos-storage.mjs';
+export const CURRENT_SCHEMA_VERSION = 6;
 export const ACTIVITY_TYPES = [
   'deep_work',
   'shallow_work',
@@ -17,15 +19,18 @@ export const ACTIVITY_TYPES = [
   'creative',
   'communication',
 ];
+export const PROJECT_STATUSES = ['to_do', 'next_up', 'doing', 'done', 'dropped'];
 export const READING_STATUSES = ['to_read', 'next_up', 'reading', 'finished', 'dropped'];
 
 const HEALTH_ORDER = { critical: 0, attention: 1, healthy: 2 };
+const ACTIVE_PROJECT_STATUSES = new Set(['to_do', 'next_up', 'doing']);
 const READING_STATUS_ORDER = Object.fromEntries(READING_STATUSES.map((status, index) => [status, index]));
 const DAY_MS = 86_400_000;
 const LOCK_TIMEOUT_MS = 5_000;
 const STALE_LOCK_MS = 30_000;
 
 export async function readStore(storePath = DEFAULT_STORE_PATH) {
+  if (isDefaultStorePath(storePath)) await initializeDefaultStore();
   const raw = await readFile(storePath, 'utf8');
   let store;
   try {
@@ -46,6 +51,7 @@ export async function writeStore(store, storePath = DEFAULT_STORE_PATH) {
   const tempPath = path.join(directory, `.${filename}.${process.pid}.${randomUUID()}.tmp`);
   const backupPath = `${storePath}.bak`;
 
+  await mkdir(directory, { recursive: true });
   try {
     await copyFile(storePath, backupPath);
   } catch (error) {
@@ -67,15 +73,26 @@ export async function writeStore(store, storePath = DEFAULT_STORE_PATH) {
 }
 
 export async function mutateStore(mutator, storePath = DEFAULT_STORE_PATH) {
+  if (isDefaultStorePath(storePath)) await initializeDefaultStore();
   const release = await acquireStoreLock(storePath);
+  let result;
+  let store;
   try {
-    const store = await readStore(storePath);
-    const result = await mutator(store);
+    store = await readStore(storePath);
+    result = await mutator(store);
     await writeStore(store, storePath);
-    return { result, store };
   } finally {
     await release();
   }
+
+  if (!isDefaultStorePath(storePath)) return { result, store, backup: { configured: false, ok: null } };
+  const backup = await backUpStore(store);
+  if (backup.ok === false) console.warn(`LifeOS cloud backup failed: ${backup.error}`);
+  return { result, store, backup };
+}
+
+function isDefaultStorePath(storePath) {
+  return path.resolve(storePath) === path.resolve(DEFAULT_STORE_PATH);
 }
 
 export function migrateStore(input) {
@@ -94,6 +111,31 @@ export function migrateStore(input) {
       if (!Array.isArray(book.tags)) book.tags = [];
     }
   }
+  if (version < 5) {
+    for (const project of store.projects || []) {
+      if (PROJECT_STATUSES.includes(project.status)) continue;
+      const legacyStatus = normalizeText(project.status);
+      if (legacyStatus === 'active') project.status = 'next_up';
+      else if (['complete', 'completed', 'finished', 'done'].includes(legacyStatus)) project.status = 'done';
+      else if (['todo', 'to do', 'planned', 'backlog'].includes(legacyStatus)) project.status = 'to_do';
+      else if (['doing', 'in progress'].includes(legacyStatus)) project.status = 'doing';
+      else project.status = 'dropped';
+    }
+  }
+  if (version < 6) {
+    if (!store.categories || typeof store.categories !== 'object' || Array.isArray(store.categories)) {
+      store.categories = {};
+    }
+    for (const project of store.projects || []) {
+      if (!Array.isArray(project.categoryIds)) project.categoryIds = [];
+    }
+    for (const entry of store.timeEntries || []) {
+      if (!Array.isArray(entry.categoryIds)) entry.categoryIds = [];
+    }
+    if (store.activeSession && !Array.isArray(store.activeSession.categoryIds)) {
+      store.activeSession.categoryIds = [];
+    }
+  }
   if (store.meta) store.meta.schemaVersion = CURRENT_SCHEMA_VERSION;
   return store;
 }
@@ -104,6 +146,9 @@ export function validateStore(store) {
   }
   if (!store.meta || !store.meta.timezone) throw new Error('LifeOS data requires meta.timezone.');
   if (!store.domains || typeof store.domains !== 'object') throw new Error('LifeOS data requires domains.');
+  if (!store.categories || typeof store.categories !== 'object' || Array.isArray(store.categories)) {
+    throw new Error('LifeOS data requires categories.');
+  }
   if (!store.settings?.weeklyPlanByDomain) throw new Error('LifeOS data requires settings.weeklyPlanByDomain.');
   if (!Array.isArray(store.projects)) throw new Error('LifeOS data requires a projects array.');
   if (!Array.isArray(store.timeEntries)) throw new Error('LifeOS data requires a timeEntries array.');
@@ -111,11 +156,27 @@ export function validateStore(store) {
     throw new Error('LifeOS data requires reading.books.');
   }
 
+  const categoryIds = new Set();
+  const categoryLabels = new Set();
+  for (const [categoryId, category] of Object.entries(store.categories)) {
+    const label = String(category?.label || '').trim();
+    const normalizedLabel = normalizeText(label);
+    if (!categoryId || !label || !normalizedLabel || categoryLabels.has(normalizedLabel)) {
+      throw new Error(`Invalid or duplicate category: ${categoryId || '(missing id)'}.`);
+    }
+    categoryIds.add(categoryId);
+    categoryLabels.add(normalizedLabel);
+  }
+
   const projectIds = new Set();
   for (const project of store.projects) {
     if (!project?.id || !project.name || !project.domain) throw new Error('Every project needs id, name, and domain.');
     if (projectIds.has(project.id)) throw new Error(`Duplicate project id: ${project.id}`);
     if (!store.domains[project.domain]) throw new Error(`Unknown domain on ${project.name}: ${project.domain}`);
+    if (!PROJECT_STATUSES.includes(project.status)) {
+      throw new Error(`Project ${project.id} has unknown status ${project.status}.`);
+    }
+    validateCategoryIds(project.categoryIds, categoryIds, `Project ${project.id}`);
     projectIds.add(project.id);
   }
 
@@ -128,10 +189,21 @@ export function validateStore(store) {
     if (entry.projectId && !projectIds.has(entry.projectId)) {
       throw new Error(`Time entry ${entry.id} references missing project ${entry.projectId}.`);
     }
+    if (entry.domain && !store.domains[entry.domain]) {
+      throw new Error(`Time entry ${entry.id} references missing domain ${entry.domain}.`);
+    }
+    validateCategoryIds(entry.categoryIds, categoryIds, `Time entry ${entry.id}`);
     if (!ACTIVITY_TYPES.includes(entry.activityType)) {
       throw new Error(`Time entry ${entry.id} has unknown activity type ${entry.activityType}.`);
     }
     entryIds.add(entry.id);
+  }
+
+  if (store.activeSession) {
+    if (store.activeSession.projectId && !projectIds.has(store.activeSession.projectId)) {
+      throw new Error(`Active session references missing project ${store.activeSession.projectId}.`);
+    }
+    validateCategoryIds(store.activeSession.categoryIds, categoryIds, 'Active session');
   }
 
   const bookIds = new Set();
@@ -145,6 +217,9 @@ export function validateStore(store) {
     }
     if (!Number.isFinite(Number(book.sortOrder))) {
       throw new Error(`Reading book ${book.id} needs a finite sortOrder.`);
+    }
+    if (book.finishedAt != null && Number.isNaN(new Date(book.finishedAt).getTime())) {
+      throw new Error(`Reading book ${book.id} has an invalid date read.`);
     }
     if (!Array.isArray(book.tags) || book.tags.length > 24) {
       throw new Error(`Reading book ${book.id} needs no more than 24 tags.`);
@@ -170,6 +245,16 @@ export function normalizeText(value) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+function validateCategoryIds(values, knownIds, owner) {
+  if (!Array.isArray(values) || values.length > 12) {
+    throw new Error(`${owner} needs no more than 12 categoryIds.`);
+  }
+  const unique = new Set(values);
+  if (unique.size !== values.length || values.some((categoryId) => !knownIds.has(categoryId))) {
+    throw new Error(`${owner} has invalid, duplicate, or unknown categoryIds.`);
+  }
 }
 
 export function dateOnly(value = new Date(), timeZone = 'UTC') {
@@ -240,6 +325,44 @@ export function findProject(store, query) {
   return projectMatches(store, query).at(0) || null;
 }
 
+export function requireProject(store, query) {
+  const matches = projectMatches(store, query);
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) {
+    throw new Error(`Ambiguous project: ${query}. Matches: ${matches.map((project) => project.name).join(', ')}`);
+  }
+  throw new Error(`Project not found: ${query}`);
+}
+
+export function findCategory(store, query) {
+  const needle = normalizeText(query);
+  if (!needle) return null;
+  const categories = Object.entries(store.categories || {})
+    .map(([id, category]) => ({ id, ...category }));
+  const exact = categories.find((category) => (
+    normalizeText(category.id) === needle || normalizeText(category.label) === needle
+  ));
+  if (exact) return exact;
+  return categories.find((category) => normalizeText(category.label).includes(needle)) || null;
+}
+
+function ensureCategory(store, label) {
+  const cleanLabel = String(label || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  if (!normalizeText(cleanLabel)) throw new Error('A category name is required.');
+  const existing = findCategory(store, cleanLabel);
+  if (existing && normalizeText(existing.label) === normalizeText(cleanLabel)) return existing;
+
+  const baseId = normalizeText(cleanLabel).replaceAll(' ', '-');
+  let id = baseId;
+  let suffix = 2;
+  while (store.categories[id]) {
+    id = `${baseId}-${suffix}`;
+    suffix += 1;
+  }
+  store.categories[id] = { label: cleanLabel };
+  return { id, ...store.categories[id] };
+}
+
 export function parseDurationToMinutes(input) {
   const text = String(input || '').toLowerCase().replace(/,/g, '.');
   let minutes = 0;
@@ -291,6 +414,7 @@ export function createTimeEntry(store, input) {
   return {
     id: input.id || randomUUID(),
     projectId: project?.id || null,
+    categoryIds: [...new Set(input.categoryIds || [])],
     date,
     time,
     durationMinutes: Math.round(durationMinutes),
@@ -324,6 +448,7 @@ export async function startSession(input, storePath = DEFAULT_STORE_PATH) {
     current.activeSession = {
       id: randomUUID(),
       projectId: project?.id || null,
+      categoryIds: [...new Set(input.categoryIds || [])],
       activityType: input.activityType || inferActivityType(input.description || project?.name || ''),
       description: input.description || `Focused work on ${project?.name || 'general work'}`,
       rawInput: input.rawInput || input.description || '',
@@ -343,6 +468,7 @@ export async function stopSession(input = {}, storePath = DEFAULT_STORE_PATH) {
     const startedAt = new Date(session.startedAt);
     const entry = createTimeEntry(current, {
       projectId: session.projectId,
+      categoryIds: session.categoryIds,
       durationMinutes: input.durationMinutes || elapsed,
       activityType: input.activityType || session.activityType,
       description: input.description || session.description,
@@ -358,6 +484,104 @@ export async function stopSession(input = {}, storePath = DEFAULT_STORE_PATH) {
     return { session, entry };
   }, storePath);
   return { ...result, state: buildState(store, { now: input.now || input.stoppedAt }) };
+}
+
+export async function setProjectStatus(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const status = requireProjectStatus(input.status);
+  const { result: project, store } = await mutateStore((current) => {
+    const existing = current.projects.find((candidate) => candidate.id === input.projectId);
+    if (!existing) throw new Error(`Project not found: ${input.projectId}`);
+    if (existing.status === status) return existing;
+    existing.status = status;
+    existing.statusChangedAt = now.toISOString();
+    return existing;
+  }, storePath);
+  return { project, state: buildState(store, { now }) };
+}
+
+export async function addProjectCategory(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const { result, store } = await mutateStore((current) => {
+    const project = current.projects.find((candidate) => candidate.id === input.projectId);
+    if (!project) throw new Error(`Project not found: ${input.projectId}`);
+    const category = ensureCategory(current, input.category);
+    if (!project.categoryIds.includes(category.id)) project.categoryIds.push(category.id);
+    return { project, category };
+  }, storePath);
+  return { ...result, state: buildState(store, { now }) };
+}
+
+export async function deleteProject(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const { result, store } = await mutateStore((current) => {
+    const projectIndex = current.projects.findIndex((candidate) => candidate.id === input.projectId);
+    if (projectIndex < 0) throw new Error(`Project not found: ${input.projectId}`);
+    const project = current.projects[projectIndex];
+    if (current.challenge?.projectId === project.id) {
+      throw new Error(`Project ${project.name} is used by the active challenge and cannot be deleted.`);
+    }
+
+    const referencedEntries = current.timeEntries.filter((entry) => entry.projectId === project.id);
+    const activeSessionUsesProject = current.activeSession?.projectId === project.id;
+    let preservedCategory = null;
+    if (input.preserveCategory) preservedCategory = ensureCategory(current, input.preserveCategory);
+    const preservedCategoryIds = [...new Set([
+      ...project.categoryIds,
+      ...(preservedCategory ? [preservedCategory.id] : []),
+    ])];
+    if ((referencedEntries.length || activeSessionUsesProject) && !preservedCategoryIds.length) {
+      throw new Error(`Project ${project.name} still has time history. Use preserveCategory to retain it before deletion.`);
+    }
+
+    for (const entry of referencedEntries) {
+      entry.projectId = null;
+      entry.domain ||= project.domain;
+      entry.categoryIds = [...new Set([...entry.categoryIds, ...preservedCategoryIds])];
+    }
+    if (activeSessionUsesProject) {
+      current.activeSession.projectId = null;
+      current.activeSession.categoryIds = [...new Set([
+        ...current.activeSession.categoryIds,
+        ...preservedCategoryIds,
+      ])];
+    }
+    current.projects.splice(projectIndex, 1);
+    return {
+      project,
+      preservedCategory,
+      preservedEntryCount: referencedEntries.length,
+      preservedActiveSession: Boolean(activeSessionUsesProject),
+    };
+  }, storePath);
+  return { ...result, state: buildState(store, { now }) };
+}
+
+export function buildCategoryStats(store, query, options = {}) {
+  const copy = migrateStore(store);
+  validateStore(copy);
+  const category = findCategory(copy, query);
+  if (!category) throw new Error(`Category not found: ${query}`);
+  const now = resolveNow(options.now);
+  const today = dateOnly(now, copy.meta.timezone);
+  const range = ['week', 'month', 'quarter', 'year'].includes(options.range) ? options.range : 'week';
+  const bounds = rangeBounds(range, today);
+  const entries = filterEntries(copy.timeEntries, bounds)
+    .filter((entry) => entryCategoryIds(copy, entry).includes(category.id));
+  const minutes = sumMinutes(entries);
+  return {
+    category,
+    range,
+    rangeLabel: rangeLabels(today)[range],
+    bounds,
+    entryCount: entries.length,
+    totalMinutes: minutes,
+    totalHours: round1(minutes / 60),
+    totalLabel: formatMinutes(minutes),
+    projects: copy.projects
+      .filter((project) => project.categoryIds.includes(category.id))
+      .map((project) => ({ id: project.id, name: project.name, status: project.status })),
+  };
 }
 
 export async function addReadingBook(input, storePath = DEFAULT_STORE_PATH) {
@@ -401,12 +625,46 @@ export async function setReadingBookStatus(input, storePath = DEFAULT_STORE_PATH
 }
 
 export async function reorderReadingBook(input, storePath = DEFAULT_STORE_PATH) {
+  const hasPlacement = input.status !== undefined;
   const direction = input.direction === 'up' ? -1 : input.direction === 'down' ? 1 : 0;
-  if (!direction) throw new Error('Reading order direction must be up or down.');
+  if (!hasPlacement && !direction) throw new Error('Reading order direction must be up or down.');
+  const status = hasPlacement ? requireReadingStatus(input.status) : null;
+  const beforeBookId = input.beforeBookId === null || input.beforeBookId === undefined
+    ? null
+    : String(input.beforeBookId).trim();
+  if (hasPlacement && input.beforeBookId !== null && input.beforeBookId !== undefined && !beforeBookId) {
+    throw new Error('Reading position target must be a book ID or null.');
+  }
   const now = resolveNow(input.now);
   const { result: book, store } = await mutateStore((current) => {
     const existing = current.reading.books.find((candidate) => candidate.id === input.bookId);
     if (!existing) throw new Error(`Reading book not found: ${input.bookId}`);
+    if (hasPlacement) {
+      const previousStatus = existing.status;
+      const siblings = current.reading.books
+        .filter((candidate) => candidate.status === status && candidate.id !== existing.id)
+        .sort(compareReadingBooks);
+      const targetIndex = beforeBookId === null
+        ? siblings.length
+        : siblings.findIndex((candidate) => candidate.id === beforeBookId);
+      if (targetIndex < 0) throw new Error(`Reading position target not found in ${status}: ${beforeBookId}`);
+
+      siblings.splice(targetIndex, 0, existing);
+      existing.status = status;
+      for (const [index, sibling] of siblings.entries()) {
+        const sortOrder = index + 1;
+        if (Number(sibling.sortOrder) === sortOrder && sibling.status === status) continue;
+        sibling.sortOrder = sortOrder;
+        sibling.updatedAt = now.toISOString();
+      }
+      if (previousStatus !== status) {
+        existing.statusChangedAt = now.toISOString();
+        existing.updatedAt = now.toISOString();
+        applyReadingStatusDates(existing, status, now.toISOString());
+      }
+      return existing;
+    }
+
     const siblings = current.reading.books
       .filter((candidate) => candidate.status === existing.status)
       .sort(compareReadingBooks);
@@ -430,6 +688,23 @@ export async function updateReadingBookTags(input, storePath = DEFAULT_STORE_PAT
     const existing = current.reading.books.find((candidate) => candidate.id === input.bookId);
     if (!existing) throw new Error(`Reading book not found: ${input.bookId}`);
     existing.tags = tags;
+    existing.updatedAt = now.toISOString();
+    return existing;
+  }, storePath);
+  return { book, state: buildState(store, { now }) };
+}
+
+export async function updateReadingBookFinishedDate(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const finishedDate = requireOptionalDateOnly(input.date, 'Date read');
+  const { result: book, store } = await mutateStore((current) => {
+    const existing = current.reading.books.find((candidate) => candidate.id === input.bookId);
+    if (!existing) throw new Error(`Reading book not found: ${input.bookId}`);
+    if (existing.status !== 'finished') throw new Error('A date read can only be set for a finished book.');
+    if (finishedDate && finishedDate > dateOnly(now, current.meta.timezone)) {
+      throw new Error('Date read cannot be in the future.');
+    }
+    existing.finishedAt = finishedDate ? `${finishedDate}T12:00:00.000Z` : null;
     existing.updatedAt = now.toISOString();
     return existing;
   }, storePath);
@@ -531,14 +806,23 @@ export function buildState(store, options = {}) {
   const currentWeekEntries = filterEntries(copy.timeEntries, currentWeekBounds);
   const rangeEntries = filterEntries(copy.timeEntries, selectedBounds);
   const actualByDomain = Object.fromEntries(Object.keys(copy.domains).map((key) => [key, 0]));
+  const actualByCategory = Object.fromEntries(Object.keys(copy.categories).map((key) => [key, 0]));
+  const projectsById = new Map(copy.projects.map((project) => [project.id, project]));
 
   for (const entry of rangeEntries) {
-    const project = entry.projectId ? copy.projects.find((candidate) => candidate.id === entry.projectId) : null;
-    if (project && actualByDomain[project.domain] !== undefined) {
-      actualByDomain[project.domain] += Number(entry.durationMinutes || 0) / 60;
+    const project = entry.projectId ? projectsById.get(entry.projectId) : null;
+    const domainId = project?.domain || entry.domain;
+    if (domainId && actualByDomain[domainId] !== undefined) {
+      actualByDomain[domainId] += Number(entry.durationMinutes || 0) / 60;
+    }
+    for (const categoryId of entryCategoryIds(copy, entry)) {
+      if (actualByCategory[categoryId] !== undefined) {
+        actualByCategory[categoryId] += Number(entry.durationMinutes || 0) / 60;
+      }
     }
   }
   for (const key of Object.keys(actualByDomain)) actualByDomain[key] = round1(actualByDomain[key]);
+  for (const key of Object.keys(actualByCategory)) actualByCategory[key] = round1(actualByCategory[key]);
 
   const composition = composeEntries(rangeEntries);
   const rangeMinutes = sumMinutes(rangeEntries);
@@ -549,8 +833,8 @@ export function buildState(store, options = {}) {
   const plannedRangeHours = round1(weeklyPlanHours * rangeDays / 7);
   const rangeHours = round1(rangeMinutes / 60);
   const deepRatio = rangeMinutes ? composition.deepMinutes / rangeMinutes : 0;
-  const activeCount = projects.filter((project) => project.status === 'active').length;
-  const criticalCount = projects.filter((project) => project.status === 'active' && project.health === 'critical').length;
+  const activeCount = projects.filter((project) => ACTIVE_PROJECT_STATUSES.has(project.status)).length;
+  const criticalCount = projects.filter((project) => ACTIVE_PROJECT_STATUSES.has(project.status) && project.health === 'critical').length;
   const monthBounds = rangeBounds('month', today);
   const yearBounds = rangeBounds('year', today);
   const challenge = hydrateChallenge(copy.challenge, copy.timeEntries, today);
@@ -595,6 +879,7 @@ export function buildState(store, options = {}) {
       bounds: selectedBounds,
       labels: rangeLabels(today),
       actualByDomain,
+      actualByCategory,
       composition: {
         deep: round1(composition.deepMinutes / 60),
         shallow: round1(composition.shallowMinutes / 60),
@@ -677,9 +962,25 @@ function sameReadingBook(existing, candidate) {
     && normalizeText(existing.authors?.[0]) === normalizeText(candidate.authors?.[0]);
 }
 
+function requireProjectStatus(value) {
+  if (!PROJECT_STATUSES.includes(value)) throw new Error(`Unknown project status: ${value}`);
+  return value;
+}
+
 function requireReadingStatus(value) {
   if (!READING_STATUSES.includes(value)) throw new Error(`Unknown reading status: ${value}`);
   return value;
+}
+
+function requireOptionalDateOnly(value, label) {
+  if (value === null || value === undefined || value === '') return null;
+  const date = String(value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`${label} must use YYYY-MM-DD.`);
+  const parsed = new Date(`${date}T12:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    throw new Error(`${label} must be a real calendar date.`);
+  }
+  return date;
 }
 
 function applyReadingStatusDates(book, status, timestamp) {
@@ -793,6 +1094,13 @@ function latestProjectTouch(projectId, entries) {
   return latest.createdAt || `${latest.date}T${latest.time || '12:00'}:00Z`;
 }
 
+function entryCategoryIds(store, entry) {
+  const project = entry.projectId
+    ? store.projects.find((candidate) => candidate.id === entry.projectId)
+    : null;
+  return [...new Set([...(entry.categoryIds || []), ...(project?.categoryIds || [])])];
+}
+
 function hydrateProjects(store, options = {}) {
   const now = resolveNow(options.now);
   const today = dateOnly(now, store.meta.timezone);
@@ -804,6 +1112,7 @@ function hydrateProjects(store, options = {}) {
     const health = calculateProjectHealth(project, store, { now, weekHours, lastTouched });
     return {
       ...project,
+      categoryLabels: project.categoryIds.map((categoryId) => store.categories[categoryId].label),
       health,
       dueInDays: daysUntil(project.deadline, today),
       lastTouched,
@@ -822,7 +1131,7 @@ function hydrateProjects(store, options = {}) {
 
 function buildRecommendations(projects) {
   const ranked = projects
-    .filter((project) => project.status === 'active')
+    .filter((project) => ACTIVE_PROJECT_STATUSES.has(project.status))
     .map((project) => ({ project, score: projectRiskScore(project) }))
     .sort((a, b) => b.score - a.score);
 

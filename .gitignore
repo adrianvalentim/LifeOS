@@ -3,10 +3,14 @@
 node_modules/
 .env
 .env.*
+.codex/
 dist/
+src-tauri/target/
+src-tauri/gen/
 coverage/
 npm-debug.log*
 data/*.bak
 data/*.lock
 data/.*.tmp
+reading-covers/
 .playwright-cli/

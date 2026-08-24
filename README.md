@@ -1,127 +1,125 @@
 # LifeOS
 
-LifeOS is a local personal almanac for answering three questions:
+LifeOS is a local-first personal almanac for coordinating projects, focused
+work, and reading. It is built to answer four practical questions:
 
 1. Where is my time going?
 2. What is the state of my projects?
 3. What should I do next?
+4. What am I reading now and next?
 
-It also keeps a visual reading library: what is merely on the long list, what is next, what is in progress, and what has been finished or dropped.
+It combines an editorial dashboard, a portable JSON store, a concise CLI, and a
+Codex rail connected to the Codex installation and ChatGPT account already on
+the computer.
 
-It combines a compact editorial dashboard, a portable JSON data store, a command-line interface, and a Codex rail connected to the installed Codex application.
+## What makes it different
 
-For a detailed implementation handoff—including architecture, data semantics, design decisions, maintenance procedures, known limitations, and the safest next work—see [`PROJECT_STATE.md`](PROJECT_STATE.md).
+- **Local-first by construction.** The live personal store sits in the
+  operating system's application-data directory, outside the repository.
+- **One source of truth.** Project health, recommendations, time allocation,
+  streaks, and charts are derived from source records rather than maintained as
+  separate display totals.
+- **Codex without another AI account.** The rail uses the installed
+  `codex app-server` and its signed-in ChatGPT account—no OpenAI API key, SDK
+  client, alternate model, or per-request API billing.
+- **Transparent and recoverable.** Writes are validated, locked, atomically
+  replaced, and backed by a local recovery copy. Optional Google Drive snapshots
+  go only to one explicitly selected folder.
+- **A deliberately small stack.** The main app uses Node.js and browser-native
+  HTML, CSS, JavaScript, JSON, and Server-Sent Events. There is no hosted
+  backend, database daemon, or frontend framework.
 
-## Run it
+## Current capabilities
 
-Requirements: Node.js 20+ and the Codex desktop app or Codex CLI signed in with a ChatGPT account.
+- Projects list and focused Kanban with five persistent workflow states,
+  reusable categories, deadlines, progress, health, streaks, and weekly effort.
+- Today view with recommendations and a real start/stop timer.
+- Week, month, quarter, and year analytics derived from recorded work.
+- Reading Kanban and full library with tags, queue ordering, date read, Open
+  Library import, local cover caching, and confirmed deletion.
+- Workspace-scoped Codex tasks with streaming output, interruption, approvals,
+  and user questions.
+- Source-backed macOS Tauri development app plus browser mode.
+
+## Privacy boundaries
+
+The default live store is never read from or written to this Git repository:
+
+```text
+macOS    ~/Library/Application Support/LifeOS/lifeos.json
+Windows  %APPDATA%/LifeOS/lifeos.json
+Linux    $XDG_DATA_HOME/lifeos/lifeos.json
+```
+
+`LIFEOS_DATA_DIR` can override that location. The repository contains only the
+deterministic demonstration data in `data/`; backups, locks, temporary files,
+cached covers, environment files, and local Codex state are ignored.
+
+LifeOS reads the signed-in Codex account and workspace tasks at runtime. It does
+not copy Codex transcripts, prompts, approvals, account metadata, or
+authentication material into the LifeOS store or repository. The selected task
+ID stays in browser `localStorage`; the installed Codex application remains the
+owner of Codex task history.
+
+The server binds only to `127.0.0.1`. It has no remote-access authentication, so
+that loopback boundary must be preserved. Book lookup sends a query to Open
+Library only after an explicit search.
+
+## Run locally
+
+Requirements: Node.js 20 or newer. The Codex rail additionally requires the
+Codex desktop app or CLI signed in with a ChatGPT account.
 
 ```bash
+npm install
 npm run dev
 ```
 
-Open the local address printed in the terminal, normally `http://127.0.0.1:3000`. If that port is occupied, LifeOS selects the next available port.
+Open the printed loopback URL, normally `http://127.0.0.1:3000`. LifeOS chooses
+a nearby free port when 3000 is occupied.
 
-No dependency installation, database server, API key, or OpenAI API billing is required.
-
-## How it is built
-
-```text
-Browser UI
-   |-- local JSON API --------> data/lifeos.json
-   |                              ^
-   |                              | atomic writes + backup + lock
-   |                              v
-   |                           LifeOS CLI
-   |
-   `-- local Codex bridge ----> installed `codex app-server`
-                                  `-- signed-in ChatGPT account
-```
-
-- `public/` is a dependency-free HTML/CSS/JavaScript interface.
-- `scripts/dev-server.mjs` is the local Node HTTP server and live-update stream.
-- `src/lifeos-data.mjs` validates data and calculates every visible statistic.
-- `src/book-catalog.mjs` searches and normalizes Open Library results without an API key.
-- `src/codex-app-server.mjs` speaks the installed Codex app-server protocol over a local child process.
-- `cli/lifeos.mjs` gives Codex a concise, stable way to operate the data without rereading the application.
-- `data/lifeos.json` is the active, portable data store.
-- `data/lifeos.demo.json` is a clean demonstration snapshot.
-
-This is intentionally a small cross-platform foundation: Node and browser APIs work on macOS, Linux, and Windows. Codex executable discovery supports the macOS app bundle and normal `PATH` installations; `CODEX_EXECUTABLE` can override the location. A native shell such as Tauri can be added later without replacing the data or interface layers.
-
-## Codex rail
-
-The rail is a front end to Codex, not a separate chatbot:
-
-- It uses the locally installed Codex executable and the account already signed into it.
-- It lists only Codex tasks whose working directory is this LifeOS project.
-- The most recent task is selected automatically; a saved selection is restored on reload.
-- New and resumed tasks receive compact LifeOS instructions: use `AGENTS.md` and the CLI first, and inspect source files only for actual implementation work.
-- Messages, streamed output, commands, file changes, approvals, and user questions are shown in the rail.
-- Data changes made by Codex are detected and reflected in the dashboard automatically.
-
-Voice is the one requested part that the installed Codex bridge cannot currently provide under the no-API constraint. A live check found that the app server does not expose the desktop application's dictation feature to ChatGPT-account clients; its separate realtime conversation route requires API-key authentication. LifeOS therefore leaves voice visibly unavailable instead of quietly adding Whisper, Ollama, browser speech services, or an OpenAI API key. Typed chat remains fully connected to the current Codex account. If Codex later exposes subscription-authenticated dictation through app-server, this boundary can be revisited.
-
-## Demo data and real data
-
-Every dashboard number is derived from `projects`, `timeEntries`, `reading.books`, `settings`, `challenge`, and `milestones` in `data/lifeos.json`. There are no separate display totals to keep synchronized.
-
-To prove the data path, change or add a time entry and refresh; the project hours, health, Today total, ranges, domain chart, composition, heatmap, deep-work counters, and recommendation will recompute. Changes made while the app is open appear automatically.
-
-To restore the clean demonstration snapshot:
-
-```bash
-npm run demo:reset
-```
-
-This intentionally overwrites the active `data/lifeos.json`. Once you begin entering real data, keep `data/lifeos.demo.json` as the example and do not run that reset command.
-
-The safest way to add time is through the Codex rail or CLI:
-
-```bash
-npm run lifeos -- log --project "Vulcano" --duration 180 --type creative --desc "Edited eclipse sequence"
-npm run lifeos -- session start --project "Portia" --type creative --desc "Draft Act III"
-npm run lifeos -- session stop
-```
-
-Other useful commands:
+Useful CLI commands:
 
 ```bash
 npm run lifeos -- projects --health
 npm run lifeos -- stats --range month
 npm run lifeos -- recommend
+npm run lifeos -- log --project "Vulcano" --duration 90 --type creative --desc "Edited sequence"
+npm run lifeos -- session start --project "Portia" --type creative --desc "Draft Act III"
+npm run lifeos -- session stop
+npm run lifeos -- storage status
 ```
 
-Writes are serialized with a short lock, written through a temporary file, and keep the preceding snapshot at `data/lifeos.json.bak`. Backup and lock files are ignored by Git.
+To regenerate the public-safe demonstration snapshot:
 
-## Reading
+```bash
+node scripts/create-demo-data.mjs
+```
 
-The Reading tab presents the same local collection in two ways:
+`npm run demo:reset` intentionally overwrites the live store. Do not use it
+after entering real data.
 
-- **Kanban** contains only `Next up`, `Reading`, and `Finished`. Cards can move between columns by drag-and-drop or their status control.
-- **Library** contains every book and can be separated into `To read`, `Next up`, `Reading`, `Finished`, and `Dropped`, then narrowed by tag or text.
+## macOS development app
 
-Both views are cover-led and display the same persistent free-form tags. Book details add and remove tags, and expose permanent deletion only behind a confirmation that names the selected book and explains what will be lost. `Add a book` performs an explicit Open Library search by title, author, or ISBN. Search results remain temporary; only the selected normalized record is written to LifeOS. Cover images are loaded from Open Library, and missing covers receive a local typographic fallback.
+The Tauri shell is source-backed: it starts this repository's Node server in a
+WKWebView and picks up normal source changes through **LifeOS Dev → Refresh
+LifeOS** (`Command-R`). Rust 1.86 or newer is required to rebuild it.
 
-## Controls now implemented
+```bash
+npm run desktop:dev
+npm run desktop:build
+```
 
-- All five primary tabs, including the two-view Reading workspace.
-- Week, month, quarter, and year analytics ranges with URL state.
-- Recommendation alternate, dismiss/restore, begin, and stop-and-log.
-- Real Codex task selection, new task, refresh, send, stop, approvals, and questions.
-- `Command/Ctrl + K` chat focus.
-- An explicit voice-unavailable state that preserves the no-API/no-separate-model rule.
-- Automatic refresh after local data changes.
-- Clear inline errors instead of silent control failures.
+It is an ad-hoc-signed development shell, not a notarized or self-contained
+distribution. Windows and Linux packaging are not yet implemented.
 
-## Deliberately deferred
-
-The next phase is the larger set of management workflows: project creation/editing, manual time-entry editing, richer reading-metadata editing, goals/deadlines, searchable almanac history, settings, import/export UI, and native desktop packaging. The data and local Codex architecture are ready for those additions, but they are not disguised as finished controls here.
-
-## Verify
+## Verify and contribute
 
 ```bash
 npm run check
 ```
 
-This checks the browser and server JavaScript and runs the data, persistence, timer, and Codex-protocol tests.
+This runs JavaScript syntax checks, the Node test suite, and a Tauri compile
+check. See [`AGENTS.md`](AGENTS.md) for repository invariants and
+[`PROJECT_STATE.md`](PROJECT_STATE.md) for the architecture, data semantics,
+maintenance workflows, and deliberately deferred work.

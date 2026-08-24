@@ -1,5 +1,6 @@
 :root {
-  --bg: #f6f1e7;
+  color-scheme: light;
+  --bg: #F3F3F1;
   --paper: #fbf8f1;
   --ink: #1a1813;
   --ink-dim: #5e5950;
@@ -15,6 +16,23 @@
   --serif: Newsreader, "Source Serif 4", Georgia, serif;
   --sans: "IBM Plex Sans", Inter, ui-sans-serif, system-ui, sans-serif;
   --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1E1E1E;
+  --paper: #252526;
+  --ink: #d4d4d4;
+  --ink-dim: #b3b3b3;
+  --ink-faint: #858585;
+  --ink-ghost: #3c3c3c;
+  --ink-pale: #2d2d30;
+  --rule: rgba(255, 255, 255, 0.16);
+  --rule-soft: rgba(255, 255, 255, 0.08);
+  --accent: #ce9178;
+  --healthy: #89b589;
+  --attention: #d7ba7d;
+  --critical: #f48771;
 }
 
 *,
@@ -56,17 +74,19 @@ button {
 
 .lifeos {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(262px, 26vw, 380px);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr);
   width: 100%;
   height: 100vh;
+  padding-right: 26vw;
   overflow: hidden;
   background: var(--bg);
   color: var(--ink);
+  transition: padding-right 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .lifeos.rail-collapsed {
-  grid-template-columns: minmax(0, 1fr) 46px;
+  padding-right: 0;
 }
 
 .serif {
@@ -119,6 +139,7 @@ button {
 }
 
 .masthead-side.right {
+  align-items: center;
   justify-content: flex-end;
 }
 
@@ -135,16 +156,43 @@ button {
   line-height: 0.92;
 }
 
-.masthead-sub {
-  display: block;
-  margin-top: 7px;
+.theme-toggle {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  border: 1px solid var(--rule);
+  background: transparent;
+  cursor: pointer;
+  padding: 4px 6px;
   color: var(--ink-dim);
-  font-family: var(--sans);
-  font-size: 9px;
-  font-style: normal;
-  font-weight: 600;
-  letter-spacing: 0.28em;
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  line-height: 1;
   text-transform: uppercase;
+}
+
+.theme-toggle:hover,
+.theme-toggle:focus-visible {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.theme-toggle:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.theme-toggle-mark {
+  width: 9px;
+  height: 9px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: linear-gradient(90deg, currentColor 50%, transparent 50%);
+}
+
+:root[data-theme="dark"] .theme-toggle-mark {
+  background: linear-gradient(90deg, transparent 50%, currentColor 50%);
 }
 
 .tabs {
@@ -902,10 +950,13 @@ button {
 }
 
 .chat {
-  position: relative;
-  grid-column: 2;
-  grid-row: 1 / -1;
+  position: fixed;
+  z-index: 10;
+  top: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
+  width: 26vw;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
@@ -960,6 +1011,7 @@ button {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.65;
+  transition: transform 180ms ease;
 }
 
 .rail-toggle-label {
@@ -972,46 +1024,36 @@ button {
 }
 
 .chat.is-collapsed {
-  align-items: center;
-  background: color-mix(in srgb, var(--paper) 76%, var(--bg));
+  position: fixed;
+  z-index: 20;
+  top: 17px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  min-height: 0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
 }
 
 .chat.is-collapsed .rail-toggle {
-  position: relative;
-  top: auto;
-  right: auto;
-  display: flex;
+  position: static;
+  display: grid;
   width: 32px;
-  height: auto;
-  min-height: 112px;
-  margin-top: 14px;
-  padding: 11px 0 12px;
-  flex-direction: column;
-  gap: 9px;
-  border-radius: 18px;
+  height: 32px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border-radius: 50%;
 }
 
 .chat.is-collapsed .rail-toggle:hover,
 .chat.is-collapsed .rail-toggle:focus-visible {
-  transform: translateX(-2px);
+  transform: scale(1.04);
 }
 
 .chat.is-collapsed .rail-toggle svg {
   transform: rotate(180deg);
-}
-
-.chat.is-collapsed .rail-toggle-label {
-  position: static;
-  width: auto;
-  height: auto;
-  overflow: visible;
-  clip: auto;
-  color: currentColor;
-  font-family: var(--serif);
-  font-size: 13px;
-  font-style: italic;
-  letter-spacing: 0.04em;
-  writing-mode: vertical-rl;
 }
 
 .chat-top {
@@ -1251,13 +1293,6 @@ button {
   font-style: normal;
   line-height: 1.5;
   text-align: center;
-}
-
-.demo-tag {
-  border: 1px solid var(--accent);
-  padding: 2px 5px;
-  color: var(--accent);
-  letter-spacing: 0.08em;
 }
 
 .page-error,
@@ -1511,11 +1546,27 @@ button {
   color: var(--critical);
 }
 
-@media (max-width: 980px) {
+@media (min-width: 1462px) {
   .lifeos {
-    grid-template-columns: minmax(0, 1fr) 262px;
+    padding-right: 380px;
   }
 
+  .chat {
+    width: 380px;
+  }
+}
+
+@media (max-width: 1007px) {
+  .lifeos {
+    padding-right: 262px;
+  }
+
+  .chat {
+    width: 262px;
+  }
+}
+
+@media (max-width: 980px) {
   .page {
     padding-top: 24px;
   }
@@ -1535,12 +1586,13 @@ button {
     grid-template-rows: auto auto auto auto;
     min-height: 100vh;
     height: auto;
+    padding-right: 0;
     overflow: visible;
   }
 
   .lifeos.rail-collapsed {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto 46px;
+    grid-template-rows: auto auto auto;
   }
 
   .masthead,
@@ -1584,30 +1636,22 @@ button {
   }
 
   .chat {
+    position: relative;
+    z-index: auto;
+    inset: auto;
     grid-row: auto;
+    width: auto;
     min-height: 460px;
     border-top: 1px solid var(--rule);
     border-left: 0;
   }
 
-  .chat.is-collapsed {
-    min-height: 46px;
-    height: 46px;
-    align-items: flex-end;
-  }
+}
 
-  .chat.is-collapsed .rail-toggle {
-    width: auto;
-    min-height: 32px;
-    height: 32px;
-    margin: 7px 12px 0 0;
-    padding: 0 12px;
-    flex-direction: row;
-  }
-
-  .chat.is-collapsed .rail-toggle-label {
-    font-family: var(--serif);
-    font-size: 13px;
-    writing-mode: horizontal-tb;
+@media (prefers-reduced-motion: reduce) {
+  .lifeos,
+  .rail-toggle,
+  .rail-toggle svg {
+    transition: none;
   }
 }

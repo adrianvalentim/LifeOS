@@ -21,7 +21,7 @@ test('Open Library search results normalize to the local Reading shape', () => {
   assert.equal(book.source.workId, 'OL45883W');
   assert.equal(book.source.editionId, 'OL999M');
   assert.equal(book.isbn13, '9781234567897');
-  assert.equal(book.coverUrl, 'https://covers.openlibrary.org/b/id/1234-L.jpg?default=false');
+  assert.equal(book.coverUrl, 'https://covers.openlibrary.org/b/id/1234-M.jpg?default=false');
   assert.deepEqual(book.authors, ['A. Reader']);
 });
 

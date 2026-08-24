@@ -6,8 +6,9 @@ export const READING_STATUS_LABELS = {
   dropped: 'Dropped',
 };
 
-const BOARD_STATUSES = ['next_up', 'reading', 'finished'];
+export const READING_BOARD_STATUSES = ['next_up', 'reading', 'finished'];
 const ALL_STATUSES = Object.keys(READING_STATUS_LABELS);
+const READING_SORT_KEYS = ['cover', 'book', 'status', 'edition', 'addedAt', 'finishedAt'];
 
 export function createReadingUiState() {
   return {
@@ -22,12 +23,87 @@ export function createReadingUiState() {
     searching: false,
     selectedBookId: null,
     deleteBookId: null,
+    movingBookId: null,
+    updatingDateBookId: null,
+    sortKey: null,
+    sortDirection: 'asc',
   };
 }
 
-export function renderReading(reading, ui) {
+export function sortReadingBooks(books, key, direction = 'asc') {
+  if (!READING_SORT_KEYS.includes(key)) return books;
+  const multiplier = direction === 'desc' ? -1 : 1;
+  return books
+    .map((book, index) => ({ book, index }))
+    .sort((left, right) => {
+      const comparison = compareReadingSortValues(left.book, right.book, key, multiplier);
+      return comparison || left.index - right.index;
+    })
+    .map(({ book }) => book);
+}
+
+export function readingFinishedInYear(book, year, timeZone = 'UTC') {
+  return book?.status === 'finished'
+    && formatDateInput(book.finishedAt, timeZone).slice(0, 4) === String(year);
+}
+
+export function readingWithBookStatus(reading, bookId, status) {
+  const current = reading?.books?.find((book) => book.id === bookId);
+  if (!current || current.status === status || !ALL_STATUSES.includes(status)) return reading;
+
+  return readingWithBookPosition(reading, bookId, status, null);
+}
+
+export function readingWithBookPosition(reading, bookId, status, beforeBookId = null) {
+  const current = reading?.books?.find((book) => book.id === bookId);
+  if (!current || !ALL_STATUSES.includes(status)) return reading;
+
+  const targetBooks = reading.books
+    .filter((book) => book.status === status && book.id !== bookId)
+    .sort(compareReadingBooks);
+  const targetIndex = beforeBookId === null
+    ? targetBooks.length
+    : targetBooks.findIndex((book) => book.id === beforeBookId);
+  if (targetIndex < 0) return reading;
+
+  targetBooks.splice(targetIndex, 0, { ...current, status });
+  const targetOrder = new Map(targetBooks.map((book, index) => [book.id, index + 1]));
+  const currentOrder = reading.books
+    .filter((book) => book.status === status)
+    .sort(compareReadingBooks)
+    .map((book) => book.id);
+  const nextOrder = targetBooks.map((book) => book.id);
+  if (current.status === status && currentOrder.every((id, index) => id === nextOrder[index])) return reading;
+
+  const books = reading.books.map((book) => {
+    if (book.id === bookId) return { ...book, status, sortOrder: targetOrder.get(book.id) };
+    if (book.status === status) return { ...book, sortOrder: targetOrder.get(book.id) };
+    return book;
+  });
+  const byStatus = {
+    ...(reading.summary?.byStatus || {}),
+  };
+  if (current.status !== status) {
+    byStatus[current.status] = Math.max(0, Number(reading.summary?.byStatus?.[current.status]) - 1 || 0);
+    byStatus[status] = Number(reading.summary?.byStatus?.[status] || 0) + 1;
+  }
+
+  return {
+    ...reading,
+    books,
+    summary: {
+      ...reading.summary,
+      byStatus,
+      boardTotal: READING_BOARD_STATUSES.reduce((total, boardStatus) => total + Number(byStatus[boardStatus] || 0), 0),
+    },
+  };
+}
+
+export function renderReading(reading, ui, calendar = {}) {
   const books = reading?.books || [];
   const summary = reading?.summary || { total: 0, boardTotal: 0, byStatus: {} };
+  const currentYear = String(calendar.today || new Date().toISOString()).slice(0, 4);
+  const timeZone = calendar.timeZone || 'UTC';
   const selected = books.find((book) => book.id === ui.selectedBookId);
   const deleteTarget = books.find((book) => book.id === ui.deleteBookId);
   const tagMap = new Map();
@@ -39,9 +115,8 @@ export function renderReading(reading, ui) {
     <div class="reading-workspace">
       <header class="reading-hero">
         <div>
-          <div class="smallcaps reading-kicker">The reading room</div>
-          <h1>Books in motion.</h1>
-          <p>One collection, seen as a working queue or a complete visual library.</p>
+          <h1>Readings</h1>
+          <p>Let us read and let us dance.</p>
         </div>
         <div class="reading-totals" aria-label="Reading summary">
           ${summaryBlock(summary.byStatus.reading || 0, 'Reading')}
@@ -56,13 +131,12 @@ export function renderReading(reading, ui) {
           <button class="reading-view-button ${ui.view === 'kanban' ? 'active' : ''}" data-reading-view="kanban" type="button">Kanban</button>
           <button class="reading-view-button ${ui.view === 'library' ? 'active' : ''}" data-reading-view="library" type="button">Library</button>
         </div>
-        <span class="reading-view-note smallcaps">${ui.view === 'kanban' ? 'To read and dropped stay in the library' : `${summary.total || 0} books across five statuses`}</span>
         <button class="reading-add-button" data-reading-catalog-toggle type="button">${ui.catalogOpen ? 'Close search' : '+ Add a book'}</button>
       </div>
 
       ${ui.catalogOpen ? renderCatalogSearch(ui) : ''}
-      ${ui.view === 'library' ? renderLibrary(books, summary, ui, tags) : renderKanban(books)}
-      ${selected ? renderBookDetail(selected) : ''}
+      ${ui.view === 'library' ? renderLibrary(books, summary, ui, tags, timeZone) : renderKanban(books, ui, currentYear, timeZone)}
+      ${selected ? renderBookDetail(selected, ui, timeZone) : ''}
       ${deleteTarget ? renderDeleteConfirmation(deleteTarget) : ''}
     </div>
   `;
@@ -73,6 +147,13 @@ export function readingSearchText(book) {
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
+}
+
+export function readingCoverUrl(book) {
+  if (book?.id && book.source?.provider === 'open_library' && book.coverUrl) {
+    return `/api/reading/books/${encodeURIComponent(book.id)}/cover`;
+  }
+  return book?.coverUrl || null;
 }
 
 function renderCatalogSearch(ui) {
@@ -112,19 +193,26 @@ function renderCatalogResult(book, index) {
   `;
 }
 
-function renderKanban(books) {
+function renderKanban(books, ui, currentYear, timeZone) {
   return `
-    <div class="reading-board">
-      ${BOARD_STATUSES.map((status) => {
-        const items = books.filter((book) => book.status === status);
+    <div class="reading-board ${ui.movingBookId ? 'is-saving' : ''}" aria-describedby="reading-board-instructions" ${ui.movingBookId ? 'aria-busy="true"' : ''}>
+      <p class="reading-board-instructions" id="reading-board-instructions">Drag books to position them. Keyboard users can focus a card and press Control plus an arrow key.</p>
+      ${READING_BOARD_STATUSES.map((status) => {
+        const items = books
+          .filter((book) => book.status === status && (
+            status !== 'finished'
+            || ui.movingBookId === book.id
+            || readingFinishedInYear(book, currentYear, timeZone)
+          ))
+          .sort(compareReadingBooks);
         return `
-          <section class="reading-column status-${status}" data-reading-drop-status="${status}">
+          <section class="reading-column status-${status}" data-reading-drop-status="${status}" data-reading-drop-label="${READING_STATUS_LABELS[status]}">
             <header class="reading-column-head">
-              <div><span class="column-mark"></span><h2>${READING_STATUS_LABELS[status]}</h2></div>
+              <div><span class="column-mark"></span><h2>${READING_STATUS_LABELS[status]}</h2>${status === 'finished' ? `<span class="reading-column-period">${escapeHtml(currentYear)}</span>` : ''}</div>
               <span class="column-count">${items.length}</span>
             </header>
             <div class="reading-column-body">
-              ${items.length ? items.map(renderBoardCard).join('') : `<div class="reading-column-empty">Drop a book here</div>`}
+              ${items.length ? items.map((book) => renderBoardCard(book, ui)).join('') : `<div class="reading-column-empty">${status === 'finished' ? `No books finished in ${escapeHtml(currentYear)}` : 'Drop a book here'}</div>`}
             </div>
           </section>
         `;
@@ -133,9 +221,11 @@ function renderKanban(books) {
   `;
 }
 
-function renderBoardCard(book) {
+function renderBoardCard(book, ui) {
+  const moving = ui.movingBookId === book.id;
   return `
-    <article class="reading-card" draggable="true" data-reading-drag-id="${escapeAttribute(book.id)}">
+    <article class="reading-card ${moving ? 'is-saving' : ''}" data-reading-drag-id="${escapeAttribute(book.id)}" data-reading-drag-status="${book.status}" data-reading-sort-order="${Number(book.sortOrder) || 0}" tabindex="0" aria-roledescription="sortable book" aria-label="${escapeAttribute(book.title)}. ${escapeAttribute(READING_STATUS_LABELS[book.status])}." ${moving ? 'aria-busy="true"' : ''}>
+      <span class="reading-drag-grip" aria-hidden="true">⠿</span>
       <button class="reading-card-cover" data-reading-detail="${escapeAttribute(book.id)}" type="button" aria-label="Open ${escapeAttribute(book.title)} details">
         ${renderCover(book, 'board-cover')}
       </button>
@@ -145,22 +235,16 @@ function renderBoardCard(book) {
         <div class="reading-card-meta">${escapeHtml(compactMetadata(book) || statusDateLabel(book))}</div>
         ${renderTags(book, 2)}
       </div>
-      <div class="reading-card-controls">
-        ${statusSelect(book)}
-        <span class="order-buttons">
-          <button data-reading-reorder="up" data-book-id="${escapeAttribute(book.id)}" type="button" title="Move earlier">↑</button>
-          <button data-reading-reorder="down" data-book-id="${escapeAttribute(book.id)}" type="button" title="Move later">↓</button>
-        </span>
-      </div>
     </article>
   `;
 }
 
-function renderLibrary(books, summary, ui, tags) {
+function renderLibrary(books, summary, ui, tags, timeZone) {
   const statusBooks = ui.filter === 'all' ? books : books.filter((book) => book.status === ui.filter);
   const taggedBooks = ui.tagFilter === 'all'
     ? statusBooks
     : statusBooks.filter((book) => (book.tags || []).some((tag) => tag.toLowerCase() === ui.tagFilter.toLowerCase()));
+  const sortedBooks = sortReadingBooks(taggedBooks, ui.sortKey, ui.sortDirection);
   return `
     <section class="reading-library">
       <div class="library-controls">
@@ -175,18 +259,23 @@ function renderLibrary(books, summary, ui, tags) {
       </div>
       <div class="reading-database" role="table" aria-label="All books">
         <div class="reading-db-head" role="row">
-          <span>Cover</span><span>Book</span><span>Status</span><span>Edition</span><span>Added</span>
+          ${sortableHeader('cover', 'Cover', ui, 'cover availability')}
+          ${sortableHeader('book', 'Book', ui, 'book title')}
+          ${sortableHeader('status', 'Status', ui)}
+          ${sortableHeader('edition', 'Edition', ui, 'publication year')}
+          ${sortableHeader('addedAt', 'Added', ui, 'date added')}
+          ${sortableHeader('finishedAt', 'Date read', ui)}
         </div>
         <div class="reading-db-body">
-          ${taggedBooks.length ? taggedBooks.map(renderDatabaseRow).join('') : '<div class="reading-db-empty">No books match this status and tag.</div>'}
-          ${taggedBooks.length ? '<div class="reading-db-empty" data-reading-filter-empty hidden>No books match this search.</div>' : ''}
+          ${sortedBooks.length ? sortedBooks.map((book) => renderDatabaseRow(book, ui, timeZone)).join('') : '<div class="reading-db-empty">No books match this status and tag.</div>'}
+          ${sortedBooks.length ? '<div class="reading-db-empty" data-reading-filter-empty hidden>No books match this search.</div>' : ''}
         </div>
       </div>
     </section>
   `;
 }
 
-function renderDatabaseRow(book) {
+function renderDatabaseRow(book, ui, timeZone) {
   return `
     <article class="reading-db-row" role="row" data-reading-search-text="${escapeAttribute(readingSearchText(book))}">
       <button class="db-cover-button" data-reading-detail="${escapeAttribute(book.id)}" type="button" aria-label="Open ${escapeAttribute(book.title)} details">${renderCover(book, 'database-cover')}</button>
@@ -194,11 +283,12 @@ function renderDatabaseRow(book) {
       <div class="db-status">${statusSelect(book)}</div>
       <div class="db-edition">${escapeHtml(compactMetadata(book) || '—')}</div>
       <div class="db-added">${escapeHtml(formatDate(book.addedAt))}</div>
+      <div class="db-finished">${finishedDateControl(book, ui.updatingDateBookId === book.id, timeZone)}</div>
     </article>
   `;
 }
 
-function renderBookDetail(book) {
+function renderBookDetail(book, ui, timeZone) {
   return `
     <div class="book-detail-backdrop" data-reading-detail-close>
       <article class="book-detail" role="dialog" aria-modal="true" aria-labelledby="book-detail-title">
@@ -209,7 +299,10 @@ function renderBookDetail(book) {
           <h2 id="book-detail-title">${escapeHtml(book.title)}</h2>
           ${book.subtitle ? `<p class="book-detail-subtitle">${escapeHtml(book.subtitle)}</p>` : ''}
           <p class="book-detail-author">${escapeHtml(authorLine(book))}</p>
-          <div class="book-detail-status">${statusSelect(book)}</div>
+          <div class="book-detail-reading-state">
+            <div class="book-detail-status">${statusSelect(book)}</div>
+            ${book.status === 'finished' ? `<label class="book-detail-finished-date"><span>Date read</span>${finishedDateControl(book, ui.updatingDateBookId === book.id, timeZone)}</label>` : ''}
+          </div>
           <div class="book-detail-metadata">${detailMetadata(book).map(([label, value]) => `<span><b>${escapeHtml(label)}</b>${escapeHtml(value)}</span>`).join('')}</div>
           <div class="book-about"><span class="smallcaps-strong">About the book</span><p>${escapeHtml(book.description || 'No description was available from the catalog. The imported metadata remains editable in the local record.')}</p></div>
           <section class="book-tag-editor">
@@ -241,7 +334,8 @@ function renderDeleteConfirmation(book) {
 
 function renderCover(book, className) {
   const initial = String(book.title || '?').trim().slice(0, 1).toUpperCase();
-  return `<span class="book-cover ${className} ${book.coverUrl ? '' : 'cover-missing'}"><span class="book-cover-fallback">${escapeHtml(initial)}</span>${book.coverUrl ? `<img data-reading-cover src="${escapeAttribute(book.coverUrl)}" alt="Cover of ${escapeAttribute(book.title)}" loading="lazy" referrerpolicy="no-referrer">` : ''}</span>`;
+  const coverUrl = readingCoverUrl(book);
+  return `<span class="book-cover ${className} ${coverUrl ? '' : 'cover-missing'}"><span class="book-cover-fallback">${escapeHtml(initial)}</span>${coverUrl ? `<img data-reading-cover src="${escapeAttribute(coverUrl)}" alt="Cover of ${escapeAttribute(book.title)}" loading="lazy" referrerpolicy="no-referrer" draggable="false">` : ''}</span>`;
 }
 
 function renderTags(book, limit) {
@@ -251,12 +345,62 @@ function renderTags(book, limit) {
   return `<div class="book-tag-list compact">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}${remaining ? `<em>+${remaining}</em>` : ''}</div>`;
 }
 
-function statusSelect(book) {
-  return `<select class="reading-status-select" data-reading-status-book="${escapeAttribute(book.id)}" aria-label="Status for ${escapeAttribute(book.title)}">${statusOptions(book.status, ALL_STATUSES)}</select>`;
+function statusSelect(book, disabled = false) {
+  return `<select class="reading-status-select" data-reading-status-book="${escapeAttribute(book.id)}" aria-label="Status for ${escapeAttribute(book.title)}" ${disabled ? 'disabled' : ''}>${statusOptions(book.status, ALL_STATUSES)}</select>`;
+}
+
+function finishedDateControl(book, disabled = false, timeZone = 'UTC') {
+  if (book.status !== 'finished') return '<span aria-label="Not finished">—</span>';
+  return `<input type="date" value="${escapeAttribute(formatDateInput(book.finishedAt, timeZone))}" data-reading-finished-date-book="${escapeAttribute(book.id)}" aria-label="Date read for ${escapeAttribute(book.title)}" ${disabled ? 'disabled' : ''}>`;
+}
+
+function compareReadingBooks(a, b) {
+  const orderDelta = Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+  return orderDelta || String(a.title || '').localeCompare(String(b.title || ''));
 }
 
 function statusOptions(selected, statuses) {
   return statuses.map((status) => `<option value="${status}" ${status === selected ? 'selected' : ''}>${READING_STATUS_LABELS[status]}</option>`).join('');
+}
+
+function sortableHeader(key, label, ui, sortLabel = label.toLowerCase()) {
+  const active = ui.sortKey === key;
+  const direction = active && ui.sortDirection === 'desc' ? 'descending' : 'ascending';
+  const indicator = active ? (ui.sortDirection === 'desc' ? '↓' : '↑') : '↕';
+  return `<span role="columnheader" aria-sort="${active ? direction : 'none'}"><button class="reading-sort-button ${active ? 'active' : ''}" data-reading-sort="${key}" type="button" aria-label="Sort by ${escapeAttribute(sortLabel)}${active ? `, currently ${direction}` : ''}">${escapeHtml(label)}<i aria-hidden="true">${indicator}</i></button></span>`;
+}
+
+function compareReadingSortValues(a, b, key, multiplier) {
+  const [aValue, bValue] = readingSortValues(a, b, key);
+  const aMissing = aValue === null || aValue === undefined || aValue === '';
+  const bMissing = bValue === null || bValue === undefined || bValue === '';
+  if (aMissing || bMissing) {
+    if (aMissing && bMissing) return compareText(a.title, b.title);
+    return aMissing ? 1 : -1;
+  }
+  const comparison = typeof aValue === 'number'
+    ? aValue - bValue
+    : compareText(aValue, bValue);
+  return comparison * multiplier || compareText(a.title, b.title);
+}
+
+function readingSortValues(a, b, key) {
+  if (key === 'cover') return [a.coverUrl ? 1 : 0, b.coverUrl ? 1 : 0];
+  if (key === 'book') return [a.title, b.title];
+  if (key === 'status') return [ALL_STATUSES.indexOf(a.status), ALL_STATUSES.indexOf(b.status)];
+  if (key === 'edition') return [a.publishedYear, b.publishedYear];
+  if (key === 'addedAt') return [dateSortValue(a.addedAt), dateSortValue(b.addedAt)];
+  return [dateSortValue(a.finishedAt), dateSortValue(b.finishedAt)];
+}
+
+function dateSortValue(value) {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function compareText(a, b) {
+  return String(a || '').localeCompare(String(b || ''), 'en', { sensitivity: 'base', numeric: true });
 }
 
 function filterButton(id, label, count, selected) {
@@ -295,6 +439,19 @@ function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
+}
+
+function formatDateInput(value, timeZone = 'UTC') {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone,
+  }).formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function escapeHtml(value) {

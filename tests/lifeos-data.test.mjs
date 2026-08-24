@@ -5,18 +5,23 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   DEMO_STORE_PATH,
+  addProjectCategory,
   addReadingBook,
+  buildCategoryStats,
   buildState,
   dateOnly,
+  deleteProject,
   deleteReadingBook,
   logTime,
   migrateStore,
   parseDurationToMinutes,
   readStore,
   reorderReadingBook,
+  setProjectStatus,
   setReadingBookStatus,
   startSession,
   stopSession,
+  updateReadingBookFinishedDate,
   updateReadingBookTags,
   validateStore,
 } from '../src/lifeos-data.mjs';
@@ -50,6 +55,7 @@ test('changing one entry changes dashboard totals and composition', async () => 
   store.timeEntries.push({
     id: 'test-real-entry',
     projectId: 'portia',
+    categoryIds: [],
     date: '2026-08-22',
     time: '16:00',
     durationMinutes: 60,
@@ -128,13 +134,13 @@ test('calendar dates honor the configured timezone', () => {
   assert.equal(dateOnly('2026-08-23T03:00:00Z', 'America/Sao_Paulo'), '2026-08-23');
 });
 
-test('older stores migrate to schema version 4 with Reading tags', async () => {
+test('older stores migrate to schema version 6 with Reading tags, project workflow statuses, and categories', async () => {
   const store = await readStore(DEMO_STORE_PATH);
   delete store.reading;
   store.meta.schemaVersion = 2;
   const migrated = migrateStore(store);
 
-  assert.equal(migrated.meta.schemaVersion, 4);
+  assert.equal(migrated.meta.schemaVersion, 6);
   assert.deepEqual(migrated.reading, { books: [] });
   assert.doesNotThrow(() => validateStore(migrated));
 
@@ -142,8 +148,83 @@ test('older stores migrate to schema version 4 with Reading tags', async () => {
   versionThree.meta.schemaVersion = 3;
   for (const book of versionThree.reading.books) delete book.tags;
   const tagged = migrateStore(versionThree);
-  assert.equal(tagged.meta.schemaVersion, 4);
+  assert.equal(tagged.meta.schemaVersion, 6);
   assert.ok(tagged.reading.books.every((book) => Array.isArray(book.tags) && book.tags.length === 0));
+
+  const versionFour = await readStore(DEMO_STORE_PATH);
+  versionFour.meta.schemaVersion = 4;
+  for (const project of versionFour.projects) project.status = 'active';
+  versionFour.projects.at(-1).status = 'inactive';
+  const projectStatuses = migrateStore(versionFour);
+  assert.equal(projectStatuses.meta.schemaVersion, 6);
+  assert.ok(projectStatuses.projects.slice(0, -1).every((project) => project.status === 'next_up'));
+  assert.equal(projectStatuses.projects.at(-1).status, 'dropped');
+
+  const versionFive = await readStore(DEMO_STORE_PATH);
+  versionFive.meta.schemaVersion = 5;
+  delete versionFive.categories;
+  for (const project of versionFive.projects) delete project.categoryIds;
+  for (const entry of versionFive.timeEntries) delete entry.categoryIds;
+  const categorized = migrateStore(versionFive);
+  assert.equal(categorized.meta.schemaVersion, 6);
+  assert.deepEqual(categorized.categories, {});
+  assert.ok(categorized.projects.every((project) => Array.isArray(project.categoryIds)));
+  assert.ok(categorized.timeEntries.every((entry) => Array.isArray(entry.categoryIds)));
+});
+
+test('projects move across the five-status workflow and completed work leaves active recommendations', async () => {
+  const tmp = await makeStoreCopy('lifeos-project-status-');
+  const moved = await setProjectStatus({
+    projectId: 'portia',
+    status: 'done',
+    now: FIXED_NOW,
+  }, tmp.storePath);
+
+  assert.equal(moved.project.status, 'done');
+  assert.equal(moved.state.summary.activeCount, 8);
+  assert.notEqual(moved.state.recommendation.projectId, 'portia');
+  assert.equal(moved.project.statusChangedAt, new Date(FIXED_NOW).toISOString());
+
+  await assert.rejects(setProjectStatus({ projectId: 'portia', status: 'someday' }, tmp.storePath), /Unknown project status/);
+  const invalid = await readStore(tmp.storePath);
+  invalid.projects[0].status = 'someday';
+  assert.throws(() => validateStore(invalid), /unknown status/);
+});
+
+test('project categories group shared time and project deletion preserves direct history', async () => {
+  const tmp = await makeStoreCopy('lifeos-project-category-');
+  const original = await readStore(tmp.storePath);
+  const expectedMinutes = original.timeEntries
+    .filter((entry) => ['portia', 'vulcano', 'infinitamente'].includes(entry.projectId))
+    .reduce((sum, entry) => sum + entry.durationMinutes, 0);
+  const originalWeek = buildState(original, { now: FIXED_NOW, range: 'week' });
+
+  await addProjectCategory({ projectId: 'portia', category: 'Infinitamente', now: FIXED_NOW }, tmp.storePath);
+  await addProjectCategory({ projectId: 'vulcano', category: 'infinitamente', now: FIXED_NOW }, tmp.storePath);
+  const deleted = await deleteProject({
+    projectId: 'infinitamente',
+    preserveCategory: 'Infinitamente',
+    now: FIXED_NOW,
+  }, tmp.storePath);
+
+  assert.equal(deleted.preservedEntryCount, 9);
+  assert.equal(deleted.state.projects.some((project) => project.id === 'infinitamente'), false);
+  assert.deepEqual(deleted.state.projects.find((project) => project.id === 'portia').categoryLabels, ['Infinitamente']);
+  assert.deepEqual(deleted.state.projects.find((project) => project.id === 'vulcano').categoryLabels, ['Infinitamente']);
+  assert.equal(deleted.state.summary.totalRangeHours, originalWeek.summary.totalRangeHours);
+  assert.equal(deleted.state.analytics.actualByDomain.content, originalWeek.analytics.actualByDomain.content);
+
+  const after = await readStore(tmp.storePath);
+  const stats = buildCategoryStats(after, 'Infinitamente', { now: FIXED_NOW, range: 'year' });
+  assert.equal(stats.totalMinutes, expectedMinutes);
+  assert.deepEqual(stats.projects.map((project) => project.id).sort(), ['portia', 'vulcano']);
+  assert.ok(after.timeEntries
+    .filter((entry) => entry.categoryIds.includes('infinitamente'))
+    .every((entry) => entry.projectId === null && entry.domain === 'content'));
+
+  const invalid = structuredClone(after);
+  invalid.projects[0].categoryIds = ['missing-category'];
+  assert.throws(() => validateStore(invalid), /categoryIds/);
 });
 
 test('reading books are added once and move across the shared status model', async () => {
@@ -180,6 +261,31 @@ test('reading queue order can be changed without changing status', async () => {
   assert.ok(reordered.every((book) => book.status === 'next_up'));
 });
 
+test('reading books can be positioned at a drag target within or across statuses', async () => {
+  const tmp = await makeStoreCopy('lifeos-reading-position-');
+  const before = await readStore(tmp.storePath);
+  const nextUp = before.reading.books.filter((book) => book.status === 'next_up').sort((a, b) => a.sortOrder - b.sortOrder);
+  const readingBook = before.reading.books.find((book) => book.status === 'reading');
+
+  await reorderReadingBook({
+    bookId: nextUp[1].id,
+    status: 'next_up',
+    beforeBookId: nextUp[0].id,
+    now: FIXED_NOW,
+  }, tmp.storePath);
+  await reorderReadingBook({
+    bookId: readingBook.id,
+    status: 'next_up',
+    beforeBookId: nextUp[1].id,
+    now: FIXED_NOW,
+  }, tmp.storePath);
+
+  const after = await readStore(tmp.storePath);
+  const positioned = after.reading.books.filter((book) => book.status === 'next_up').sort((a, b) => a.sortOrder - b.sortOrder);
+  assert.deepEqual(positioned.slice(0, 3).map((book) => book.id), [readingBook.id, nextUp[1].id, nextUp[0].id]);
+  assert.equal(after.reading.books.find((book) => book.id === readingBook.id).status, 'next_up');
+});
+
 test('reading validation rejects unknown statuses', async () => {
   const store = await readStore(DEMO_STORE_PATH);
   store.reading.books[0].status = 'someday';
@@ -202,6 +308,28 @@ test('reading tags are normalized and permanently deleted books leave every view
   assert.equal(deleted.state.reading.summary.total, before.reading.books.length - 1);
   assert.equal(deleted.state.reading.books.some((book) => book.id === target.id), false);
   await assert.rejects(deleteReadingBook({ bookId: target.id }, tmp.storePath), /not found/);
+});
+
+test('finished books accept an editable, validated date read', async () => {
+  const tmp = await makeStoreCopy('lifeos-reading-finished-date-');
+  const updated = await updateReadingBookFinishedDate({
+    bookId: 'demo-book-odyssey',
+    date: '2025-03-14',
+    now: FIXED_NOW,
+  }, tmp.storePath);
+
+  assert.equal(updated.book.finishedAt, '2025-03-14T12:00:00.000Z');
+  assert.equal(updated.state.reading.books.find((book) => book.id === 'demo-book-odyssey').finishedAt, '2025-03-14T12:00:00.000Z');
+  await assert.rejects(updateReadingBookFinishedDate({
+    bookId: 'demo-book-odyssey',
+    date: '2026-08-23',
+    now: FIXED_NOW,
+  }, tmp.storePath), /future/);
+  await assert.rejects(updateReadingBookFinishedDate({
+    bookId: 'demo-book-left-hand-darkness',
+    date: '2025-03-14',
+    now: FIXED_NOW,
+  }, tmp.storePath), /finished book/);
 });
 
 async function makeStoreCopy(prefix) {

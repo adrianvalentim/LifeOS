@@ -5,23 +5,28 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { enrichOpenLibraryBook, searchOpenLibrary } from '../src/book-catalog.mjs';
+import { deleteCachedReadingBookCover, getOrCacheReadingBookCover } from '../src/book-cover-cache.mjs';
 import { CODEX_VOICE_CAPABILITY, codexAppServer } from '../src/codex-app-server.mjs';
+import { DEFAULT_STORE_PATH, initializeDefaultStore } from '../src/lifeos-storage.mjs';
 import {
   addReadingBook,
   deleteReadingBook,
   getState,
   logTime,
+  readStore,
   reorderReadingBook,
+  setProjectStatus,
   setReadingBookStatus,
   startSession,
   stopSession,
+  updateReadingBookFinishedDate,
   updateReadingBookTags,
 } from '../src/lifeos-data.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const publicDir = path.join(root, 'public');
-const dataDir = path.join(root, 'data');
+const dataDir = path.dirname(DEFAULT_STORE_PATH);
 const preferredPort = Number(process.env.PORT || 3000);
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -59,10 +64,20 @@ const server = createServer(async (req, res) => {
       const body = await readJson(req);
       return sendJson(res, (await stopSession(body)).state);
     }
+    if (url.pathname === '/api/projects/status' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.projectId, 'projectId');
+      requireString(body.status, 'status');
+      return sendJson(res, await projectStateAction(() => setProjectStatus(body)));
+    }
     if (url.pathname === '/api/books/search' && req.method === 'GET') {
       const query = url.searchParams.get('q') || '';
       if (!query.trim()) throw new ClientError('Enter a title, author, or ISBN.');
       return sendJson(res, { provider: 'open_library', results: await searchOpenLibrary(query) });
+    }
+    const readingCoverMatch = url.pathname.match(/^\/api\/reading\/books\/([^/]+)\/cover$/);
+    if (readingCoverMatch && req.method === 'GET') {
+      return serveReadingBookCover(req, res, decodeURIComponent(readingCoverMatch[1]));
     }
     if (url.pathname === '/api/reading/books/import' && req.method === 'POST') {
       const body = await readJson(req);
@@ -81,7 +96,12 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/api/reading/books/reorder' && req.method === 'POST') {
       const body = await readJson(req);
       requireString(body.bookId, 'bookId');
-      requireString(body.direction, 'direction');
+      if (body.status !== undefined) {
+        requireString(body.status, 'status');
+        if (body.beforeBookId !== null && body.beforeBookId !== undefined) requireString(body.beforeBookId, 'beforeBookId');
+      } else {
+        requireString(body.direction, 'direction');
+      }
       return sendJson(res, await readingStateAction(() => reorderReadingBook(body)));
     }
     if (url.pathname === '/api/reading/books/tags' && req.method === 'POST') {
@@ -90,10 +110,22 @@ const server = createServer(async (req, res) => {
       if (!Array.isArray(body.tags)) throw new ClientError('tags must be an array.');
       return sendJson(res, await readingStateAction(() => updateReadingBookTags(body)));
     }
+    if (url.pathname === '/api/reading/books/finished-date' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.bookId, 'bookId');
+      if (body.date !== null && body.date !== undefined && typeof body.date !== 'string') {
+        throw new ClientError('date must be a YYYY-MM-DD string or null.');
+      }
+      return sendJson(res, await readingStateAction(() => updateReadingBookFinishedDate(body)));
+    }
     if (url.pathname === '/api/reading/books/delete' && req.method === 'POST') {
       const body = await readJson(req);
       requireString(body.bookId, 'bookId');
-      return sendJson(res, await readingStateAction(() => deleteReadingBook(body)));
+      const deleted = await readingAction(() => deleteReadingBook(body));
+      await deleteCachedReadingBookCover(deleted.book.id).catch((error) => {
+        console.warn(`LifeOS could not remove a deleted book's cached cover: ${error.message}`);
+      });
+      return sendJson(res, deleted.state);
     }
 
     if (url.pathname === '/api/codex/bootstrap' && req.method === 'GET') {
@@ -143,6 +175,10 @@ const server = createServer(async (req, res) => {
 
 codexAppServer.subscribe((event) => broadcastEvent('codex', event));
 
+const initialization = await initializeDefaultStore();
+if (initialization.created) {
+  console.log(`LifeOS personal store initialized at ${initialization.storePath}`);
+}
 const dataWatcher = watch(dataDir, (_eventType, filename) => {
   if (String(filename || '') !== 'lifeos.json') return;
   clearTimeout(dataChangeTimer);
@@ -234,6 +270,41 @@ function sendJson(res, payload, status = 200) {
   res.end(JSON.stringify(payload));
 }
 
+async function serveReadingBookCover(req, res, bookId) {
+  const store = await readStore();
+  const book = store.reading.books.find((candidate) => candidate.id === bookId);
+  if (!book) return sendNotFound(res);
+
+  let cover;
+  try {
+    cover = await getOrCacheReadingBookCover(book);
+  } catch (error) {
+    console.warn(`LifeOS could not cache the cover for ${book.title}: ${error.message}`);
+    return sendNotFound(res);
+  }
+  if (!cover) return sendNotFound(res);
+  if (req.headers['if-none-match'] === cover.etag) {
+    res.writeHead(304, {
+      etag: cover.etag,
+      'cache-control': 'private, max-age=31536000, immutable',
+    });
+    return res.end();
+  }
+  res.writeHead(200, {
+    'content-type': cover.mimeType,
+    'content-length': cover.bytes.length,
+    'cache-control': 'private, max-age=31536000, immutable',
+    etag: cover.etag,
+    'cross-origin-resource-policy': 'same-origin',
+  });
+  res.end(cover.bytes);
+}
+
+function sendNotFound(res) {
+  res.writeHead(404, { 'cache-control': 'no-store' });
+  res.end('Not found');
+}
+
 async function readJson(req, limitBytes = 256 * 1024) {
   const chunks = [];
   let total = 0;
@@ -255,10 +326,23 @@ function requireString(value, name) {
 }
 
 async function readingStateAction(action) {
+  return (await readingAction(action)).state;
+}
+
+async function projectStateAction(action) {
   try {
     return (await action()).state;
   } catch (error) {
-    if (/Reading book not found|already in Reading|Unknown reading status|direction must be/.test(error.message)) {
+    if (/Project not found|Unknown project status/.test(error.message)) throw new ClientError(error.message);
+    throw error;
+  }
+}
+
+async function readingAction(action) {
+  try {
+    return await action();
+  } catch (error) {
+    if (/Reading book not found|already in Reading|Unknown reading status|direction must be|Date read|date read can only/.test(error.message)) {
       throw new ClientError(error.message);
     }
     throw error;

@@ -46,7 +46,7 @@ export function normalizeOpenLibraryDocument(document) {
     authors: cleanList(document.author_name, 12, 180),
     description: null,
     coverUrl: Number.isInteger(coverId) && coverId > 0
-      ? `https://covers.openlibrary.org/b/id/${coverId}-L.jpg?default=false`
+      ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg?default=false`
       : null,
     isbn10,
     isbn13,
@@ -79,7 +79,7 @@ export async function enrichOpenLibraryBook(book, options = {}) {
     return {
       ...book,
       description: cleanText(description, 12_000) || book.description || null,
-      coverUrl: book.coverUrl || (coverId ? `https://covers.openlibrary.org/b/id/${coverId}-L.jpg?default=false` : null),
+      coverUrl: book.coverUrl || (coverId ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg?default=false` : null),
       subjects: book.subjects?.length ? book.subjects : cleanList(work.subjects, 8, 120),
       source: { ...book.source, fetchedAt: new Date().toISOString() },
     };

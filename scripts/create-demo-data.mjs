@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-import { copyFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DEFAULT_STORE_PATH } from '../src/lifeos-storage.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const demoPath = path.join(root, 'data', 'lifeos.demo.json');
-const activePath = path.join(root, 'data', 'lifeos.json');
+const activePath = DEFAULT_STORE_PATH;
 const demoDate = process.env.LIFEOS_DEMO_DATE || '2026-08-22';
 const writeActive = process.argv.includes('--write-active');
 
@@ -69,6 +70,7 @@ for (let historyIndex = 0; historyIndex < 7; historyIndex += 1) {
     timeEntries.push({
       id: `demo-history-${date}-${item.id}`,
       projectId: item.id,
+      categoryIds: [],
       date,
       time: null,
       durationMinutes: Math.round(hours * 60),
@@ -109,6 +111,7 @@ for (const [dayOffset, time, durationMinutes, projectId, activityType, descripti
   timeEntries.push({
     id: `demo-session-${date}-${String(time).replace(':', '')}-${projectId || 'inbox'}`,
     projectId,
+    categoryIds: [],
     date,
     time,
     durationMinutes,
@@ -122,7 +125,7 @@ for (const [dayOffset, time, durationMinutes, projectId, activityType, descripti
 
 const store = {
   meta: {
-    schemaVersion: 4,
+    schemaVersion: 6,
     appName: 'LifeOS',
     tagline: 'A personal almanac',
     timezone: 'America/Sao_Paulo',
@@ -131,6 +134,7 @@ const store = {
     demoGeneratedFor: demoDate,
   },
   domains,
+  categories: {},
   settings: {
     deepTarget: 0.65,
     defaultDailyPlanHours: 8,
@@ -172,9 +176,12 @@ const store = {
 };
 
 await writeFile(demoPath, `${JSON.stringify(store, null, 2)}\n`, 'utf8');
-if (writeActive) await copyFile(demoPath, activePath);
+if (writeActive) {
+  await mkdir(path.dirname(activePath), { recursive: true, mode: 0o700 });
+  await copyFile(demoPath, activePath);
+}
 
-console.log(`Wrote ${path.relative(root, demoPath)}${writeActive ? ' and reset data/lifeos.json' : ''}.`);
+console.log(`Wrote ${path.relative(root, demoPath)}${writeActive ? ` and reset ${activePath}` : ''}.`);
 
 function project(id, name, subtitle, domain, priority, plannedHours, deadlineOffset, progress, note) {
   return {
@@ -182,7 +189,8 @@ function project(id, name, subtitle, domain, priority, plannedHours, deadlineOff
     name,
     subtitle,
     domain,
-    status: 'active',
+    categoryIds: [],
+    status: 'next_up',
     priority,
     plannedHours,
     deadline: deadlineOffset == null ? null : addDays(demoDate, deadlineOffset),

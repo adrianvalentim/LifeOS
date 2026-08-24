@@ -9,10 +9,12 @@ For implementation work, read [`PROJECT_STATE.md`](PROJECT_STATE.md) first. It i
 ```bash
 npm run lifeos -- projects --health
 npm run lifeos -- stats --range week
+npm run lifeos -- stats --category "Infinitamente" --range year
 npm run lifeos -- recommend
 npm run lifeos -- log --project "Vulcano" --duration 180 --type creative --desc "Edited eclipse sequence"
 npm run lifeos -- session start --project "Portia" --type creative --desc "Draft Act III"
 npm run lifeos -- session stop
+npm run lifeos -- storage status
 npm run check
 ```
 
@@ -21,13 +23,17 @@ Use `--json` on read commands when structured output helps. Do not inspect the b
 ## Project map
 
 - `PROJECT_STATE.md` — canonical detailed project-state and maintainer handoff; read before implementation work.
-- `data/lifeos.json` — active portable store: projects, time entries, reading library, active timer, challenge, milestones, settings, and display metadata.
+- `~/Library/Application Support/LifeOS/lifeos.json` on macOS — active personal store; `LIFEOS_DATA_DIR` overrides the platform default.
+- `data/lifeos.json` — legacy demo-derived seed retained only for safe first-run migration; do not write personal data here.
 - `data/lifeos.demo.json` — deterministic demonstration snapshot; never replace it with private data.
 - `src/lifeos-data.mjs` — validation, atomic persistence, derived statistics, project health, recommendations, and timers.
+- `src/lifeos-storage.mjs` — platform data paths, first-run migration, Google Drive snapshot configuration, and backup status.
 - `src/book-catalog.mjs` — dependency-free Open Library search normalization and optional work-detail enrichment; no API key.
+- `src/book-cover-cache.mjs` — bounded medium-cover cache for saved Open Library books; files live beside the active store and are removed with their book.
 - `src/codex-app-server.mjs` — local bridge to the installed Codex app server and signed-in ChatGPT account. Never add API-key authentication.
 - `cli/lifeos.mjs` — preferred operational interface for Codex.
 - `scripts/dev-server.mjs` — dependency-free web server, JSON routes, live refresh, and Codex relay.
+- `src-tauri/` — source-backed Tauri development shell; it starts the repository's Node server and opens its loopback URL in WKWebView.
 - `public/` — V2 Editorial browser UI.
 - `scripts/create-demo-data.mjs` — generates both demo files; `--write-active` overwrites the active store.
 - `design plan/` — original visual references; do not revise unless asked.
@@ -40,9 +46,15 @@ Use `--json` on read commands when structured output helps. Do not inspect the b
 - Preserve the user's original language in `rawInput`.
 - Never silently map an unknown explicit project to general work; ask or report the match error.
 - Visible statistics must be derived from source entries. Do not add display-only totals or hardcode dashboard numbers.
-- Reading statuses are `to_read`, `next_up`, `reading`, `finished`, or `dropped`; Kanban intentionally includes only `next_up`, `reading`, and `finished`.
+- Project statuses are `to_do`, `next_up`, `doing`, `done`, or `dropped`; the Projects Kanban intentionally shows only `next_up`, `doing`, and `done`, while the list and project detail keep all five reachable.
+- Project categories are reusable many-to-many labels referenced by stable category IDs. Category analytics includes current project membership plus category-only history preserved when a project is deleted.
+- Keep the personal store outside Git. Cloud snapshots are secondary copies and must never become the live store.
+- Google Drive backup must be configured to one explicit folder; do not guess between accounts. Backup failure must not invalidate a successful local write.
+- Reading statuses are `to_read`, `next_up`, `reading`, `finished`, or `dropped`; Kanban intentionally includes only `next_up`, `reading`, and `finished`, with Finished projected to the configured current calendar year by `finishedAt`.
+- `finishedAt` is the persisted date-read source. It can be corrected only for a finished book, and the supported route rejects future dates.
 - Reading tags are free-form display labels normalized and deduplicated case-insensitively. Permanent deletion must target one exact book ID and remain behind a confirmation that names the book.
-- Treat `data/lifeos.json.bak` as recovery state, not source data, and never commit it.
+- Treat the active store's `.bak` file as recovery state, not source data, and never commit it.
+- Cache covers only for saved books. Keep the original remote URL in book metadata, use the adjacent `reading-covers/` directory for regenerable image files, and do not duplicate those files into every JSON snapshot.
 
 ## Codex rail rules
 
@@ -56,7 +68,9 @@ Use `--json` on read commands when structured output helps. Do not inspect the b
 
 - Preserve V2 Editorial: warm paper, serif masthead, thin rules, compact information, persistent right Codex rail.
 - Default to Projects and keep the first screen useful.
-- This phase intentionally defers full project/time-entry/settings management and native packaging. Do not present placeholders as completed workflows.
+- A source-backed macOS development app is implemented; self-contained distribution, notarization, updates, and Windows/Linux packaging remain deferred.
+- The development app intentionally depends on this workspace and an installed Node runtime so browser changes remain immediately refreshable.
+- In the installed app, **LifeOS Dev → Refresh LifeOS** (`Command-R`) restarts the workspace Node server and reloads the current route; use it for browser or backend source changes instead of quitting the app.
 
 ## Before committing
 
