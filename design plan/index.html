@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>LifeOS — Dashboard explorations</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #f0eee9; }
+  #root { width: 100%; height: 100%; }
+  *, *::before, *::after { box-sizing: border-box; }
+</style>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="data.js"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="v1-instrument.jsx"></script>
+<script type="text/babel" src="v2-editorial.jsx"></script>
+<script type="text/babel" src="v3-noir.jsx"></script>
+
+<script type="text/babel" data-presets="env,react">
+  const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "accent": "ember"
+  }/*EDITMODE-END*/;
+
+  // Accent presets — each maps to a per-variant hex tuned for that variant's
+  // background lightness. The V1 hex is the canonical "swatch" rendered in
+  // the tweak chip.
+  const ACCENTS = {
+    ember:    { instrument: '#d97757', editorial: '#a44a26', noir: '#e08555' },
+    cobalt:   { instrument: '#6b94d4', editorial: '#3a5e9c', noir: '#7da8e0' },
+    moss:     { instrument: '#7eb087', editorial: '#3f6b48', noir: '#86b896' },
+    bordeaux: { instrument: '#c25a78', editorial: '#8a2c4a', noir: '#d07090' },
+  };
+
+  function applyAccent(key) {
+    const a = ACCENTS[key] || ACCENTS.ember;
+    let el = document.getElementById('accent-overrides');
+    if (!el) {
+      el = document.createElement('style');
+      el.id = 'accent-overrides';
+      document.head.appendChild(el);
+    }
+    el.textContent = `
+      /* V1 */
+      .v1 .v1-top .logo .dot { background: ${a.instrument}; }
+      .v1 .v1-now .badge { color: ${a.instrument}; }
+      .v1 .v1-now .btn.primary { background: ${a.instrument}; border-color: ${a.instrument}; }
+      .v1 .v1-msg.user .body::before { color: ${a.instrument}; }
+      .v1 .v1-chat-input .caret { color: ${a.instrument}; }
+      .v1 .v1-chat-input .field { border-color: ${a.instrument}33; }
+      .v1 .v1-chat-channels .pill.build.active { color: ${a.instrument}; border-color: ${a.instrument}; }
+      .v1 .v1-challenge .pips i.on { background: ${a.instrument}; border-color: ${a.instrument}; }
+      .v1 .v1-challenge .body b { color: ${a.instrument} !important; }
+      .v1 .v1-sect-hd .micro[data-accent] { color: ${a.instrument}; }
+      .v1 .accent-fg { color: ${a.instrument} !important; }
+
+      /* V2 */
+      .v2 .v2-now .pull em { color: ${a.editorial}; }
+      .v2 .v2-challenge { border-left-color: ${a.editorial}; }
+      .v2 .v2-challenge .kicker { color: ${a.editorial}; }
+      .v2 .v2-challenge .pip.on { background: ${a.editorial}; }
+      .v2 .v2-chat-input .caret { color: ${a.editorial}; }
+      .v2 .v2-msg.assistant .meta b { color: ${a.editorial}; }
+
+      /* V3 */
+      .v3 .v3-track .mark .dot { background: ${a.noir}; box-shadow: 0 0 12px ${a.noir}; }
+      .v3 .v3-hero .name::after { color: ${a.noir}; }
+      .v3 .v3-hero .timestamp .label { color: ${a.noir}; opacity: .9; }
+      .v3 .v3-hero .meta .focus { color: ${a.noir}; }
+      .v3 .v3-hero .pitch em { color: ${a.noir}; }
+      .v3 .v3-hero .btn.primary { background: ${a.noir}; border-color: ${a.noir}; }
+      .v3 .v3-hero .btn:hover { border-color: ${a.noir}; color: ${a.noir}; }
+      .v3 .v3-today .col .val.serif { color: ${a.noir}; }
+      .v3 .v3-chat-channels .pill.build.active { color: ${a.noir}; border-color: ${a.noir};
+        background: ${a.noir}14; }
+      .v3 .v3-chat-input .caret { color: ${a.noir}; }
+      .v3 .v3-chat-input .cursor { background: ${a.noir}; }
+      .v3 .v3-msg.assistant .meta b { color: ${a.noir}; }
+    `;
+  }
+
+  function App() {
+    const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+    React.useEffect(() => { applyAccent(t.accent); }, [t.accent]);
+
+    // Build option list — chip carries V1 hex as its visible swatch;
+    // we map back to the key on change.
+    const accentOptions = Object.keys(ACCENTS).map((k) => ACCENTS[k].instrument);
+    const currentHex = (ACCENTS[t.accent] || ACCENTS.ember).instrument;
+
+    return (
+      <>
+        <DesignCanvas>
+          <DCSection id="editorial" title="LifeOS · Editorial"
+            subtitle="Four tabs, four focused views. Click any artboard to focus — tabs inside are live, switch them with a click.">
+            <DCArtboard id="today" label="Today — what to do, what's been done" width={1480} height={920}>
+              <V2Editorial initialTab="today"/>
+            </DCArtboard>
+            <DCArtboard id="projects" label="Projects — state of everything" width={1480} height={920}>
+              <V2Editorial initialTab="projects"/>
+            </DCArtboard>
+            <DCArtboard id="analytics" label="Analytics — where time actually went" width={1480} height={920}>
+              <V2Editorial initialTab="analytics"/>
+            </DCArtboard>
+            <DCArtboard id="almanac" label="Almanac — evidence of progress" width={1480} height={920}>
+              <V2Editorial initialTab="almanac"/>
+            </DCArtboard>
+          </DCSection>
+          <DCSection id="alternates" title="Earlier directions"
+            subtitle="Kept for reference. The Instrument (mission-control) and Tech-noir (cinematic) explorations from the first pass.">
+            <DCArtboard id="v1" label="Instrument" width={1480} height={920}>
+              <V1Instrument/>
+            </DCArtboard>
+            <DCArtboard id="v3" label="Tech-noir" width={1480} height={920}>
+              <V3Noir/>
+            </DCArtboard>
+          </DCSection>
+        </DesignCanvas>
+
+        <TweaksPanel title="LifeOS">
+          <TweakSection label="Accent">
+            <TweakColor
+              label="Focus hue"
+              value={currentHex}
+              options={accentOptions}
+              onChange={(hex) => {
+                const key = Object.keys(ACCENTS).find(
+                  (k) => ACCENTS[k].instrument.toLowerCase() === String(hex).toLowerCase(),
+                ) || 'ember';
+                setTweak('accent', key);
+              }}
+            />
+          </TweakSection>
+        </TweaksPanel>
+      </>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+
+</head>
+<body>
+<div id="root"></div>
+</body>
+</html>

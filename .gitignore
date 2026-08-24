@@ -1,0 +1,12 @@
+.DS_Store
+._*
+node_modules/
+.env
+.env.*
+dist/
+coverage/
+npm-debug.log*
+data/*.bak
+data/*.lock
+data/.*.tmp
+.playwright-cli/
