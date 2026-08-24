@@ -1,6 +1,6 @@
 {
   "meta": {
-    "schemaVersion": 2,
+    "schemaVersion": 4,
     "appName": "LifeOS",
     "tagline": "A personal almanac",
     "timezone": "America/Sao_Paulo",
@@ -175,6 +175,220 @@
       "createdAt": "2026-02-23T12:00:00-03:00"
     }
   ],
+  "reading": {
+    "books": [
+      {
+        "id": "demo-book-left-hand-darkness",
+        "title": "The Left Hand of Darkness",
+        "subtitle": null,
+        "authors": [
+          "Ursula K. Le Guin"
+        ],
+        "description": "A lone envoy encounters a world whose social life challenges his assumptions about gender, loyalty, and political trust.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780441478125-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780441478125",
+        "publisher": null,
+        "publishedYear": 1969,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "science fiction",
+          "politics"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780441478125",
+          "fetchedAt": "2026-05-27T12:00:00-03:00"
+        },
+        "status": "to_read",
+        "sortOrder": 1,
+        "addedAt": "2026-05-27T12:00:00-03:00",
+        "statusChangedAt": "2026-07-29T12:00:00-03:00",
+        "updatedAt": "2026-07-29T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-wizard-earthsea",
+        "title": "A Wizard of Earthsea",
+        "subtitle": null,
+        "authors": [
+          "Ursula K. Le Guin"
+        ],
+        "description": "A gifted young mage must repair the harm caused by his pride and face the shadow he released into the world.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780547773742-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780547773742",
+        "publisher": null,
+        "publishedYear": 1968,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "fantasy",
+          "adventure"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780547773742",
+          "fetchedAt": "2026-05-27T12:00:00-03:00"
+        },
+        "status": "to_read",
+        "sortOrder": 7,
+        "addedAt": "2026-05-27T12:00:00-03:00",
+        "statusChangedAt": "2026-08-23T22:45:19.524Z",
+        "updatedAt": "2026-08-23T22:45:19.524Z"
+      },
+      {
+        "id": "demo-book-odyssey",
+        "title": "The Odyssey",
+        "subtitle": null,
+        "authors": [
+          "Homer"
+        ],
+        "description": "An epic of homecoming, endurance, identity, and the consequences of a long war.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780140268867-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780140268867",
+        "publisher": null,
+        "publishedYear": null,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "classic",
+          "adventure"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780140268867",
+          "fetchedAt": "2026-05-27T12:00:00-03:00"
+        },
+        "status": "reading",
+        "sortOrder": 6,
+        "addedAt": "2026-05-27T12:00:00-03:00",
+        "statusChangedAt": "2026-08-23T22:47:41.859Z",
+        "updatedAt": "2026-08-23T22:47:41.859Z",
+        "startedAt": "2026-08-02T12:00:00-03:00",
+        "finishedAt": "2026-07-29T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-name-rose",
+        "title": "The Name of the Rose",
+        "subtitle": null,
+        "authors": [
+          "Umberto Eco"
+        ],
+        "description": "A medieval murder investigation unfolds inside a labyrinthine abbey shaped by theology, politics, and books.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780156001311-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780156001311",
+        "publisher": null,
+        "publishedYear": 1980,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "mystery",
+          "history"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780156001311",
+          "fetchedAt": "2026-05-30T12:00:00-03:00"
+        },
+        "status": "to_read",
+        "sortOrder": 6,
+        "addedAt": "2026-05-30T12:00:00-03:00",
+        "statusChangedAt": "2026-08-23T22:45:15.743Z",
+        "updatedAt": "2026-08-23T22:45:15.743Z",
+        "startedAt": "2026-08-06T12:00:00-03:00",
+        "finishedAt": "2026-08-02T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-moby-dick",
+        "title": "Moby-Dick",
+        "subtitle": null,
+        "authors": [
+          "Herman Melville"
+        ],
+        "description": "A sailor joins Captain Ahab's obsessive hunt for a white whale.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780142437247-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780142437247",
+        "publisher": null,
+        "publishedYear": 1851,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "classic",
+          "adventure"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780142437247",
+          "fetchedAt": "2026-05-27T12:00:00-03:00"
+        },
+        "status": "to_read",
+        "sortOrder": 4,
+        "addedAt": "2026-05-27T12:00:00-03:00",
+        "statusChangedAt": "2026-08-23T22:45:07.135Z",
+        "updatedAt": "2026-08-23T22:45:07.135Z",
+        "droppedAt": "2026-07-29T12:00:00-03:00"
+      },
+      {
+        "title": "Theory and Reality",
+        "subtitle": "An Introduction to the Philosophy of Science",
+        "authors": [
+          "Peter Godfrey-Smith"
+        ],
+        "description": null,
+        "coverUrl": "https://covers.openlibrary.org/b/id/140969-L.jpg?default=false",
+        "isbn10": "1541467833",
+        "isbn13": "9780226618654",
+        "publisher": "University of Chicago Press",
+        "publishedYear": 2003,
+        "language": "eng",
+        "pageCount": 272,
+        "subjects": [
+          "Science",
+          "Philosophy",
+          "Science, philosophy",
+          "Natuurwetenschappen",
+          "Filosofie",
+          "Naturwissenschaften",
+          "Philosophie",
+          "Filosofia da ciência"
+        ],
+        "tags": [],
+        "source": {
+          "provider": "open_library",
+          "workId": "OL2918594W",
+          "editionId": "OL27864381M",
+          "url": "https://openlibrary.org/works/OL2918594W",
+          "fetchedAt": "2026-08-23T22:46:36.744Z"
+        },
+        "id": "691f3f11-a30b-438f-8b27-d1af78101734",
+        "status": "reading",
+        "sortOrder": 9,
+        "addedAt": "2026-08-23T22:47:11.732Z",
+        "statusChangedAt": "2026-08-23T22:47:58.005Z",
+        "updatedAt": "2026-08-23T22:47:58.005Z",
+        "startedAt": "2026-08-23T22:47:58.005Z"
+      }
+    ]
+  },
   "timeEntries": [
     {
       "id": "demo-history-2026-06-29-portia",

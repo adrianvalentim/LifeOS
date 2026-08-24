@@ -2,6 +2,8 @@
 
 LifeOS is designed to be operated and modified by Codex. For ordinary logging and questions, use the stable CLI first. Inspect source only when the user asks for an implementation or schema change.
 
+For implementation work, read [`PROJECT_STATE.md`](PROJECT_STATE.md) first. It is the canonical detailed handoff for current architecture, decisions, maintenance, limitations, and the ordered next phase.
+
 ## Fast path
 
 ```bash
@@ -18,9 +20,11 @@ Use `--json` on read commands when structured output helps. Do not inspect the b
 
 ## Project map
 
-- `data/lifeos.json` — active portable store: projects, time entries, active timer, challenge, milestones, settings, and display metadata.
+- `PROJECT_STATE.md` — canonical detailed project-state and maintainer handoff; read before implementation work.
+- `data/lifeos.json` — active portable store: projects, time entries, reading library, active timer, challenge, milestones, settings, and display metadata.
 - `data/lifeos.demo.json` — deterministic demonstration snapshot; never replace it with private data.
 - `src/lifeos-data.mjs` — validation, atomic persistence, derived statistics, project health, recommendations, and timers.
+- `src/book-catalog.mjs` — dependency-free Open Library search normalization and optional work-detail enrichment; no API key.
 - `src/codex-app-server.mjs` — local bridge to the installed Codex app server and signed-in ChatGPT account. Never add API-key authentication.
 - `cli/lifeos.mjs` — preferred operational interface for Codex.
 - `scripts/dev-server.mjs` — dependency-free web server, JSON routes, live refresh, and Codex relay.
@@ -36,6 +40,8 @@ Use `--json` on read commands when structured output helps. Do not inspect the b
 - Preserve the user's original language in `rawInput`.
 - Never silently map an unknown explicit project to general work; ask or report the match error.
 - Visible statistics must be derived from source entries. Do not add display-only totals or hardcode dashboard numbers.
+- Reading statuses are `to_read`, `next_up`, `reading`, `finished`, or `dropped`; Kanban intentionally includes only `next_up`, `reading`, and `finished`.
+- Reading tags are free-form display labels normalized and deduplicated case-insensitively. Permanent deletion must target one exact book ID and remain behind a confirmation that names the book.
 - Treat `data/lifeos.json.bak` as recovery state, not source data, and never commit it.
 
 ## Codex rail rules

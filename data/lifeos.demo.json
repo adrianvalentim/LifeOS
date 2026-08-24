@@ -1,6 +1,6 @@
 {
   "meta": {
-    "schemaVersion": 2,
+    "schemaVersion": 4,
     "appName": "LifeOS",
     "tagline": "A personal almanac",
     "timezone": "America/Sao_Paulo",
@@ -175,6 +175,383 @@
       "createdAt": "2026-02-23T12:00:00-03:00"
     }
   ],
+  "reading": {
+    "books": [
+      {
+        "id": "demo-book-left-hand-darkness",
+        "title": "The Left Hand of Darkness",
+        "subtitle": null,
+        "authors": [
+          "Ursula K. Le Guin"
+        ],
+        "description": "A lone envoy encounters a world whose social life challenges his assumptions about gender, loyalty, and political trust.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780441478125-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780441478125",
+        "publisher": null,
+        "publishedYear": 1969,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "science fiction",
+          "politics"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780441478125",
+          "fetchedAt": "2026-05-27T12:00:00-03:00"
+        },
+        "status": "to_read",
+        "sortOrder": 1,
+        "addedAt": "2026-05-27T12:00:00-03:00",
+        "statusChangedAt": "2026-07-29T12:00:00-03:00",
+        "updatedAt": "2026-07-29T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-kindred",
+        "title": "Kindred",
+        "subtitle": null,
+        "authors": [
+          "Octavia E. Butler"
+        ],
+        "description": "A modern writer is repeatedly pulled into the antebellum past and forced into a dangerous relationship with her own family history.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780807083697-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780807083697",
+        "publisher": null,
+        "publishedYear": 1979,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "science fiction",
+          "history"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780807083697",
+          "fetchedAt": "2026-05-30T12:00:00-03:00"
+        },
+        "status": "to_read",
+        "sortOrder": 2,
+        "addedAt": "2026-05-30T12:00:00-03:00",
+        "statusChangedAt": "2026-08-02T12:00:00-03:00",
+        "updatedAt": "2026-08-02T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-master-margarita",
+        "title": "The Master and Margarita",
+        "subtitle": null,
+        "authors": [
+          "Mikhail Bulgakov"
+        ],
+        "description": "A fantastical satire in which the devil arrives in Moscow while a parallel story returns to ancient Jerusalem.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780141180144-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780141180144",
+        "publisher": null,
+        "publishedYear": 1967,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "classic",
+          "satire"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780141180144",
+          "fetchedAt": "2026-06-02T12:00:00-03:00"
+        },
+        "status": "to_read",
+        "sortOrder": 3,
+        "addedAt": "2026-06-02T12:00:00-03:00",
+        "statusChangedAt": "2026-08-06T12:00:00-03:00",
+        "updatedAt": "2026-08-06T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-wizard-earthsea",
+        "title": "A Wizard of Earthsea",
+        "subtitle": null,
+        "authors": [
+          "Ursula K. Le Guin"
+        ],
+        "description": "A gifted young mage must repair the harm caused by his pride and face the shadow he released into the world.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780547773742-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780547773742",
+        "publisher": null,
+        "publishedYear": 1968,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "fantasy",
+          "adventure"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780547773742",
+          "fetchedAt": "2026-05-27T12:00:00-03:00"
+        },
+        "status": "next_up",
+        "sortOrder": 1,
+        "addedAt": "2026-05-27T12:00:00-03:00",
+        "statusChangedAt": "2026-07-29T12:00:00-03:00",
+        "updatedAt": "2026-07-29T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-dispossessed",
+        "title": "The Dispossessed",
+        "subtitle": null,
+        "authors": [
+          "Ursula K. Le Guin"
+        ],
+        "description": "A physicist crosses between two divided societies, testing the promises and failures of both political systems.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780061054884-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780061054884",
+        "publisher": null,
+        "publishedYear": 1974,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "science fiction",
+          "politics"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780061054884",
+          "fetchedAt": "2026-05-30T12:00:00-03:00"
+        },
+        "status": "next_up",
+        "sortOrder": 2,
+        "addedAt": "2026-05-30T12:00:00-03:00",
+        "statusChangedAt": "2026-08-02T12:00:00-03:00",
+        "updatedAt": "2026-08-02T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-dawn-everything",
+        "title": "The Dawn of Everything",
+        "subtitle": null,
+        "authors": [
+          "David Graeber",
+          "David Wengrow"
+        ],
+        "description": "A wide-ranging re-examination of common stories about early cities, hierarchy, freedom, and the origins of inequality.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780374157357-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780374157357",
+        "publisher": null,
+        "publishedYear": 2021,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "anthropology",
+          "history"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780374157357",
+          "fetchedAt": "2026-05-27T12:00:00-03:00"
+        },
+        "status": "reading",
+        "sortOrder": 1,
+        "addedAt": "2026-05-27T12:00:00-03:00",
+        "statusChangedAt": "2026-07-29T12:00:00-03:00",
+        "updatedAt": "2026-07-29T12:00:00-03:00",
+        "startedAt": "2026-08-02T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-theory-reality",
+        "title": "Theory and Reality",
+        "subtitle": null,
+        "authors": [
+          "Peter Godfrey-Smith"
+        ],
+        "description": "An accessible map of twentieth-century philosophy of science, from logical empiricism to realism and social studies of science.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780226771137-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780226771137",
+        "publisher": null,
+        "publishedYear": 2003,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "philosophy",
+          "science"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780226771137",
+          "fetchedAt": "2026-05-30T12:00:00-03:00"
+        },
+        "status": "reading",
+        "sortOrder": 2,
+        "addedAt": "2026-05-30T12:00:00-03:00",
+        "statusChangedAt": "2026-08-02T12:00:00-03:00",
+        "updatedAt": "2026-08-02T12:00:00-03:00",
+        "startedAt": "2026-08-06T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-odyssey",
+        "title": "The Odyssey",
+        "subtitle": null,
+        "authors": [
+          "Homer"
+        ],
+        "description": "An epic of homecoming, endurance, identity, and the consequences of a long war.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780140268867-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780140268867",
+        "publisher": null,
+        "publishedYear": null,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "classic",
+          "adventure"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780140268867",
+          "fetchedAt": "2026-05-27T12:00:00-03:00"
+        },
+        "status": "finished",
+        "sortOrder": 1,
+        "addedAt": "2026-05-27T12:00:00-03:00",
+        "statusChangedAt": "2026-07-29T12:00:00-03:00",
+        "updatedAt": "2026-07-29T12:00:00-03:00",
+        "startedAt": "2026-08-02T12:00:00-03:00",
+        "finishedAt": "2026-07-29T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-name-rose",
+        "title": "The Name of the Rose",
+        "subtitle": null,
+        "authors": [
+          "Umberto Eco"
+        ],
+        "description": "A medieval murder investigation unfolds inside a labyrinthine abbey shaped by theology, politics, and books.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780156001311-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780156001311",
+        "publisher": null,
+        "publishedYear": 1980,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "mystery",
+          "history"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780156001311",
+          "fetchedAt": "2026-05-30T12:00:00-03:00"
+        },
+        "status": "finished",
+        "sortOrder": 2,
+        "addedAt": "2026-05-30T12:00:00-03:00",
+        "statusChangedAt": "2026-08-02T12:00:00-03:00",
+        "updatedAt": "2026-08-02T12:00:00-03:00",
+        "startedAt": "2026-08-06T12:00:00-03:00",
+        "finishedAt": "2026-08-02T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-fifth-season",
+        "title": "The Fifth Season",
+        "subtitle": null,
+        "authors": [
+          "N. K. Jemisin"
+        ],
+        "description": "On a geologically unstable world, three interwoven lives reveal the human cost of power, oppression, and survival.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780316229296-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780316229296",
+        "publisher": null,
+        "publishedYear": 2015,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "fantasy",
+          "science fiction"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780316229296",
+          "fetchedAt": "2026-06-02T12:00:00-03:00"
+        },
+        "status": "finished",
+        "sortOrder": 3,
+        "addedAt": "2026-06-02T12:00:00-03:00",
+        "statusChangedAt": "2026-08-06T12:00:00-03:00",
+        "updatedAt": "2026-08-06T12:00:00-03:00",
+        "startedAt": "2026-08-10T12:00:00-03:00",
+        "finishedAt": "2026-08-06T12:00:00-03:00"
+      },
+      {
+        "id": "demo-book-moby-dick",
+        "title": "Moby-Dick",
+        "subtitle": null,
+        "authors": [
+          "Herman Melville"
+        ],
+        "description": "A sailor joins Captain Ahab's obsessive hunt for a white whale.",
+        "coverUrl": "https://covers.openlibrary.org/b/isbn/9780142437247-L.jpg?default=false",
+        "isbn10": null,
+        "isbn13": "9780142437247",
+        "publisher": null,
+        "publishedYear": 1851,
+        "language": "eng",
+        "pageCount": null,
+        "subjects": [],
+        "tags": [
+          "classic",
+          "adventure"
+        ],
+        "source": {
+          "provider": "open_library",
+          "workId": null,
+          "editionId": null,
+          "url": "https://openlibrary.org/isbn/9780142437247",
+          "fetchedAt": "2026-05-27T12:00:00-03:00"
+        },
+        "status": "dropped",
+        "sortOrder": 1,
+        "addedAt": "2026-05-27T12:00:00-03:00",
+        "statusChangedAt": "2026-07-29T12:00:00-03:00",
+        "updatedAt": "2026-07-29T12:00:00-03:00",
+        "droppedAt": "2026-07-29T12:00:00-03:00"
+      }
+    ]
+  },
   "timeEntries": [
     {
       "id": "demo-history-2026-06-29-portia",

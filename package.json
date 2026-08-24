@@ -7,7 +7,7 @@
     "dev": "node scripts/dev-server.mjs",
     "lifeos": "node cli/lifeos.mjs",
     "demo:reset": "node scripts/create-demo-data.mjs --write-active",
-    "check": "node --check public/app.js && node --check scripts/dev-server.mjs && node --check src/lifeos-data.mjs && node --check src/codex-app-server.mjs && node --check cli/lifeos.mjs && npm test",
+    "check": "node --check public/app.js && node --check public/reading.js && node --check scripts/dev-server.mjs && node --check src/lifeos-data.mjs && node --check src/book-catalog.mjs && node --check src/codex-app-server.mjs && node --check cli/lifeos.mjs && npm test",
     "test": "node --test"
   },
   "bin": {

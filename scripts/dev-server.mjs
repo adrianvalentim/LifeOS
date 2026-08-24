@@ -4,8 +4,19 @@ import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { enrichOpenLibraryBook, searchOpenLibrary } from '../src/book-catalog.mjs';
 import { CODEX_VOICE_CAPABILITY, codexAppServer } from '../src/codex-app-server.mjs';
-import { getState, logTime, startSession, stopSession } from '../src/lifeos-data.mjs';
+import {
+  addReadingBook,
+  deleteReadingBook,
+  getState,
+  logTime,
+  reorderReadingBook,
+  setReadingBookStatus,
+  startSession,
+  stopSession,
+  updateReadingBookTags,
+} from '../src/lifeos-data.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -47,6 +58,42 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/api/session/stop' && req.method === 'POST') {
       const body = await readJson(req);
       return sendJson(res, (await stopSession(body)).state);
+    }
+    if (url.pathname === '/api/books/search' && req.method === 'GET') {
+      const query = url.searchParams.get('q') || '';
+      if (!query.trim()) throw new ClientError('Enter a title, author, or ISBN.');
+      return sendJson(res, { provider: 'open_library', results: await searchOpenLibrary(query) });
+    }
+    if (url.pathname === '/api/reading/books/import' && req.method === 'POST') {
+      const body = await readJson(req);
+      if (!body.book || typeof body.book !== 'object') throw new ClientError('A catalog book is required.');
+      const book = body.book.source?.provider === 'open_library'
+        ? await enrichOpenLibraryBook(body.book)
+        : body.book;
+      return sendJson(res, await readingStateAction(() => addReadingBook({ book, status: body.status })));
+    }
+    if (url.pathname === '/api/reading/books/status' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.bookId, 'bookId');
+      requireString(body.status, 'status');
+      return sendJson(res, await readingStateAction(() => setReadingBookStatus(body)));
+    }
+    if (url.pathname === '/api/reading/books/reorder' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.bookId, 'bookId');
+      requireString(body.direction, 'direction');
+      return sendJson(res, await readingStateAction(() => reorderReadingBook(body)));
+    }
+    if (url.pathname === '/api/reading/books/tags' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.bookId, 'bookId');
+      if (!Array.isArray(body.tags)) throw new ClientError('tags must be an array.');
+      return sendJson(res, await readingStateAction(() => updateReadingBookTags(body)));
+    }
+    if (url.pathname === '/api/reading/books/delete' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.bookId, 'bookId');
+      return sendJson(res, await readingStateAction(() => deleteReadingBook(body)));
     }
 
     if (url.pathname === '/api/codex/bootstrap' && req.method === 'GET') {
@@ -205,6 +252,17 @@ async function readJson(req, limitBytes = 256 * 1024) {
 
 function requireString(value, name) {
   if (typeof value !== 'string' || !value.trim()) throw new ClientError(`${name} is required.`);
+}
+
+async function readingStateAction(action) {
+  try {
+    return (await action()).state;
+  } catch (error) {
+    if (/Reading book not found|already in Reading|Unknown reading status|direction must be/.test(error.message)) {
+      throw new ClientError(error.message);
+    }
+    throw error;
+  }
 }
 
 class ClientError extends Error {}

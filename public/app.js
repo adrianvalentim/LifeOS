@@ -1,3 +1,6 @@
+import { createReadingUiState, renderReading } from './reading.js';
+
+const VALID_TABS = ['today', 'projects', 'reading', 'analytics', 'almanac'];
 let state = null;
 let activeTab = 'projects';
 let activeRange = 'week';
@@ -6,6 +9,7 @@ let recommendationDismissed = false;
 let pageError = null;
 let stateRefreshTimer = null;
 let eventSource = null;
+const readingUi = createReadingUiState();
 
 const codex = {
   connection: 'connecting',
@@ -27,15 +31,18 @@ const codex = {
 
 const app = document.getElementById('app');
 const THREAD_STORAGE_KEY = 'lifeos.codex.threadId';
+const RAIL_STORAGE_KEY = 'lifeos.codex.railCollapsed';
+let codexRailCollapsed = localStorage.getItem(RAIL_STORAGE_KEY) === 'true';
 
 void init();
 
 async function init() {
   const params = new URLSearchParams(location.search);
   activeRange = ['week', 'month', 'quarter', 'year'].includes(params.get('range')) ? params.get('range') : 'week';
+  readingUi.view = params.get('view') === 'library' ? 'library' : 'kanban';
   try {
     state = await fetchState(activeRange);
-    activeTab = params.get('tab') || state.meta.activeTab || 'projects';
+    activeTab = validTab(params.get('tab')) || validTab(state.meta.activeTab) || 'projects';
     render();
     connectEventStream();
     void bootstrapCodex();
@@ -44,15 +51,31 @@ async function init() {
   }
 
   window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && readingUi.deleteBookId) {
+      readingUi.deleteBookId = null;
+      render();
+      return;
+    }
+    if (event.key === 'Escape' && readingUi.selectedBookId) {
+      readingUi.selectedBookId = null;
+      render();
+      return;
+    }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault();
-      document.querySelector('.chat-input')?.focus();
+      if (codexRailCollapsed) {
+        codexRailCollapsed = false;
+        localStorage.setItem(RAIL_STORAGE_KEY, 'false');
+        render();
+      }
+      requestAnimationFrame(() => document.querySelector('.chat-input')?.focus());
     }
   });
   window.addEventListener('popstate', async () => {
     const next = new URLSearchParams(location.search);
-    activeTab = next.get('tab') || 'projects';
-    activeRange = next.get('range') || 'week';
+    activeTab = validTab(next.get('tab')) || 'projects';
+    activeRange = ['week', 'month', 'quarter', 'year'].includes(next.get('range')) ? next.get('range') : 'week';
+    readingUi.view = next.get('view') === 'library' ? 'library' : 'kanban';
     state = await fetchState(activeRange);
     render();
   });
@@ -70,7 +93,7 @@ async function apiJson(url, options = {}) {
 }
 
 function render() {
-  app.className = 'lifeos';
+  app.className = `lifeos${codexRailCollapsed ? ' rail-collapsed' : ''}`;
   app.innerHTML = `
     ${renderMasthead()}
     ${renderTabs()}
@@ -145,6 +168,236 @@ function bindPageEvents() {
     pageError = null;
     render();
   });
+  bindReadingEvents();
+}
+
+function bindReadingEvents() {
+  if (activeTab !== 'reading') return;
+
+  document.querySelectorAll('[data-reading-view]').forEach((button) => {
+    button.addEventListener('click', () => {
+      readingUi.view = button.dataset.readingView;
+      readingUi.selectedBookId = null;
+      updateLocation();
+      render();
+    });
+  });
+  document.querySelector('[data-reading-catalog-toggle]')?.addEventListener('click', () => {
+    readingUi.catalogOpen = !readingUi.catalogOpen;
+    readingUi.catalogError = null;
+    render();
+    if (readingUi.catalogOpen) document.querySelector('[data-reading-catalog-form] input')?.focus();
+  });
+  document.querySelector('[data-reading-catalog-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const query = String(new FormData(event.currentTarget).get('query') || '').trim();
+    void searchReadingCatalog(query);
+  });
+  document.querySelectorAll('[data-catalog-add-index]').forEach((button) => {
+    button.addEventListener('click', () => void addCatalogBook(Number(button.dataset.catalogAddIndex), button));
+  });
+  document.querySelectorAll('[data-reading-status-book]').forEach((select) => {
+    select.addEventListener('change', () => void changeReadingStatus(select.dataset.readingStatusBook, select.value, select));
+  });
+  document.querySelectorAll('[data-reading-reorder]').forEach((button) => {
+    button.addEventListener('click', () => void reorderReading(button.dataset.bookId, button.dataset.readingReorder, button));
+  });
+  document.querySelectorAll('[data-reading-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      readingUi.filter = button.dataset.readingFilter;
+      render();
+    });
+  });
+  document.querySelector('[data-reading-local-search]')?.addEventListener('input', (event) => {
+    readingUi.localQuery = event.target.value;
+    applyReadingLocalFilter();
+  });
+  document.querySelector('[data-reading-tag-filter]')?.addEventListener('change', (event) => {
+    readingUi.tagFilter = event.target.value;
+    render();
+  });
+  applyReadingLocalFilter();
+  document.querySelectorAll('[data-reading-detail]').forEach((button) => {
+    button.addEventListener('click', () => {
+      readingUi.selectedBookId = button.dataset.readingDetail;
+      render();
+      document.querySelector('.book-detail-close')?.focus();
+    });
+  });
+  document.querySelectorAll('[data-reading-detail-close]').forEach((control) => {
+    control.addEventListener('click', (event) => {
+      if (control.classList.contains('book-detail-backdrop') && event.target !== control) return;
+      readingUi.selectedBookId = null;
+      render();
+    });
+  });
+  document.querySelectorAll('[data-reading-tag-form]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const bookId = form.dataset.readingTagForm;
+      const book = state.reading.books.find((candidate) => candidate.id === bookId);
+      const tag = String(new FormData(form).get('tag') || '').trim();
+      if (!book || !tag) return;
+      void updateReadingTags(bookId, [...(book.tags || []), tag], form.querySelector('button'));
+    });
+  });
+  document.querySelectorAll('[data-reading-tag-remove]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const book = state.reading.books.find((candidate) => candidate.id === button.dataset.bookId);
+      if (!book) return;
+      const normalized = button.dataset.readingTagRemove.toLowerCase();
+      void updateReadingTags(book.id, (book.tags || []).filter((tag) => tag.toLowerCase() !== normalized), button);
+    });
+  });
+  document.querySelector('[data-reading-delete-request]')?.addEventListener('click', (event) => {
+    readingUi.deleteBookId = event.currentTarget.dataset.readingDeleteRequest;
+    render();
+    document.querySelector('[data-reading-delete-cancel]')?.focus();
+  });
+  document.querySelector('[data-reading-delete-cancel]')?.addEventListener('click', () => {
+    readingUi.deleteBookId = null;
+    render();
+    document.querySelector('[data-reading-delete-request]')?.focus();
+  });
+  document.querySelector('[data-reading-delete-confirm]')?.addEventListener('click', (event) => {
+    void permanentlyDeleteReadingBook(event.currentTarget.dataset.readingDeleteConfirm, event.currentTarget);
+  });
+  document.querySelectorAll('[data-reading-cover]').forEach((image) => {
+    const markMissing = () => image.closest('.book-cover')?.classList.add('cover-missing');
+    image.addEventListener('error', markMissing, { once: true });
+    if (image.complete && image.naturalWidth === 0) markMissing();
+  });
+  bindReadingDragAndDrop();
+}
+
+async function searchReadingCatalog(query) {
+  readingUi.catalogQuery = query;
+  readingUi.catalogError = null;
+  readingUi.catalogResults = [];
+  if (!query) {
+    readingUi.catalogError = 'Enter a title, author, or ISBN.';
+    render();
+    return;
+  }
+  readingUi.searching = true;
+  render();
+  try {
+    const body = await apiJson(`/api/books/search?q=${encodeURIComponent(query)}`);
+    readingUi.catalogResults = body.results || [];
+  } catch (error) {
+    readingUi.catalogError = error.message;
+  } finally {
+    readingUi.searching = false;
+    render();
+  }
+}
+
+async function addCatalogBook(index, button) {
+  const book = readingUi.catalogResults[index];
+  const status = document.querySelector(`[data-catalog-status-index="${index}"]`)?.value || 'to_read';
+  if (!book) return;
+  readingUi.catalogError = null;
+  button.disabled = true;
+  button.textContent = 'Adding…';
+  try {
+    state = await apiJson('/api/reading/books/import', jsonRequest({ book, status }));
+    readingUi.catalogResults.splice(index, 1);
+    readingUi.view = status === 'to_read' || status === 'dropped' ? 'library' : readingUi.view;
+    updateLocation();
+    render();
+  } catch (error) {
+    readingUi.catalogError = error.message;
+    render();
+  }
+}
+
+async function changeReadingStatus(bookId, status, control = null) {
+  const current = state.reading.books.find((book) => book.id === bookId);
+  if (current?.status === status) return;
+  pageError = null;
+  if (control) control.disabled = true;
+  try {
+    state = await apiJson('/api/reading/books/status', jsonRequest({ bookId, status }));
+    render();
+  } catch (error) {
+    pageError = error.message;
+    render();
+  }
+}
+
+async function reorderReading(bookId, direction, button) {
+  await runPageAction(button, async () => {
+    state = await apiJson('/api/reading/books/reorder', jsonRequest({ bookId, direction }));
+    render();
+  });
+}
+
+async function updateReadingTags(bookId, tags, control) {
+  pageError = null;
+  if (control) control.disabled = true;
+  try {
+    state = await apiJson('/api/reading/books/tags', jsonRequest({ bookId, tags }));
+    render();
+  } catch (error) {
+    pageError = error.message;
+    render();
+  }
+}
+
+async function permanentlyDeleteReadingBook(bookId, button) {
+  pageError = null;
+  button.disabled = true;
+  button.textContent = 'Deleting…';
+  try {
+    state = await apiJson('/api/reading/books/delete', jsonRequest({ bookId }));
+    readingUi.selectedBookId = null;
+    readingUi.deleteBookId = null;
+    const availableTags = new Set(state.reading.books.flatMap((book) => book.tags || []).map((tag) => tag.toLowerCase()));
+    if (readingUi.tagFilter !== 'all' && !availableTags.has(readingUi.tagFilter.toLowerCase())) readingUi.tagFilter = 'all';
+    render();
+  } catch (error) {
+    pageError = error.message;
+    render();
+  }
+}
+
+function applyReadingLocalFilter() {
+  const query = readingUi.localQuery.trim().toLowerCase();
+  let visible = 0;
+  document.querySelectorAll('[data-reading-search-text]').forEach((row) => {
+    const matches = !query || row.dataset.readingSearchText.includes(query);
+    row.hidden = !matches;
+    if (matches) visible += 1;
+  });
+  const empty = document.querySelector('[data-reading-filter-empty]');
+  if (empty) empty.hidden = visible > 0;
+}
+
+function bindReadingDragAndDrop() {
+  document.querySelectorAll('[data-reading-drag-id]').forEach((card) => {
+    card.addEventListener('dragstart', (event) => {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', card.dataset.readingDragId);
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  });
+  document.querySelectorAll('[data-reading-drop-status]').forEach((column) => {
+    column.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      column.classList.add('drag-over');
+    });
+    column.addEventListener('dragleave', (event) => {
+      if (!column.contains(event.relatedTarget)) column.classList.remove('drag-over');
+    });
+    column.addEventListener('drop', (event) => {
+      event.preventDefault();
+      column.classList.remove('drag-over');
+      const bookId = event.dataTransfer.getData('text/plain');
+      if (bookId) void changeReadingStatus(bookId, column.dataset.readingDropStatus);
+    });
+  });
 }
 
 async function runPageAction(button, action) {
@@ -164,6 +417,7 @@ function updateLocation() {
   const params = new URLSearchParams();
   if (activeTab !== 'projects') params.set('tab', activeTab);
   if (activeRange !== 'week') params.set('range', activeRange);
+  if (activeTab === 'reading' && readingUi.view !== 'kanban') params.set('view', readingUi.view);
   const query = params.toString();
   history.pushState(null, '', query ? `?${query}` : location.pathname);
 }
@@ -192,12 +446,14 @@ function renderTabs() {
   const tabs = [
     ['today', 'Today'],
     ['projects', 'Projects'],
+    ['reading', 'Reading'],
     ['analytics', 'Analytics'],
     ['almanac', 'Almanac'],
   ];
   const meta = {
     today: state.activeSession ? 'A focused session is running' : 'What now and what has happened',
     projects: `${titleNumber(state.summary.activeCount)} active - ${titleNumber(state.summary.criticalCount)} critical`,
+    reading: `${state.reading.summary.byStatus.reading} reading - ${state.reading.summary.byStatus.next_up} next up`,
     analytics: 'Where the hours actually went',
     almanac: 'A record of what got done',
   };
@@ -213,6 +469,7 @@ function renderTabs() {
 
 function renderPage() {
   if (activeTab === 'today') return renderToday();
+  if (activeTab === 'reading') return renderReading(state.reading, readingUi);
   if (activeTab === 'analytics') return renderAnalytics();
   if (activeTab === 'almanac') return renderAlmanac();
   return renderProjects();
@@ -481,36 +738,50 @@ function renderChat() {
   const busy = activeThread?.turns?.some((turn) => turn.status === 'inProgress') || Boolean(codex.runningTurns[activeThread?.id]);
   const statusLabel = subscriptionReady ? account.email || `ChatGPT ${account.planType || ''}` : codex.connection;
   return `
-    <aside class="chat">
-      <div class="chat-top">
-        <div class="chat-name">Codex</div>
-        <div class="chat-sub"><span class="online-dot ${codex.connection === 'connected' ? '' : 'offline'}"></span><span>${escapeHtml(statusLabel)}</span><span>-</span><span>LifeOS</span></div>
-      </div>
-      <div class="chat-taskbar">
-        <select class="thread-select" aria-label="Codex task" ${codex.opening ? 'disabled' : ''}>
-          <option value="">${codex.threads.length ? 'Choose a task' : 'No LifeOS tasks yet'}</option>
-          ${codex.threads.map((thread) => `<option value="${escapeAttribute(thread.id)}" ${thread.id === activeThread?.id ? 'selected' : ''}>${escapeHtml(threadTitle(thread))}</option>`).join('')}
-        </select>
-        <button class="chat-tool-button" data-codex-new type="button" ${!subscriptionReady || codex.opening ? 'disabled' : ''}>New</button>
-        <button class="chat-tool-button" data-codex-refresh type="button" ${codex.opening ? 'disabled' : ''}>↻</button>
-      </div>
-      <div class="chat-body">
-        ${renderChatBody(subscriptionReady)}
-        ${codex.pendingRequests.map(renderServerRequest).join('')}
-      </div>
-      ${codex.error ? `<div class="chat-error"><span>${escapeHtml(codex.error)}</span><button data-codex-error-dismiss type="button">Dismiss</button></div>` : ''}
-      <form class="chat-form">
-        <div class="voice-strip">
-          <button class="voice-button" type="button" disabled title="${escapeAttribute(codex.voice.reason)}">Voice unavailable</button>
-          <span class="voice-status">${escapeHtml(codex.voice.reason)}</span>
+    <aside class="chat${codexRailCollapsed ? ' is-collapsed' : ''}" aria-label="Codex assistant">
+      <button
+        class="rail-toggle"
+        data-codex-rail-toggle
+        type="button"
+        aria-controls="codex-rail-content"
+        aria-expanded="${codexRailCollapsed ? 'false' : 'true'}"
+        aria-label="${codexRailCollapsed ? 'Open Codex panel' : 'Collapse Codex panel'}"
+        title="${codexRailCollapsed ? 'Open Codex' : 'Collapse Codex'}"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+        <span class="rail-toggle-label">Codex</span>
+      </button>
+      <div class="chat-panel" id="codex-rail-content" ${codexRailCollapsed ? 'hidden' : ''}>
+        <div class="chat-top">
+          <div class="chat-name">Codex</div>
+          <div class="chat-sub"><span class="online-dot ${codex.connection === 'connected' ? '' : 'offline'}"></span><span>${escapeHtml(statusLabel)}</span><span>-</span><span>LifeOS</span></div>
         </div>
-        <div class="chat-field">
-          <span class="chat-caret">›</span>
-          <textarea class="chat-input" name="message" rows="1" placeholder="Ask Codex to log, analyze, or change LifeOS…" ${!subscriptionReady || busy || codex.sending ? 'disabled' : ''}>${escapeHtml(codex.draft)}</textarea>
-          ${busy ? '<button class="send-button stop" data-codex-stop type="button">Stop</button>' : `<button class="send-button" type="submit" ${!subscriptionReady || codex.sending ? 'disabled' : ''}>${codex.sending ? 'Sending' : 'Send'}</button>`}
+        <div class="chat-taskbar">
+          <select class="thread-select" aria-label="Codex task" ${codex.opening ? 'disabled' : ''}>
+            <option value="">${codex.threads.length ? 'Choose a task' : 'No LifeOS tasks yet'}</option>
+            ${codex.threads.map((thread) => `<option value="${escapeAttribute(thread.id)}" ${thread.id === activeThread?.id ? 'selected' : ''}>${escapeHtml(threadTitle(thread))}</option>`).join('')}
+          </select>
+          <button class="chat-tool-button" data-codex-new type="button" ${!subscriptionReady || codex.opening ? 'disabled' : ''}>New</button>
+          <button class="chat-tool-button" data-codex-refresh type="button" ${codex.opening ? 'disabled' : ''}>↻</button>
         </div>
-        <div class="hint-row"><span>Local app server - no API key</span><span>⌘K</span></div>
-      </form>
+        <div class="chat-body">
+          ${renderChatBody(subscriptionReady)}
+          ${codex.pendingRequests.map(renderServerRequest).join('')}
+        </div>
+        ${codex.error ? `<div class="chat-error"><span>${escapeHtml(codex.error)}</span><button data-codex-error-dismiss type="button">Dismiss</button></div>` : ''}
+        <form class="chat-form">
+          <div class="voice-strip">
+            <button class="voice-button" type="button" disabled title="${escapeAttribute(codex.voice.reason)}">Voice unavailable</button>
+            <span class="voice-status">${escapeHtml(codex.voice.reason)}</span>
+          </div>
+          <div class="chat-field">
+            <span class="chat-caret">›</span>
+            <textarea class="chat-input" name="message" rows="1" placeholder="Ask Codex to log, analyze, or change LifeOS…" ${!subscriptionReady || busy || codex.sending ? 'disabled' : ''}>${escapeHtml(codex.draft)}</textarea>
+            ${busy ? '<button class="send-button stop" data-codex-stop type="button">Stop</button>' : `<button class="send-button" type="submit" ${!subscriptionReady || codex.sending ? 'disabled' : ''}>${codex.sending ? 'Sending' : 'Send'}</button>`}
+          </div>
+          <div class="hint-row"><span>Local app server - no API key</span><span>⌘K</span></div>
+        </form>
+      </div>
     </aside>
   `;
 }
@@ -576,6 +847,12 @@ function renderServerRequest(request, index) {
 }
 
 function bindChatEvents() {
+  document.querySelector('[data-codex-rail-toggle]')?.addEventListener('click', () => {
+    codexRailCollapsed = !codexRailCollapsed;
+    localStorage.setItem(RAIL_STORAGE_KEY, String(codexRailCollapsed));
+    render();
+    requestAnimationFrame(() => document.querySelector('[data-codex-rail-toggle]')?.focus());
+  });
   const input = document.querySelector('.chat-input');
   input?.addEventListener('input', () => {
     codex.draft = input.value;
@@ -944,6 +1221,10 @@ function formatClock(isoString) {
 function titleNumber(value) {
   const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
   return words[value] || String(value);
+}
+
+function validTab(value) {
+  return VALID_TABS.includes(value) ? value : null;
 }
 
 function heatmapColor(value) {

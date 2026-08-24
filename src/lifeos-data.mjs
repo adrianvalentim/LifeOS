@@ -7,6 +7,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const ROOT_DIR = path.resolve(__dirname, '..');
 export const DEFAULT_STORE_PATH = path.join(ROOT_DIR, 'data', 'lifeos.json');
+export const DEMO_STORE_PATH = path.join(ROOT_DIR, 'data', 'lifeos.demo.json');
+export const CURRENT_SCHEMA_VERSION = 4;
 export const ACTIVITY_TYPES = [
   'deep_work',
   'shallow_work',
@@ -15,8 +17,10 @@ export const ACTIVITY_TYPES = [
   'creative',
   'communication',
 ];
+export const READING_STATUSES = ['to_read', 'next_up', 'reading', 'finished', 'dropped'];
 
 const HEALTH_ORDER = { critical: 0, attention: 1, healthy: 2 };
+const READING_STATUS_ORDER = Object.fromEntries(READING_STATUSES.map((status, index) => [status, index]));
 const DAY_MS = 86_400_000;
 const LOCK_TIMEOUT_MS = 5_000;
 const STALE_LOCK_MS = 30_000;
@@ -29,12 +33,14 @@ export async function readStore(storePath = DEFAULT_STORE_PATH) {
   } catch (error) {
     throw new Error(`LifeOS data is not valid JSON: ${error.message}`);
   }
-  validateStore(store);
-  return store;
+  const migrated = migrateStore(store);
+  validateStore(migrated);
+  return migrated;
 }
 
 export async function writeStore(store, storePath = DEFAULT_STORE_PATH) {
-  validateStore(store);
+  const migrated = migrateStore(store);
+  validateStore(migrated);
   const directory = path.dirname(storePath);
   const filename = path.basename(storePath);
   const tempPath = path.join(directory, `.${filename}.${process.pid}.${randomUUID()}.tmp`);
@@ -46,7 +52,7 @@ export async function writeStore(store, storePath = DEFAULT_STORE_PATH) {
     if (error.code !== 'ENOENT') throw error;
   }
 
-  await writeFile(tempPath, `${JSON.stringify(store, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  await writeFile(tempPath, `${JSON.stringify(migrated, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   try {
     await rename(tempPath, storePath);
   } catch (error) {
@@ -72,6 +78,26 @@ export async function mutateStore(mutator, storePath = DEFAULT_STORE_PATH) {
   }
 }
 
+export function migrateStore(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+  const store = structuredClone(input);
+  const version = Number(store.meta?.schemaVersion || 1);
+  if (version > CURRENT_SCHEMA_VERSION) {
+    throw new Error(`LifeOS data uses unsupported schema version ${version}.`);
+  }
+  if (!store.reading || typeof store.reading !== 'object' || Array.isArray(store.reading)) {
+    store.reading = { books: [] };
+  }
+  if (!Array.isArray(store.reading.books)) store.reading.books = [];
+  if (version < 4) {
+    for (const book of store.reading.books) {
+      if (!Array.isArray(book.tags)) book.tags = [];
+    }
+  }
+  if (store.meta) store.meta.schemaVersion = CURRENT_SCHEMA_VERSION;
+  return store;
+}
+
 export function validateStore(store) {
   if (!store || typeof store !== 'object' || Array.isArray(store)) {
     throw new Error('LifeOS data must be a JSON object.');
@@ -81,6 +107,9 @@ export function validateStore(store) {
   if (!store.settings?.weeklyPlanByDomain) throw new Error('LifeOS data requires settings.weeklyPlanByDomain.');
   if (!Array.isArray(store.projects)) throw new Error('LifeOS data requires a projects array.');
   if (!Array.isArray(store.timeEntries)) throw new Error('LifeOS data requires a timeEntries array.');
+  if (!store.reading || !Array.isArray(store.reading.books)) {
+    throw new Error('LifeOS data requires reading.books.');
+  }
 
   const projectIds = new Set();
   for (const project of store.projects) {
@@ -103,6 +132,33 @@ export function validateStore(store) {
       throw new Error(`Time entry ${entry.id} has unknown activity type ${entry.activityType}.`);
     }
     entryIds.add(entry.id);
+  }
+
+  const bookIds = new Set();
+  for (const book of store.reading.books) {
+    if (!book?.id || !book.title || !Array.isArray(book.authors)) {
+      throw new Error('Every reading book needs id, title, and authors.');
+    }
+    if (bookIds.has(book.id)) throw new Error(`Duplicate reading book id: ${book.id}`);
+    if (!READING_STATUSES.includes(book.status)) {
+      throw new Error(`Reading book ${book.id} has unknown status ${book.status}.`);
+    }
+    if (!Number.isFinite(Number(book.sortOrder))) {
+      throw new Error(`Reading book ${book.id} needs a finite sortOrder.`);
+    }
+    if (!Array.isArray(book.tags) || book.tags.length > 24) {
+      throw new Error(`Reading book ${book.id} needs no more than 24 tags.`);
+    }
+    const normalizedTags = new Set();
+    for (const tag of book.tags) {
+      const cleanTag = String(tag || '').trim();
+      const normalized = normalizeText(cleanTag);
+      if (!cleanTag || cleanTag.length > 40 || !normalized || normalizedTags.has(normalized)) {
+        throw new Error(`Reading book ${book.id} has invalid or duplicate tags.`);
+      }
+      normalizedTags.add(normalized);
+    }
+    bookIds.add(book.id);
   }
   return store;
 }
@@ -304,6 +360,92 @@ export async function stopSession(input = {}, storePath = DEFAULT_STORE_PATH) {
   return { ...result, state: buildState(store, { now: input.now || input.stoppedAt }) };
 }
 
+export async function addReadingBook(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const status = requireReadingStatus(input.status || 'to_read');
+  const candidate = normalizeReadingCandidate(input.book || input, now);
+  const { result: book, store } = await mutateStore((current) => {
+    const duplicate = current.reading.books.find((existing) => sameReadingBook(existing, candidate));
+    if (duplicate) throw new Error(`This book is already in Reading: ${duplicate.title}`);
+    const next = {
+      ...candidate,
+      id: input.id || randomUUID(),
+      status,
+      sortOrder: nextReadingSortOrder(current.reading.books, status),
+      addedAt: input.addedAt || now.toISOString(),
+      statusChangedAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    applyReadingStatusDates(next, status, now.toISOString());
+    current.reading.books.push(next);
+    return next;
+  }, storePath);
+  return { book, state: buildState(store, { now }) };
+}
+
+export async function setReadingBookStatus(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const status = requireReadingStatus(input.status);
+  const { result: book, store } = await mutateStore((current) => {
+    const existing = current.reading.books.find((candidate) => candidate.id === input.bookId);
+    if (!existing) throw new Error(`Reading book not found: ${input.bookId}`);
+    if (existing.status === status) return existing;
+    existing.status = status;
+    existing.sortOrder = nextReadingSortOrder(current.reading.books, status);
+    existing.statusChangedAt = now.toISOString();
+    existing.updatedAt = now.toISOString();
+    applyReadingStatusDates(existing, status, now.toISOString());
+    return existing;
+  }, storePath);
+  return { book, state: buildState(store, { now }) };
+}
+
+export async function reorderReadingBook(input, storePath = DEFAULT_STORE_PATH) {
+  const direction = input.direction === 'up' ? -1 : input.direction === 'down' ? 1 : 0;
+  if (!direction) throw new Error('Reading order direction must be up or down.');
+  const now = resolveNow(input.now);
+  const { result: book, store } = await mutateStore((current) => {
+    const existing = current.reading.books.find((candidate) => candidate.id === input.bookId);
+    if (!existing) throw new Error(`Reading book not found: ${input.bookId}`);
+    const siblings = current.reading.books
+      .filter((candidate) => candidate.status === existing.status)
+      .sort(compareReadingBooks);
+    const index = siblings.findIndex((candidate) => candidate.id === existing.id);
+    const neighbor = siblings[index + direction];
+    if (!neighbor) return existing;
+    const previousOrder = existing.sortOrder;
+    existing.sortOrder = neighbor.sortOrder;
+    neighbor.sortOrder = previousOrder;
+    existing.updatedAt = now.toISOString();
+    neighbor.updatedAt = now.toISOString();
+    return existing;
+  }, storePath);
+  return { book, state: buildState(store, { now }) };
+}
+
+export async function updateReadingBookTags(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const tags = cleanReadingTags(input.tags);
+  const { result: book, store } = await mutateStore((current) => {
+    const existing = current.reading.books.find((candidate) => candidate.id === input.bookId);
+    if (!existing) throw new Error(`Reading book not found: ${input.bookId}`);
+    existing.tags = tags;
+    existing.updatedAt = now.toISOString();
+    return existing;
+  }, storePath);
+  return { book, state: buildState(store, { now }) };
+}
+
+export async function deleteReadingBook(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const { result: book, store } = await mutateStore((current) => {
+    const index = current.reading.books.findIndex((candidate) => candidate.id === input.bookId);
+    if (index === -1) throw new Error(`Reading book not found: ${input.bookId}`);
+    return current.reading.books.splice(index, 1)[0];
+  }, storePath);
+  return { book, state: buildState(store, { now }) };
+}
+
 export function cleanLogDescription(input) {
   return String(input || '')
     .replace(/^\/?log\s+/i, '')
@@ -376,8 +518,8 @@ export function rhythmHeatmap(store, todayValue) {
 }
 
 export function buildState(store, options = {}) {
-  validateStore(store);
-  const copy = structuredClone(store);
+  const copy = migrateStore(store);
+  validateStore(copy);
   const now = resolveNow(options.now);
   const today = dateOnly(now, copy.meta.timezone);
   const activeRange = ['week', 'month', 'quarter', 'year'].includes(options.range) ? options.range : 'week';
@@ -412,6 +554,7 @@ export function buildState(store, options = {}) {
   const monthBounds = rangeBounds('month', today);
   const yearBounds = rangeBounds('year', today);
   const challenge = hydrateChallenge(copy.challenge, copy.timeEntries, today);
+  const reading = hydrateReading(copy.reading);
 
   return {
     ...copy,
@@ -428,6 +571,7 @@ export function buildState(store, options = {}) {
     recommendation: recommendations[0] || null,
     rhythmHeatmap: rhythmHeatmap(copy, today),
     challenge,
+    reading,
     milestones: [...(copy.milestones || [])].sort((a, b) => b.date.localeCompare(a.date)),
     weekByDay: buildWeekByDay(currentWeekEntries, currentWeekBounds.start),
     summary: {
@@ -474,6 +618,126 @@ function resolveNow(value) {
   const now = value ? new Date(value) : new Date();
   if (Number.isNaN(now.getTime())) throw new Error(`Invalid current time: ${value}`);
   return now;
+}
+
+function hydrateReading(reading) {
+  const books = [...reading.books].sort((a, b) => {
+    const statusDelta = READING_STATUS_ORDER[a.status] - READING_STATUS_ORDER[b.status];
+    return statusDelta || compareReadingBooks(a, b);
+  });
+  const byStatus = Object.fromEntries(READING_STATUSES.map((status) => [status, 0]));
+  for (const book of books) byStatus[book.status] += 1;
+  return {
+    ...reading,
+    books,
+    summary: {
+      total: books.length,
+      boardTotal: byStatus.next_up + byStatus.reading + byStatus.finished,
+      byStatus,
+    },
+  };
+}
+
+function normalizeReadingCandidate(input, now) {
+  const title = cleanReadingText(input.title, 300);
+  if (!title) throw new Error('A book title is required.');
+  const authors = cleanReadingList(input.authors, 12, 180);
+  const source = input.source && typeof input.source === 'object' ? {
+    provider: cleanReadingText(input.source.provider, 80) || 'manual',
+    workId: cleanReadingText(input.source.workId, 100) || null,
+    editionId: cleanReadingText(input.source.editionId, 100) || null,
+    url: cleanHttpsUrl(input.source.url),
+    fetchedAt: cleanReadingText(input.source.fetchedAt, 80) || now.toISOString(),
+  } : { provider: 'manual', workId: null, editionId: null, url: null, fetchedAt: now.toISOString() };
+  const pageCount = Number(input.pageCount);
+  const publishedYear = Number(input.publishedYear);
+  return {
+    title,
+    subtitle: cleanReadingText(input.subtitle, 400) || null,
+    authors,
+    description: cleanReadingText(input.description, 12_000) || null,
+    coverUrl: cleanHttpsUrl(input.coverUrl),
+    isbn10: cleanIdentifier(input.isbn10, 10),
+    isbn13: cleanIdentifier(input.isbn13, 13),
+    publisher: cleanReadingText(input.publisher, 300) || null,
+    publishedYear: Number.isInteger(publishedYear) && publishedYear > 0 ? publishedYear : null,
+    language: cleanReadingText(input.language, 30) || null,
+    pageCount: Number.isFinite(pageCount) && pageCount > 0 ? Math.round(pageCount) : null,
+    subjects: cleanReadingList(input.subjects, 12, 120),
+    tags: cleanReadingTags(input.tags),
+    source,
+  };
+}
+
+function sameReadingBook(existing, candidate) {
+  if (candidate.source.workId && existing.source?.workId === candidate.source.workId) return true;
+  if (candidate.isbn13 && existing.isbn13 === candidate.isbn13) return true;
+  if (candidate.isbn10 && existing.isbn10 === candidate.isbn10) return true;
+  return normalizeText(existing.title) === normalizeText(candidate.title)
+    && normalizeText(existing.authors?.[0]) === normalizeText(candidate.authors?.[0]);
+}
+
+function requireReadingStatus(value) {
+  if (!READING_STATUSES.includes(value)) throw new Error(`Unknown reading status: ${value}`);
+  return value;
+}
+
+function applyReadingStatusDates(book, status, timestamp) {
+  if (status === 'reading' && !book.startedAt) book.startedAt = timestamp;
+  if (status === 'finished' && !book.finishedAt) book.finishedAt = timestamp;
+  if (status === 'dropped' && !book.droppedAt) book.droppedAt = timestamp;
+}
+
+function nextReadingSortOrder(books, status) {
+  return Math.max(0, ...books.filter((book) => book.status === status).map((book) => Number(book.sortOrder) || 0)) + 1;
+}
+
+function compareReadingBooks(a, b) {
+  const orderDelta = Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+  return orderDelta || a.title.localeCompare(b.title);
+}
+
+function cleanReadingText(value, maxLength) {
+  return String(value ?? '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\r\n?/g, '\n')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function cleanReadingList(value, maxItems, maxLength) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => cleanReadingText(item, maxLength)).filter(Boolean).slice(0, maxItems);
+}
+
+function cleanReadingTags(value) {
+  if (!Array.isArray(value)) return [];
+  const tags = [];
+  const seen = new Set();
+  for (const item of value) {
+    const tag = cleanReadingText(item, 40).replace(/\s+/g, ' ');
+    const normalized = normalizeText(tag);
+    if (!tag || !normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    tags.push(tag);
+    if (tags.length === 24) break;
+  }
+  return tags;
+}
+
+function cleanIdentifier(value, length) {
+  const identifier = String(value || '').replace(/[^0-9X]/gi, '').toUpperCase();
+  return identifier.length === length ? identifier : null;
+}
+
+function cleanHttpsUrl(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 function zonedParts(date, timeZone) {

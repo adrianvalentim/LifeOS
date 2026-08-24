@@ -31,6 +31,20 @@ const projects = [
   project('aurora', 'Aurora Store', 'Online shop - ops', 'business', 2, 3, null, null, 'August restock processed. 14 orders pending.'),
 ];
 
+const readingBooks = [
+  readingBook('left-hand-darkness', 'The Left Hand of Darkness', ['Ursula K. Le Guin'], '9780441478125', 'to_read', 1, 1969, ['science fiction', 'politics'], 'A lone envoy encounters a world whose social life challenges his assumptions about gender, loyalty, and political trust.'),
+  readingBook('kindred', 'Kindred', ['Octavia E. Butler'], '9780807083697', 'to_read', 2, 1979, ['science fiction', 'history'], 'A modern writer is repeatedly pulled into the antebellum past and forced into a dangerous relationship with her own family history.'),
+  readingBook('master-margarita', 'The Master and Margarita', ['Mikhail Bulgakov'], '9780141180144', 'to_read', 3, 1967, ['classic', 'satire'], 'A fantastical satire in which the devil arrives in Moscow while a parallel story returns to ancient Jerusalem.'),
+  readingBook('wizard-earthsea', 'A Wizard of Earthsea', ['Ursula K. Le Guin'], '9780547773742', 'next_up', 1, 1968, ['fantasy', 'adventure'], 'A gifted young mage must repair the harm caused by his pride and face the shadow he released into the world.'),
+  readingBook('dispossessed', 'The Dispossessed', ['Ursula K. Le Guin'], '9780061054884', 'next_up', 2, 1974, ['science fiction', 'politics'], 'A physicist crosses between two divided societies, testing the promises and failures of both political systems.'),
+  readingBook('dawn-everything', 'The Dawn of Everything', ['David Graeber', 'David Wengrow'], '9780374157357', 'reading', 1, 2021, ['anthropology', 'history'], 'A wide-ranging re-examination of common stories about early cities, hierarchy, freedom, and the origins of inequality.'),
+  readingBook('theory-reality', 'Theory and Reality', ['Peter Godfrey-Smith'], '9780226771137', 'reading', 2, 2003, ['philosophy', 'science'], 'An accessible map of twentieth-century philosophy of science, from logical empiricism to realism and social studies of science.'),
+  readingBook('odyssey', 'The Odyssey', ['Homer'], '9780140268867', 'finished', 1, null, ['classic', 'adventure'], 'An epic of homecoming, endurance, identity, and the consequences of a long war.'),
+  readingBook('name-rose', 'The Name of the Rose', ['Umberto Eco'], '9780156001311', 'finished', 2, 1980, ['mystery', 'history'], 'A medieval murder investigation unfolds inside a labyrinthine abbey shaped by theology, politics, and books.'),
+  readingBook('fifth-season', 'The Fifth Season', ['N. K. Jemisin'], '9780316229296', 'finished', 3, 2015, ['fantasy', 'science fiction'], 'On a geologically unstable world, three interwoven lives reveal the human cost of power, oppression, and survival.'),
+  readingBook('moby-dick', 'Moby-Dick', ['Herman Melville'], '9780142437247', 'dropped', 1, 1851, ['classic', 'adventure'], 'A sailor joins Captain Ahab\'s obsessive hunt for a white whale.'),
+];
+
 const history = {
   portia: [4.1, 3.2, 2.8, 1.6, 1.0, 0.4, 0],
   substack: [2.5, 2.0, 1.5, 1.0, 0.8, 0.7, 1.2],
@@ -108,7 +122,7 @@ for (const [dayOffset, time, durationMinutes, projectId, activityType, descripti
 
 const store = {
   meta: {
-    schemaVersion: 2,
+    schemaVersion: 4,
     appName: 'LifeOS',
     tagline: 'A personal almanac',
     timezone: 'America/Sao_Paulo',
@@ -134,6 +148,7 @@ const store = {
     },
   },
   projects,
+  reading: { books: readingBooks },
   timeEntries,
   activeSession: null,
   challenge: {
@@ -175,6 +190,43 @@ function project(id, name, subtitle, domain, priority, plannedHours, deadlineOff
     note,
     createdAt: `${addDays(demoDate, -180)}T12:00:00-03:00`,
   };
+}
+
+function readingBook(id, title, authors, isbn13, status, sortOrder, publishedYear, tags, description) {
+  const addedAt = `${addDays(demoDate, -90 + sortOrder * 3)}T12:00:00-03:00`;
+  const statusChangedAt = `${addDays(demoDate, -28 + sortOrder * 4)}T12:00:00-03:00`;
+  const book = {
+    id: `demo-book-${id}`,
+    title,
+    subtitle: null,
+    authors,
+    description,
+    coverUrl: `https://covers.openlibrary.org/b/isbn/${isbn13}-L.jpg?default=false`,
+    isbn10: null,
+    isbn13,
+    publisher: null,
+    publishedYear,
+    language: 'eng',
+    pageCount: null,
+    subjects: [],
+    tags,
+    source: {
+      provider: 'open_library',
+      workId: null,
+      editionId: null,
+      url: `https://openlibrary.org/isbn/${isbn13}`,
+      fetchedAt: addedAt,
+    },
+    status,
+    sortOrder,
+    addedAt,
+    statusChangedAt,
+    updatedAt: statusChangedAt,
+  };
+  if (status === 'reading' || status === 'finished') book.startedAt = `${addDays(demoDate, -24 + sortOrder * 4)}T12:00:00-03:00`;
+  if (status === 'finished') book.finishedAt = statusChangedAt;
+  if (status === 'dropped') book.droppedAt = statusChangedAt;
+  return book;
 }
 
 function defaultActivity(domain) {

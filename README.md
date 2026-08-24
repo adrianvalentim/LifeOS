@@ -6,7 +6,11 @@ LifeOS is a local personal almanac for answering three questions:
 2. What is the state of my projects?
 3. What should I do next?
 
+It also keeps a visual reading library: what is merely on the long list, what is next, what is in progress, and what has been finished or dropped.
+
 It combines a compact editorial dashboard, a portable JSON data store, a command-line interface, and a Codex rail connected to the installed Codex application.
+
+For a detailed implementation handoff—including architecture, data semantics, design decisions, maintenance procedures, known limitations, and the safest next work—see [`PROJECT_STATE.md`](PROJECT_STATE.md).
 
 ## Run it
 
@@ -37,6 +41,7 @@ Browser UI
 - `public/` is a dependency-free HTML/CSS/JavaScript interface.
 - `scripts/dev-server.mjs` is the local Node HTTP server and live-update stream.
 - `src/lifeos-data.mjs` validates data and calculates every visible statistic.
+- `src/book-catalog.mjs` searches and normalizes Open Library results without an API key.
 - `src/codex-app-server.mjs` speaks the installed Codex app-server protocol over a local child process.
 - `cli/lifeos.mjs` gives Codex a concise, stable way to operate the data without rereading the application.
 - `data/lifeos.json` is the active, portable data store.
@@ -59,7 +64,7 @@ Voice is the one requested part that the installed Codex bridge cannot currently
 
 ## Demo data and real data
 
-Every dashboard number is derived from `projects`, `timeEntries`, `settings`, `challenge`, and `milestones` in `data/lifeos.json`. There are no separate display totals to keep synchronized.
+Every dashboard number is derived from `projects`, `timeEntries`, `reading.books`, `settings`, `challenge`, and `milestones` in `data/lifeos.json`. There are no separate display totals to keep synchronized.
 
 To prove the data path, change or add a time entry and refresh; the project hours, health, Today total, ranges, domain chart, composition, heatmap, deep-work counters, and recommendation will recompute. Changes made while the app is open appear automatically.
 
@@ -89,9 +94,18 @@ npm run lifeos -- recommend
 
 Writes are serialized with a short lock, written through a temporary file, and keep the preceding snapshot at `data/lifeos.json.bak`. Backup and lock files are ignored by Git.
 
+## Reading
+
+The Reading tab presents the same local collection in two ways:
+
+- **Kanban** contains only `Next up`, `Reading`, and `Finished`. Cards can move between columns by drag-and-drop or their status control.
+- **Library** contains every book and can be separated into `To read`, `Next up`, `Reading`, `Finished`, and `Dropped`, then narrowed by tag or text.
+
+Both views are cover-led and display the same persistent free-form tags. Book details add and remove tags, and expose permanent deletion only behind a confirmation that names the selected book and explains what will be lost. `Add a book` performs an explicit Open Library search by title, author, or ISBN. Search results remain temporary; only the selected normalized record is written to LifeOS. Cover images are loaded from Open Library, and missing covers receive a local typographic fallback.
+
 ## Controls now implemented
 
-- All four primary tabs.
+- All five primary tabs, including the two-view Reading workspace.
 - Week, month, quarter, and year analytics ranges with URL state.
 - Recommendation alternate, dismiss/restore, begin, and stop-and-log.
 - Real Codex task selection, new task, refresh, send, stop, approvals, and questions.
@@ -102,7 +116,7 @@ Writes are serialized with a short lock, written through a temporary file, and k
 
 ## Deliberately deferred
 
-The next phase is the larger set of management workflows: project creation/editing, manual time-entry editing, goals/deadlines, searchable almanac history, settings, import/export UI, and native desktop packaging. The data and local Codex architecture are ready for those additions, but they are not disguised as finished controls here.
+The next phase is the larger set of management workflows: project creation/editing, manual time-entry editing, richer reading-metadata editing, goals/deadlines, searchable almanac history, settings, import/export UI, and native desktop packaging. The data and local Codex architecture are ready for those additions, but they are not disguised as finished controls here.
 
 ## Verify
 
