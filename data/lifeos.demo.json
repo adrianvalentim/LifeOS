@@ -1,6 +1,6 @@
 {
   "meta": {
-    "schemaVersion": 6,
+    "schemaVersion": 8,
     "appName": "LifeOS",
     "tagline": "A personal almanac",
     "timezone": "America/Sao_Paulo",
@@ -185,6 +185,172 @@
       "createdAt": "2026-02-23T12:00:00-03:00"
     }
   ],
+  "tasks": {
+    "items": [
+      {
+        "id": "demo-task-portia-act-three",
+        "title": "Finish the Act III draft",
+        "notes": "Carry the midpoint decision into the final confrontation.\n\nCheck the observatory motif before the last pass.",
+        "projectId": "portia",
+        "parentTaskId": null,
+        "status": "open",
+        "sortOrder": 1,
+        "schedule": {
+          "dueDate": "2026-08-24",
+          "startTime": null,
+          "durationMinutes": null,
+          "recurrence": null
+        },
+        "createdAt": "2026-08-09T12:00:00-03:00",
+        "updatedAt": "2026-08-09T12:00:00-03:00",
+        "completedAt": null
+      },
+      {
+        "id": "demo-task-portia-midpoint",
+        "title": "Resolve the midpoint turn",
+        "notes": "",
+        "projectId": "portia",
+        "parentTaskId": "demo-task-portia-act-three",
+        "status": "completed",
+        "sortOrder": 1,
+        "schedule": {
+          "dueDate": null,
+          "startTime": null,
+          "durationMinutes": null,
+          "recurrence": null
+        },
+        "createdAt": "2026-08-09T12:00:00-03:00",
+        "updatedAt": "2026-08-20T12:00:00-03:00",
+        "completedAt": "2026-08-20T12:00:00-03:00"
+      },
+      {
+        "id": "demo-task-portia-confrontation",
+        "title": "Write the confrontation scene",
+        "notes": "",
+        "projectId": "portia",
+        "parentTaskId": "demo-task-portia-act-three",
+        "status": "open",
+        "sortOrder": 2,
+        "schedule": {
+          "dueDate": "2026-08-24",
+          "startTime": null,
+          "durationMinutes": null,
+          "recurrence": null
+        },
+        "createdAt": "2026-08-10T12:00:00-03:00",
+        "updatedAt": "2026-08-10T12:00:00-03:00",
+        "completedAt": null
+      },
+      {
+        "id": "demo-task-vulcano-observatory",
+        "title": "Lock the observatory sequence",
+        "notes": "",
+        "projectId": "vulcano",
+        "parentTaskId": null,
+        "status": "open",
+        "sortOrder": 2,
+        "schedule": {
+          "dueDate": "2026-08-28",
+          "startTime": null,
+          "durationMinutes": null,
+          "recurrence": null
+        },
+        "createdAt": "2026-08-10T12:00:00-03:00",
+        "updatedAt": "2026-08-10T12:00:00-03:00",
+        "completedAt": null
+      },
+      {
+        "id": "demo-task-vulcano-color-notes",
+        "title": "Review the color notes",
+        "notes": "",
+        "projectId": "vulcano",
+        "parentTaskId": "demo-task-vulcano-observatory",
+        "status": "completed",
+        "sortOrder": 1,
+        "schedule": {
+          "dueDate": null,
+          "startTime": null,
+          "durationMinutes": null,
+          "recurrence": null
+        },
+        "createdAt": "2026-08-09T12:00:00-03:00",
+        "updatedAt": "2026-08-20T12:00:00-03:00",
+        "completedAt": "2026-08-20T12:00:00-03:00"
+      },
+      {
+        "id": "demo-task-vulcano-review-cut",
+        "title": "Export the review cut",
+        "notes": "",
+        "projectId": "vulcano",
+        "parentTaskId": "demo-task-vulcano-observatory",
+        "status": "open",
+        "sortOrder": 2,
+        "schedule": {
+          "dueDate": "2026-08-27",
+          "startTime": null,
+          "durationMinutes": null,
+          "recurrence": null
+        },
+        "createdAt": "2026-08-10T12:00:00-03:00",
+        "updatedAt": "2026-08-10T12:00:00-03:00",
+        "completedAt": null
+      },
+      {
+        "id": "demo-task-substack-opening",
+        "title": "Rewrite the essay opening",
+        "notes": "",
+        "projectId": "substack",
+        "parentTaskId": null,
+        "status": "open",
+        "sortOrder": 3,
+        "schedule": {
+          "dueDate": "2026-08-25",
+          "startTime": null,
+          "durationMinutes": null,
+          "recurrence": null
+        },
+        "createdAt": "2026-08-11T12:00:00-03:00",
+        "updatedAt": "2026-08-11T12:00:00-03:00",
+        "completedAt": null
+      },
+      {
+        "id": "demo-task-inbox-passport",
+        "title": "Renew passport",
+        "notes": "",
+        "projectId": null,
+        "parentTaskId": null,
+        "status": "open",
+        "sortOrder": 4,
+        "schedule": {
+          "dueDate": "2026-09-09",
+          "startTime": null,
+          "durationMinutes": null,
+          "recurrence": null
+        },
+        "createdAt": "2026-08-12T12:00:00-03:00",
+        "updatedAt": "2026-08-12T12:00:00-03:00",
+        "completedAt": null
+      },
+      {
+        "id": "demo-task-inbox-backups",
+        "title": "Review local backup recovery notes",
+        "notes": "",
+        "projectId": null,
+        "parentTaskId": null,
+        "status": "completed",
+        "sortOrder": 5,
+        "schedule": {
+          "dueDate": null,
+          "startTime": null,
+          "durationMinutes": null,
+          "recurrence": null
+        },
+        "createdAt": "2026-08-13T12:00:00-03:00",
+        "updatedAt": "2026-08-20T12:00:00-03:00",
+        "completedAt": "2026-08-20T12:00:00-03:00"
+      }
+    ]
+  },
   "reading": {
     "books": [
       {

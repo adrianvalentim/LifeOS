@@ -3,7 +3,7 @@
 > Canonical implementation handoff for agents and maintainers. Read this after
 > [`AGENTS.md`](AGENTS.md) and before making a structural change.
 
-- Last updated: 2026-08-24
+- Last updated: 2026-08-27
 - Implementation baseline: `main`, including the storage, Projects, Reading, and
   source-backed Tauri work described here
 - Remote: `adrianvalentim/LifeOS`, public, default branch `main`
@@ -12,12 +12,13 @@
 
 LifeOS is a local, single-user personal almanac. It is meant to reduce the cost
 of coordinating many concurrent projects and a personal reading queue by
-answering four questions:
+answering five questions:
 
 1. Where is my time going?
 2. What is the state of my projects?
 3. What should I do next?
-4. What am I reading now and next?
+4. What concrete commitments are open, and how do they break down?
+5. What am I reading now and next?
 
 The dashboard is the legibility layer. Codex is intended to be the main natural-
 language operating layer: the user can ask it to log work, inspect state, explain
@@ -44,17 +45,18 @@ sidecar packaging, notarized distribution, and updates remain deferred.
 
 | Area | State | What is true now |
 | --- | --- | --- |
-| Project dashboard | Implemented | Clickable two-column list plus a three-column drag Kanban, reusable category labels, five persistent workflow statuses, computed health, last touch, weekly hours, deadline, progress, and streak |
+| Project dashboard | Implemented | Clickable two-column list plus a three-column drag Kanban, reusable category labels, five persistent workflow statuses, confirmed history-preserving deletion, computed health, last touch, weekly hours, deadline, progress, and streak |
+| Tasks | Focused first release implemented | First-class All/Inbox/project scopes, optional project association, nested subtasks, optional due dates, completion cascade, derived subtree/project progress, click-through details with editable notes/title and confirmed subtree deletion, project-detail creation and controls, and CLI operations |
 | Today | Implemented foundation | Computed daily entries and total, recommendation selection, real start/stop timer |
 | Analytics | Implemented foundation | Week/month/quarter/year totals, domain allocation, rhythm heatmap, trends, composition, production/consumption, deep-work counts |
 | Almanac | Read-only foundation | Computed streaks, current challenge, and configured milestones |
-| Reading | Implemented foundation | Cover-led Kanban, complete five-status library, tags and tag filtering, details, Open Library search/import, status movement, queue ordering, and confirmed permanent deletion |
+| Reading | Implemented foundation | Cover-led Kanban, complete five-status library, tags and tag filtering, details, paginated Open Library search/import with exact ISBN lookup, status movement, queue ordering, and confirmed permanent deletion |
 | Data source | Implemented, demo-derived | macOS Application Support contains the active copy seeded from the legacy demo-derived store; `data/lifeos.demo.json` remains deterministic |
 | Persistence | Implemented | Validation, short cross-process lock, atomic replacement, one local `.bak`, and optional latest/daily/monthly Google Drive snapshots |
 | CLI | Implemented | Read projects/stats/recommendation, log time, start/stop/status a timer, and configure/inspect cloud snapshots |
-| Codex rail | Implemented | Current ChatGPT account, workspace-scoped tasks, streaming items, stop, approvals, and user questions |
+| Codex rail | Implemented | Current ChatGPT account, workspace-scoped tasks, removable project/book composer context, streaming items, stop, approvals, and user questions |
 | Voice | Intentionally unavailable | Installed app-server does not expose desktop dictation under subscription authentication; no fallback is allowed |
-| Full management UI | Deferred | No project CRUD, time-entry edit/delete, settings UI, imports/exports, or almanac search |
+| Full management UI | Deferred | Project deletion is implemented; project creation/general editing, time-entry edit/delete, settings UI, imports/exports, and almanac search remain deferred |
 | Native desktop app | Development shell implemented | `/Applications/LifeOS Dev.app` is source-backed, ad-hoc signed, starts/stops the current Node service, and can refresh that service in place from its app menu; self-contained distribution is deferred |
 
 The public repository does not record the current personal-store contents,
@@ -63,8 +65,9 @@ demo snapshot is the only publishable data baseline. Inspect the active store
 locally when maintenance depends on its current state; do not copy that snapshot
 into this handoff.
 
-The directed Reading feature is now part of the foundation. The next broad
-product step is still **not** generic feature expansion. It is to safely move
+The directed Reading feature and focused Tasks release are now part of the
+foundation. The next broad product step is still **not** generic feature
+expansion. It is to safely move
 from demo data to the user's real domains, projects, history, deadlines,
 milestones, and weekly plan, then adjust the model based on what the real data
 reveals.
@@ -93,7 +96,7 @@ Browser or LifeOS Dev.app WKWebView at http://127.0.0.1:<port>
   |-- GET/POST JSON + Server-Sent Events
   v
 scripts/dev-server.mjs
-  |-- state/log/session routes ----------> src/lifeos-data.mjs
+  |-- state/log/session/task routes -----> src/lifeos-data.mjs
   |                                           |-- validates and derives state
   |                                           `-- reads/writes platform Application Support/lifeos.json
   |-- book search -----------------------> src/book-catalog.mjs
@@ -150,9 +153,9 @@ Run `npm run dev` and use the printed loopback URL.
 | `package.json` and `package-lock.json` | Node version, Tauri development CLI, and verification/build commands |
 | `data/lifeos.json` | Legacy demo-derived seed used only for safe first-run migration; not active personal data |
 | `data/lifeos.demo.json` | Deterministic public-safe demonstration snapshot; never replace it with private data |
-| `src/lifeos-data.mjs` | Schema checks, date helpers, writes, logs, timer, calculations, health, and recommendations |
+| `src/lifeos-data.mjs` | Schema checks, date helpers, writes, logs, timer, task hierarchy/operations, calculations, health, and recommendations |
 | `src/lifeos-storage.mjs` | Platform paths, first-run migration, Drive discovery/configuration, snapshot writing, and backup status |
-| `src/book-catalog.mjs` | Open Library search, normalized metadata and covers, and best-effort work-detail enrichment |
+| `src/book-catalog.mjs` | Paginated Open Library search, exact ISBN detection, normalized metadata and covers, and best-effort work-detail enrichment |
 | `src/book-cover-cache.mjs` | Bounded medium-size local cover caching for saved Open Library books |
 | `src/codex-app-server.mjs` | JSON-RPC bridge to the installed Codex executable |
 | `cli/lifeos.mjs` | Stable, token-efficient operational interface for Codex and humans |
@@ -160,13 +163,16 @@ Run `npm run dev` and use the printed loopback URL.
 | `scripts/desktop.mjs` | Cross-platform Tauri command wrapper and APFS cache target selection for macOS builds |
 | `scripts/create-demo-data.mjs` | Deterministically generates demo data; can intentionally reset the active store |
 | `public/index.html` | Minimal browser entry point |
-| `public/app.js` | All browser state, rendering, controls, API calls, and streamed Codex item handling |
+| `public/app.js` | Shared browser state, page routing/event orchestration, API calls, and streamed Codex item handling |
+| `public/tasks.js` | Task scopes, nested tree rendering, progress presentation, accessible controls, and project-detail task panel |
 | `public/reading.js` | Reading Kanban/library rendering and catalog/detail presentation |
 | `public/styles.css` | V2 Editorial visual system and responsive layouts |
 | `public/reading.css` | Cover-led Reading workspace, database rows, Kanban cards, and detail overlay |
+| `public/tasks.css` | TickTick-inspired task workspace, responsive scope rail, task tree, quick-add forms, and project task panel |
 | `tests/lifeos-data.test.mjs` | Data derivation, range, write safety, project matching, timer, and timezone tests |
+| `tests/tasks-ui.test.mjs` | Task scopes, nesting, progress, native controls, and project-detail integration rendering |
 | `tests/lifeos-storage.test.mjs` | Platform data paths, Google Drive root discovery, and versioned snapshot tests |
-| `tests/book-catalog.test.mjs` | Open Library normalization, bounded search, enrichment, and offline-fallback tests |
+| `tests/book-catalog.test.mjs` | Open Library normalization, pagination, exact ISBN lookup, enrichment, and offline-fallback tests |
 | `tests/codex-app-server.test.mjs` | Executable discovery, approval relay, and voice-boundary tests |
 | `life-tracker-plan.md` | Original implementation choice and ordered next phase |
 | `src-tauri/` | Source-backed Tauri shell, Cargo lock/config, bundle settings, and macOS icon assets |
@@ -245,9 +251,9 @@ coalesced. The shell does not bundle Node or copy the browser application.
 
 ## 7. Persisted data model
 
-The active store is a single JSON object. `schemaVersion` is currently 6, with
-explicit compatibility migrations from versions 2, 3, 4, and 5; there is no general
-migration framework yet.
+The active store is a single JSON object. `schemaVersion` is currently 8, with
+explicit compatibility migrations from versions 2, 3, 4, 5, 6, and 7; there is no
+general migration framework yet.
 
 ### `meta`
 
@@ -317,6 +323,43 @@ Fields used by the current application:
 
 Health, risk, last touch, weekly hours, due days, streak, and eight-week history
 are derived. Do not persist them as parallel display fields.
+
+### `tasks.items[]`
+
+Schema version 7 added one shared task collection; version 8 adds persisted task
+notes. Tasks are independent records,
+not embedded inside projects, so Inbox tasks and project tasks use the same
+operations and can be reassigned without copying data. Every task requires:
+
+- a unique `id`, non-empty `title` of at most 300 characters, and `notes` string
+  of at most 20,000 characters;
+- `projectId`, either `null` for Inbox or one existing project ID;
+- `parentTaskId`, either `null` for a root or one existing task ID;
+- `status`, either `open` or `completed`;
+- finite `sortOrder` among siblings;
+- valid `createdAt` and `updatedAt` timestamps;
+- `completedAt`, required for completed tasks and `null` for open tasks;
+- a `schedule` object with `dueDate`, `startTime`, `durationMinutes`, and
+  `recurrence`.
+
+The first release exposes optional `dueDate` (`YYYY-MM-DD`) but already validates
+the complete schedule envelope. `startTime` is `HH:MM` or `null` and requires a
+due date; `durationMinutes` is a positive whole number or `null`; `recurrence`
+must remain `null` until a later schema revision defines recurrence semantics.
+The envelope avoids a disruptive task-shape rewrite when time-blocking is added.
+
+A subtask must share its parent's project. Project reassignment is therefore
+allowed only on a root and cascades to every descendant. Completing a parent
+completes all descendants; reopening affects only the selected task. Adding a
+new subtask under completed work reopens its completed ancestors but preserves
+the status of existing completed siblings. Deleting a task deletes that exact
+task and all of its descendants; deleting a child leaves its parent and siblings
+intact. Project deletion detaches its task tree to Inbox instead of deleting it.
+
+`depth`, `childIds`, subtree counts/progress, global counts, Inbox counts, and
+per-project task summaries are all derived in `buildState`. Never persist those
+values or a second project task list. Hierarchy validation rejects missing
+parents, cross-project parentage, self-parentage, and cycles.
 
 ### `reading.books[]`
 
@@ -397,6 +440,8 @@ Either `null` or one running timer containing:
 - generated `id`;
 - optional `projectId`;
 - a `categoryIds` array;
+- optional `domain`, used only when project deletion detaches a running session
+  while retaining its future domain allocation;
 - `activityType`;
 - `description` and `rawInput`;
 - `startedAt`.
@@ -419,17 +464,22 @@ derived state and displayed read-only in Almanac.
 ### Validation limits
 
 Validation intentionally catches broken references and the most dangerous shape
-errors, but it is not a complete JSON Schema. It validates project and reading
-status values, reading identifiers, ordering, tags, and any `finishedAt`
-timestamp, but does not yet enforce every optional field, ISO date formatting,
-positive durations in files edited by hand, or progress bounds.
+errors, but it is not a complete JSON Schema. It validates project, task, and
+reading statuses; task identifiers, hierarchy, project references, notes,
+schedule, and timestamps; and reading identifiers, ordering, tags, and any `finishedAt`
+timestamp. It still does not enforce every optional project/entry field, ISO
+date formatting for all older record types, positive time-entry durations in
+files edited by hand, or project progress bounds.
 `createTimeEntry` does enforce positive duration for supported write paths.
 
 Reads migrate schema version 2 stores in memory by adding an empty Reading
 collection, migrate version 3 books by adding empty tag arrays, migrate legacy
-project statuses into the five-state workflow, and migrate version 5 by adding
-the category registry and category reference arrays before advancing to version
-6. The migrated shape is persisted on the next supported write. Any
+project statuses into the five-state workflow, migrate version 5 by adding the
+category registry and category reference arrays, migrate version 6 by adding
+`tasks: { items: [] }`, and migrate version 7 tasks by adding empty note strings
+before advancing to version 8. Existing user data therefore gains the task
+collection and notes without rewriting projects or reading records. The migrated
+shape is persisted on the next supported write. Any
 further schema evolution must likewise add
 validation and migration/compatibility behavior; incrementing `schemaVersion`
 alone is insufficient.
@@ -461,6 +511,21 @@ Health is currently rule-based:
 
 A project with no entries is treated as highly inactive. Health sorting is
 critical, then attention, then healthy; ties use priority and name.
+
+Each hydrated project also receives one `taskSummary` computed from all task
+records currently associated with that project. It contains total, open,
+completed, and progress values and is the source for project cards and details.
+
+### Task hierarchy and progress
+
+`hydrateTasks` builds a parent-to-children index, orders open siblings before
+completed siblings and then by `sortOrder`, and returns a pre-order flat list for
+compact transport. Each task receives its depth, direct child IDs/count, subtree
+total, subtree completed count, and progress fraction. A subtree includes its
+root task: two completed subtasks beneath an open parent are 2/3 complete until
+the parent itself is completed. Global, Inbox, and project summaries count the
+same underlying records; the browser never recalculates a competing persisted
+total.
 
 ### Recommendations
 
@@ -593,7 +658,13 @@ the entire result, and retain an out-of-repository backup first.
 | `POST /api/session/start` | Persist a running session and return updated state |
 | `POST /api/session/stop` | Stop, log elapsed time, and return updated state |
 | `POST /api/projects/status` | Move one project to one of the five workflow statuses |
-| `GET /api/books/search?q=...` | Perform one explicit, bounded Open Library search and return normalized temporary results |
+| `POST /api/projects/delete` | Permanently remove one exact project while preserving its tracked-time history |
+| `POST /api/tasks/create` | Create an Inbox/project root task or inherited-project subtask |
+| `POST /api/tasks/update` | Update one task's title and multiline notes |
+| `POST /api/tasks/delete` | Permanently delete one exact task and its descendants |
+| `POST /api/tasks/completion` | Complete a task and its descendants, or reopen one task |
+| `POST /api/tasks/project` | Assign one root task tree to a project or Inbox |
+| `GET /api/books/search?q=...&page=...` | Perform one explicit, 20-result Open Library search page and return normalized temporary results plus pagination metadata |
 | `POST /api/reading/books/import` | Enrich and persist one selected catalog result |
 | `POST /api/reading/books/status` | Move one local book to another reading status |
 | `POST /api/reading/books/reorder` | Position one book within a status or move it to an exact Kanban position |
@@ -626,6 +697,13 @@ npm run lifeos -- projects --health
 npm run lifeos -- projects categorize --project "Portia" --category "Infinitamente"
 npm run lifeos -- projects status --project "Vulcano" --status done
 npm run lifeos -- projects delete --project "Infinitamente" --preserve-category "Infinitamente"
+npm run lifeos -- tasks --project "Portia"
+npm run lifeos -- tasks --inbox --json
+npm run lifeos -- tasks add --title "Draft Act III" --project "Portia" --due 2026-09-01
+npm run lifeos -- tasks add --title "Resolve midpoint" --parent "Draft Act III"
+npm run lifeos -- tasks complete --task "Resolve midpoint"
+npm run lifeos -- tasks reopen --task "Resolve midpoint"
+npm run lifeos -- tasks assign --task "Draft Act III" --project inbox
 npm run lifeos -- stats --range week
 npm run lifeos -- stats --project "Portia"
 npm run lifeos -- stats --category "Infinitamente" --range year
@@ -652,6 +730,12 @@ project allows inference from text and then general/inbox work if none is found;
 do this only for genuinely general work. Preserve the original user text in
 `rawInput`.
 
+Task resolution likewise prefers exact normalized ID/title matches and rejects
+ambiguous titles. `tasks add` creates a root unless `--parent` is supplied; a
+subtask inherits that parent's project. `--project inbox` explicitly detaches a
+root tree. `--due`, `--start`, and `--duration` map to the validated schedule
+envelope; recurrence remains unavailable.
+
 The CLI currently supports focused project status changes, category assignment,
 and exact deletion with preserved category history. It still has no project
 creation/general editing, time-entry delete/edit, domain settings, import,
@@ -665,6 +749,32 @@ serif masthead, thin rules, compact information, restrained domain color, and a
 persistent Codex rail on wide screens. It becomes a single column with the rail
 below the page on narrow screens.
 
+### Tasks
+
+- First-class navigation sits between Today and Projects while Projects remains
+  the default first screen.
+- A TickTick-inspired scope rail switches among All tasks, Inbox, and every
+  project. Non-default `taskScope` is URL state and supports browser history.
+- Quick add accepts a title, Inbox/project association, and optional due date.
+  Project scopes preselect that project without hiding the choice.
+- The task tree uses native checkboxes, selects, buttons, and forms. No task
+  action depends on drag or another gesture; completion, assignment, adding a
+  subtask, and scope navigation are keyboard-addressable controls.
+- Nested rows show due state and subtree completion (`completed/total` plus a
+  derived bar). Completing a parent cascades through descendants server-side.
+- Clicking a task row or its title opens a TickTick-inspired right detail sheet.
+  Title and multiline notes are editable there; explicit Save, Command/Ctrl+Enter,
+  and closing a dirty sheet all persist through the narrow task-update route.
+- The detail footer exposes task deletion. A named Cancel-first confirmation
+  states how many descendants will also be removed before deleting the subtree.
+- Root project selects reassign the whole subtree. Child project labels are
+  inherited and intentionally not independently editable.
+- Each project card shows its task ratio when tasks exist. Project details show
+  the same derived summary, a compact nested list, add/completion/subtask
+  controls, and an **Open Tasks** route into the filtered workspace.
+- Manual reordering, recurring-task behavior, and full scheduling details are
+  deliberately deferred from this focused release.
+
 ### Projects
 
 - Default first screen.
@@ -674,8 +784,15 @@ below the page on narrow screens.
 - List entries and board cards open the same project detail overlay. The detail
   status control exposes all five statuses.
 - Reusable categories appear as compact labels on project cards and details.
+- Task counts on cards and the task panel in project details come from the
+  shared task collection; projects do not embed their own task arrays.
 - Kanban cards use pointer dragging between columns, with Control + Left/Right as
   the keyboard equivalent. Moves are optimistic and roll back if persistence fails.
+- Every project detail view has a compact Codex control that attaches the exact
+  project snapshot to the rail composer without sending it.
+- Project deletion appears only in the open detail and requires a named warning.
+  The browser route automatically retains tracked time as category-only history;
+  deletion is rejected while the project backs the active challenge.
 - Health, last touch, current-week hours, due distance, streak, and progress are
   computed or sourced from the active store.
 
@@ -708,9 +825,13 @@ below the page on narrow screens.
   position, with Control + Arrow keys as the keyboard equivalent. Visible
   status selects remain in Library and book details, where the column context
   is absent. These changes persist through narrow routes and atomic store writes.
-- Catalog search occurs only on explicit submission. Open Library responses are
-  normalized server-side, optional work descriptions are fetched best-effort,
-  and only a selected book is stored.
+- Every book detail view has a compact Codex control that attaches the exact
+  book record to the rail composer without sending it.
+- Catalog search occurs only on explicit submission. ISBN-shaped input becomes
+  an exact ISBN query; title and author searches retain relevance ordering. The
+  first 20 normalized results are shown with total-match context, and each next
+  20-result page requires an explicit Load more action. Optional work
+  descriptions are fetched best-effort, and only a selected book is stored.
 - Search results use remote medium-size previews. A saved Open Library book is
   served through a same-origin URL that downloads the medium cover at most once,
   stores it in `reading-covers/` beside the active JSON store, and returns it with
@@ -730,8 +851,9 @@ below the page on narrow screens.
 
 ### Browser-local state
 
-- `tab`, non-default analytics `range`, non-default Projects `projectView`, and
-  non-default Reading `view` live in the query string and support browser history.
+- `tab`, non-default analytics `range`, non-default Projects `projectView`,
+  non-default Reading `view`, and non-default Tasks `taskScope` live in the query
+  string and support browser history.
 - Recommendation dismissal and rotation are in-memory and reset on reload.
 - The last selected Codex task ID is stored under
   `lifeos.codex.threadId` in `localStorage`.
@@ -799,6 +921,12 @@ commands, file changes, tool calls, context-compaction markers, streamed deltas,
 errors, and turn completion. When a turn completes it refreshes the LifeOS state
 and task list so file changes appear without a manual reload.
 
+Project and Reading detail controls can attach one ephemeral item snapshot above
+the composer. Attaching closes the detail view and focuses the rail. The
+attachment is removable, creates no turn and performs no data write on its own,
+and is prepended to the user's text with a blank line only when the user sends.
+Attaching another item replaces the previous attachment.
+
 The app-server protocol belongs to the installed Codex version and can evolve.
 Keep its integration isolated in `src/codex-app-server.mjs`, verify actual
 protocol behavior after upgrades, and expand protocol tests with every new
@@ -844,14 +972,35 @@ eventually strain a monolithic file. Move to SQLite only when measured needs
 justify it, with an explicit migration and export path; do not add a database
 daemon.
 
+### Tasks as a shared collection, not project children
+
+Inbox and project work should move between contexts without changing identity,
+and project deletion must not erase commitments. Tasks therefore live in one
+top-level collection with optional project and parent references. The enforced
+same-project rule for a subtree keeps project summaries, filtering, and future
+calendar export unambiguous. Derived task progress follows the same one-source-
+of-truth rule as analytics.
+
+### LifeOS owns schedule facts; calendars are downstream
+
+The schedule envelope is present now so due dates, optional start times,
+durations, and recurrence can evolve without replacing task records. Google
+Calendar integration is intentionally absent. When implemented, begin with a
+one-way LifeOS-to-Google projection using stable task/export identifiers and
+explicit conflict/error reporting. Do not make Google Calendar the task source
+of truth or introduce two-way synchronization before one-way behavior has been
+observed and designed against real data.
+
 ### Open Library as lookup, not source of truth
 
 Open Library requires no API key and fits this personal, human-initiated search
-volume. LifeOS submits only an explicit title/author/ISBN query, requests a
-bounded result set, and stores only the normalized book the user selects. The
-provider is never treated as the application database. Result completeness is
-allowed to vary, work-detail enrichment is best-effort, and cover failures have
-a local visual fallback.
+volume. LifeOS submits only an explicit title/author/ISBN query, requests at
+most 20 results at a time, and fetches another page only after an explicit user
+action. Valid ISBN-10/13 input uses Open Library's exact ISBN query. LifeOS
+stores only the normalized book the user selects. The provider is never treated
+as the application database. Result completeness is allowed to vary,
+work-detail enrichment is best-effort, and cover failures have a local visual
+fallback.
 
 The provider boundary lives in `src/book-catalog.mjs` so a future fallback can
 be added without changing the persisted book model. Do not put provider-specific
@@ -911,10 +1060,10 @@ stabilize.
 ## 15. Demo data and the transition to real data
 
 `scripts/create-demo-data.mjs` defaults to the fixed date 2026-08-22 and creates
-deterministic projects, granular sessions, weekly history aggregates, a
-challenge, milestones, and an 11-book public-safe reading library spanning all
-five statuses. `LIFEOS_DEMO_DATE` can anchor a regenerated demo to a different
-date.
+deterministic projects, a nine-record task collection with nested/project/Inbox
+examples, granular sessions, weekly history aggregates, a challenge,
+milestones, and an 11-book public-safe reading library spanning all five
+statuses. `LIFEOS_DEMO_DATE` can anchor a regenerated demo to a different date.
 
 Running this writes only the demo snapshot:
 
@@ -944,7 +1093,7 @@ Recommended import sequence:
 3. Inventory real domains, projects, statuses, priorities, weekly plans,
    deadlines, historical-entry granularity, milestones, reading books, and
    timezone.
-4. Map them into schema version 6 without inventing unsupported certainty.
+4. Map them into schema version 8 without inventing unsupported certainty.
 5. Preserve original descriptions in `rawInput` and mark summarized imports
    with `aggregation` so they are not treated as timed sessions.
 6. Set `meta.demo` to `false` and remove demo-only metadata as appropriate.
@@ -994,6 +1143,22 @@ Recommended import sequence:
 5. Ensure data changes flow back through `buildState` and the SSE refresh path.
 6. Verify keyboard behavior, narrow layouts, and empty states.
 
+### Changing task behavior
+
+1. Preserve `tasks.items[]` as the only task collection and keep task progress
+   derived in `hydrateTasks`.
+2. Maintain parent existence, acyclicity, and same-project subtree validation.
+3. Route task writes through `mutateStore`; update `updatedAt` and completion
+   timestamps together, and preserve multiline task notes within their limit.
+4. Decide and test cascade behavior explicitly for completion, reopening,
+   reassignment, project deletion, and task-subtree deletion.
+5. Keep browser routes narrow and return the full newly derived state so Tasks
+   and Projects stay synchronized.
+6. Extend both data tests and `tests/tasks-ui.test.mjs`, then exercise the live
+   Tasks and project-detail flows with an isolated `LIFEOS_DATA_DIR` copy.
+7. Treat any future calendar connector as an export boundary; local task writes
+   must succeed independently of calendar availability.
+
 ### Changing the Codex bridge
 
 1. Preserve installed-app and ChatGPT-account authentication.
@@ -1027,7 +1192,7 @@ It performs JavaScript syntax checks for the browser, server, data/storage
 modules, Codex bridge, CLI, and desktop launcher; runs Node's built-in test
 suite; then compile-checks the pinned Tauri shell.
 
-At this handoff, the suite contains 42 tests covering:
+At this handoff, the suite contains 62 tests covering:
 
 - duration parsing;
 - demo-derived totals and recommendation;
@@ -1040,20 +1205,27 @@ At this handoff, the suite contains 42 tests covering:
 - validated latest/daily/monthly snapshot creation and configured-timezone dates;
 - timer-to-entry behavior;
 - configured-timezone calendar boundaries;
-- version-2/3/4/5-to-6 reading/project/category migration and invalid-reference rejection;
+- version-2/3/4/5/6/7-to-8 reading/project/category/task/notes migration and invalid-reference rejection;
 - reusable project categories, derived category totals, and history-preserving
   project deletion;
 - five-status project movement, active/recommendation derivation, and Projects
   list/Kanban projection;
+- independent/project task creation, nested project inheritance, schedule
+  validation, completion/reopen cascades, subtree/project progress, root
+  reassignment, note/title updates, exact subtree deletion, cycle rejection, and
+  project-deletion detachment;
+- Tasks workspace scopes, nested/progress rendering, native non-gesture
+  controls, editable detail/deletion rendering, and project-detail task integration;
 - reading add/deduplication, status movement, derived counts, queue order,
   normalized tags, exact permanent deletion, manual Date read editing, and the
   configured-timezone current-year Finished projection;
-- Open Library result normalization, bounded queries, description enrichment,
-  and an offline fallback;
+- Open Library result normalization, 20-result pagination, exact ISBN queries,
+  description enrichment, and an offline fallback;
 - saved-cover medium-image selection, bounded local reuse, deletion cleanup,
   and saved-versus-temporary cover rendering;
 - macOS, Windows, and portable Codex executable lookup;
 - approval exposure to the browser bridge;
+- exact project/book composer context and message composition;
 - the intentional voice-disabled boundary.
 
 Automated coverage does **not** yet include:
@@ -1080,17 +1252,19 @@ standard check to catch repository drift.
 
 ### Product workflows not built
 
-- Create projects, edit fields beyond workflow status, or delete projects.
+- Create projects or edit fields beyond workflow status.
 - Browse, correct, or recoverably delete individual time entries.
 - Manually edit imported reading metadata beyond tags and Date read.
 - Create/edit domains, settings, challenges, or milestones in the UI.
+- Edit task titles, delete/reorder tasks, expose start time/duration, define
+  recurrence, or synchronize tasks with an external calendar.
 - Import/export UI and validation report.
 - Searchable or filterable Almanac.
 - Goals and richer deadline management.
 
 ### Technical limitations
 
-- Validation is partial; only the focused version-2/3/4/5-to-6 migrations are
+- Validation is partial; only the focused version-2/3/4/5/6-to-7 migrations are
   implemented, not a general migration framework.
 - Daily/monthly JSON snapshots provide history but not cross-device merge or
   immutable disaster recovery.
@@ -1103,9 +1277,9 @@ standard check to catch repository drift.
   typographic fallbacks remain available offline.
 - The Codex protocol may drift with installed application updates.
 - Browser and server layers lack automated end-to-end coverage.
-- Reading rendering and styles are separated, but `public/app.js` still owns its
-  event orchestration and will become a bottleneck if several more CRUD
-  workflows are added without measured modularization.
+- Reading and Tasks rendering/styles are separated, but `public/app.js` still
+  owns their event orchestration and will become a bottleneck if several more
+  CRUD workflows are added without measured modularization.
 - `LifeOS Dev.app` is source-backed and Mac-only: it depends on the current
   workspace path and installed Node, uses an ad-hoc signature, and has no
   notarization, updater, single-instance guard, or friendly native startup-error window.
@@ -1124,11 +1298,13 @@ standard check to catch repository drift.
 3. Observe and document real mismatches in schema, health, and recommendation
    logic.
 4. Make the smallest deliberate schema/rule revision supported by that evidence.
-5. Add project management.
-6. Add recoverable time-entry management.
-7. Add settings, goals, milestone/challenge editing, import/export, and Almanac
+5. Refine task scheduling/edit/delete behavior only after real task use reveals
+   the needed semantics; keep external calendars downstream of LifeOS.
+6. Add project management.
+7. Add recoverable time-entry management.
+8. Add settings, goals, milestone/challenge editing, import/export, and Almanac
    search.
-8. Replace the source-backed shell with a self-contained sidecar and add
+9. Replace the source-backed shell with a self-contained sidecar and add
    notarized distribution only after those workflows stabilize.
 
 The first incoming agent should not begin by redesigning the interface or adding
@@ -1147,6 +1323,10 @@ Before doing work:
 - [ ] Start through `/Applications/LifeOS Dev.app`, `npm run desktop:dev`, or
       `npm run dev`; never use `file://`.
 - [ ] Keep visible numbers derived from source records.
+- [ ] Keep task trees in `tasks.items[]`; preserve hierarchy/project invariants
+      and derive subtree/project progress.
+- [ ] Keep calendar integration absent or one-way from LifeOS until explicit
+      synchronization semantics are designed and requested.
 - [ ] Keep Codex on installed app-server and the signed-in account only.
 - [ ] Keep approvals and user questions visible to the user.
 - [ ] Keep voice disabled unless the exact permitted capability is verified.

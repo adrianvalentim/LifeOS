@@ -10,7 +10,7 @@ import {
 } from './lifeos-storage.mjs';
 
 export { DEFAULT_STORE_PATH, DEMO_STORE_PATH, ROOT_DIR } from './lifeos-storage.mjs';
-export const CURRENT_SCHEMA_VERSION = 6;
+export const CURRENT_SCHEMA_VERSION = 8;
 export const ACTIVITY_TYPES = [
   'deep_work',
   'shallow_work',
@@ -21,10 +21,12 @@ export const ACTIVITY_TYPES = [
 ];
 export const PROJECT_STATUSES = ['to_do', 'next_up', 'doing', 'done', 'dropped'];
 export const READING_STATUSES = ['to_read', 'next_up', 'reading', 'finished', 'dropped'];
+export const TASK_STATUSES = ['open', 'completed'];
 
 const HEALTH_ORDER = { critical: 0, attention: 1, healthy: 2 };
 const ACTIVE_PROJECT_STATUSES = new Set(['to_do', 'next_up', 'doing']);
 const READING_STATUS_ORDER = Object.fromEntries(READING_STATUSES.map((status, index) => [status, index]));
+const TASK_STATUS_ORDER = Object.fromEntries(TASK_STATUSES.map((status, index) => [status, index]));
 const DAY_MS = 86_400_000;
 const LOCK_TIMEOUT_MS = 5_000;
 const STALE_LOCK_MS = 30_000;
@@ -136,6 +138,17 @@ export function migrateStore(input) {
       store.activeSession.categoryIds = [];
     }
   }
+  if (version < 7) {
+    if (!store.tasks || typeof store.tasks !== 'object' || Array.isArray(store.tasks)) {
+      store.tasks = { items: [] };
+    }
+    if (!Array.isArray(store.tasks.items)) store.tasks.items = [];
+  }
+  if (version < 8) {
+    for (const task of store.tasks?.items || []) {
+      if (typeof task.notes !== 'string') task.notes = '';
+    }
+  }
   if (store.meta) store.meta.schemaVersion = CURRENT_SCHEMA_VERSION;
   return store;
 }
@@ -154,6 +167,9 @@ export function validateStore(store) {
   if (!Array.isArray(store.timeEntries)) throw new Error('LifeOS data requires a timeEntries array.');
   if (!store.reading || !Array.isArray(store.reading.books)) {
     throw new Error('LifeOS data requires reading.books.');
+  }
+  if (!store.tasks || !Array.isArray(store.tasks.items)) {
+    throw new Error('LifeOS data requires tasks.items.');
   }
 
   const categoryIds = new Set();
@@ -203,6 +219,9 @@ export function validateStore(store) {
     if (store.activeSession.projectId && !projectIds.has(store.activeSession.projectId)) {
       throw new Error(`Active session references missing project ${store.activeSession.projectId}.`);
     }
+    if (store.activeSession.domain && !store.domains[store.activeSession.domain]) {
+      throw new Error(`Active session references missing domain ${store.activeSession.domain}.`);
+    }
     validateCategoryIds(store.activeSession.categoryIds, categoryIds, 'Active session');
   }
 
@@ -235,6 +254,48 @@ export function validateStore(store) {
     }
     bookIds.add(book.id);
   }
+
+  const taskIds = new Set();
+  const tasksById = new Map();
+  for (const task of store.tasks.items) {
+    const title = String(task?.title || '').trim();
+    if (!task?.id || !title || title.length > 300) {
+      throw new Error('Every task needs an id and a title no longer than 300 characters.');
+    }
+    if (typeof task.notes !== 'string' || task.notes.length > 20_000) {
+      throw new Error(`Task ${task.id} needs notes no longer than 20000 characters.`);
+    }
+    if (taskIds.has(task.id)) throw new Error(`Duplicate task id: ${task.id}`);
+    if (task.projectId != null && !projectIds.has(task.projectId)) {
+      throw new Error(`Task ${task.id} references missing project ${task.projectId}.`);
+    }
+    if (!TASK_STATUSES.includes(task.status)) {
+      throw new Error(`Task ${task.id} has unknown status ${task.status}.`);
+    }
+    if (!Number.isFinite(Number(task.sortOrder))) {
+      throw new Error(`Task ${task.id} needs a finite sortOrder.`);
+    }
+    validateTaskTimestamp(task.createdAt, `Task ${task.id} createdAt`);
+    validateTaskTimestamp(task.updatedAt, `Task ${task.id} updatedAt`);
+    if (task.status === 'completed') {
+      validateTaskTimestamp(task.completedAt, `Task ${task.id} completedAt`);
+    } else if (task.completedAt != null) {
+      throw new Error(`Open task ${task.id} cannot have completedAt.`);
+    }
+    validateTaskSchedule(task.schedule, task.id);
+    taskIds.add(task.id);
+    tasksById.set(task.id, task);
+  }
+  for (const task of store.tasks.items) {
+    if (task.parentTaskId == null) continue;
+    const parent = tasksById.get(task.parentTaskId);
+    if (!parent) throw new Error(`Task ${task.id} references missing parent task ${task.parentTaskId}.`);
+    if (parent.id === task.id) throw new Error(`Task ${task.id} cannot be its own parent.`);
+    if ((parent.projectId || null) !== (task.projectId || null)) {
+      throw new Error(`Task ${task.id} must share its parent task's project.`);
+    }
+  }
+  validateTaskHierarchy(tasksById);
   return store;
 }
 
@@ -255,6 +316,37 @@ function validateCategoryIds(values, knownIds, owner) {
   if (unique.size !== values.length || values.some((categoryId) => !knownIds.has(categoryId))) {
     throw new Error(`${owner} has invalid, duplicate, or unknown categoryIds.`);
   }
+}
+
+function validateTaskTimestamp(value, label) {
+  if (!value || Number.isNaN(new Date(value).getTime())) throw new Error(`${label} must be a valid timestamp.`);
+}
+
+function validateTaskSchedule(schedule, taskId) {
+  if (!schedule || typeof schedule !== 'object' || Array.isArray(schedule)) {
+    throw new Error(`Task ${taskId} requires a schedule object.`);
+  }
+  const dueDate = requireOptionalDateOnly(schedule.dueDate, `Task ${taskId} due date`);
+  const startTime = requireOptionalTime(schedule.startTime, `Task ${taskId} start time`);
+  requireOptionalTaskDuration(schedule.durationMinutes, `Task ${taskId} duration`);
+  if (startTime && !dueDate) throw new Error(`Task ${taskId} start time requires a due date.`);
+  if (schedule.recurrence !== null) {
+    throw new Error(`Task ${taskId} recurrence is reserved for a future schema revision and must be null.`);
+  }
+}
+
+function validateTaskHierarchy(tasksById) {
+  const visited = new Set();
+  const visiting = new Set();
+  const visit = (task) => {
+    if (visited.has(task.id)) return;
+    if (visiting.has(task.id)) throw new Error(`Task hierarchy contains a cycle at ${task.id}.`);
+    visiting.add(task.id);
+    if (task.parentTaskId != null) visit(tasksById.get(task.parentTaskId));
+    visiting.delete(task.id);
+    visited.add(task.id);
+  };
+  for (const task of tasksById.values()) visit(task);
 }
 
 export function dateOnly(value = new Date(), timeZone = 'UTC') {
@@ -334,6 +426,19 @@ export function requireProject(store, query) {
   throw new Error(`Project not found: ${query}`);
 }
 
+export function findTask(store, query) {
+  return taskMatches(store, query).at(0) || null;
+}
+
+export function requireTask(store, query) {
+  const matches = taskMatches(store, query);
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) {
+    throw new Error(`Ambiguous task: ${query}. Matches: ${matches.map((task) => task.title).join(', ')}`);
+  }
+  throw new Error(`Task not found: ${query}`);
+}
+
 export function findCategory(store, query) {
   const needle = normalizeText(query);
   if (!needle) return null;
@@ -410,10 +515,15 @@ export function createTimeEntry(store, input) {
   const time = input.time === null ? null : input.time || localTime(now, timeZone);
   const activityType = input.activityType || inferActivityType(`${input.rawInput || ''} ${input.description || ''}`);
   if (!ACTIVITY_TYPES.includes(activityType)) throw new Error(`Unknown activity type: ${activityType}`);
+  const preservedDomain = project ? null : input.domain || null;
+  if (preservedDomain && !store.domains[preservedDomain]) {
+    throw new Error(`Unknown domain: ${preservedDomain}`);
+  }
 
   return {
     id: input.id || randomUUID(),
     projectId: project?.id || null,
+    ...(preservedDomain ? { domain: preservedDomain } : {}),
     categoryIds: [...new Set(input.categoryIds || [])],
     date,
     time,
@@ -468,6 +578,7 @@ export async function stopSession(input = {}, storePath = DEFAULT_STORE_PATH) {
     const startedAt = new Date(session.startedAt);
     const entry = createTimeEntry(current, {
       projectId: session.projectId,
+      domain: session.domain,
       categoryIds: session.categoryIds,
       durationMinutes: input.durationMinutes || elapsed,
       activityType: input.activityType || session.activityType,
@@ -526,6 +637,12 @@ export async function deleteProject(input, storePath = DEFAULT_STORE_PATH) {
     const activeSessionUsesProject = current.activeSession?.projectId === project.id;
     let preservedCategory = null;
     if (input.preserveCategory) preservedCategory = ensureCategory(current, input.preserveCategory);
+    if (input.preserveHistory === true
+      && (referencedEntries.length || activeSessionUsesProject)
+      && project.categoryIds.length === 0
+      && !preservedCategory) {
+      preservedCategory = ensureCategory(current, project.name);
+    }
     const preservedCategoryIds = [...new Set([
       ...project.categoryIds,
       ...(preservedCategory ? [preservedCategory.id] : []),
@@ -541,10 +658,16 @@ export async function deleteProject(input, storePath = DEFAULT_STORE_PATH) {
     }
     if (activeSessionUsesProject) {
       current.activeSession.projectId = null;
+      current.activeSession.domain = project.domain;
       current.activeSession.categoryIds = [...new Set([
         ...current.activeSession.categoryIds,
         ...preservedCategoryIds,
       ])];
+    }
+    const detachedTasks = current.tasks.items.filter((task) => task.projectId === project.id);
+    for (const task of detachedTasks) {
+      task.projectId = null;
+      task.updatedAt = now.toISOString();
     }
     current.projects.splice(projectIndex, 1);
     return {
@@ -552,6 +675,7 @@ export async function deleteProject(input, storePath = DEFAULT_STORE_PATH) {
       preservedCategory,
       preservedEntryCount: referencedEntries.length,
       preservedActiveSession: Boolean(activeSessionUsesProject),
+      detachedTaskCount: detachedTasks.length,
     };
   }, storePath);
   return { ...result, state: buildState(store, { now }) };
@@ -582,6 +706,138 @@ export function buildCategoryStats(store, query, options = {}) {
       .filter((project) => project.categoryIds.includes(category.id))
       .map((project) => ({ id: project.id, name: project.name, status: project.status })),
   };
+}
+
+export async function createTask(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const title = cleanTaskTitle(input.title);
+  const parentTaskId = input.parentTaskId == null || input.parentTaskId === ''
+    ? null
+    : String(input.parentTaskId).trim();
+  const schedule = normalizeTaskSchedule(input);
+  const { result: task, store } = await mutateStore((current) => {
+    const parent = parentTaskId
+      ? current.tasks.items.find((candidate) => candidate.id === parentTaskId)
+      : null;
+    if (parentTaskId && !parent) throw new Error(`Parent task not found: ${parentTaskId}`);
+
+    let projectId = normalizeTaskProjectId(current, input.projectId);
+    if (parent) {
+      if (input.projectId !== undefined && projectId !== (parent.projectId || null)) {
+        throw new Error('A subtask must share its parent task\'s project.');
+      }
+      projectId = parent.projectId || null;
+    }
+
+    const timestamp = now.toISOString();
+    const next = {
+      id: input.id || randomUUID(),
+      title,
+      notes: cleanTaskNotes(input.notes),
+      projectId,
+      parentTaskId,
+      status: 'open',
+      sortOrder: nextTaskSortOrder(current.tasks.items, parentTaskId),
+      schedule,
+      createdAt: input.createdAt || timestamp,
+      updatedAt: timestamp,
+      completedAt: null,
+    };
+    current.tasks.items.push(next);
+    let ancestor = parent;
+    while (ancestor) {
+      if (ancestor.status === 'completed') {
+        ancestor.status = 'open';
+        ancestor.completedAt = null;
+        ancestor.updatedAt = timestamp;
+      }
+      ancestor = ancestor.parentTaskId
+        ? current.tasks.items.find((candidate) => candidate.id === ancestor.parentTaskId)
+        : null;
+    }
+    return next;
+  }, storePath);
+  return { task, state: buildState(store, { now }) };
+}
+
+export async function updateTask(input, storePath = DEFAULT_STORE_PATH) {
+  if (!Object.hasOwn(input, 'title') && !Object.hasOwn(input, 'notes')) {
+    throw new Error('A task update requires a title or notes.');
+  }
+  const now = resolveNow(input.now);
+  const { result: task, store } = await mutateStore((current) => {
+    const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
+    if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    const title = Object.hasOwn(input, 'title') ? cleanTaskTitle(input.title) : existing.title;
+    const notes = Object.hasOwn(input, 'notes') ? cleanTaskNotes(input.notes) : existing.notes;
+    if (existing.title !== title || existing.notes !== notes) {
+      existing.title = title;
+      existing.notes = notes;
+      existing.updatedAt = now.toISOString();
+    }
+    return existing;
+  }, storePath);
+  return { task, state: buildState(store, { now }) };
+}
+
+export async function deleteTask(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const { result, store } = await mutateStore((current) => {
+    const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
+    if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    const targets = new Set([
+      existing.id,
+      ...taskDescendants(current.tasks.items, existing.id).map((task) => task.id),
+    ]);
+    current.tasks.items = current.tasks.items.filter((task) => !targets.has(task.id));
+    return { task: existing, deletedCount: targets.size };
+  }, storePath);
+  return { ...result, state: buildState(store, { now }) };
+}
+
+export async function setTaskCompletion(input, storePath = DEFAULT_STORE_PATH) {
+  if (typeof input.completed !== 'boolean') throw new Error('Task completion must be true or false.');
+  const now = resolveNow(input.now);
+  const { result, store } = await mutateStore((current) => {
+    const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
+    if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    const timestamp = now.toISOString();
+    const targets = input.completed
+      ? [existing, ...taskDescendants(current.tasks.items, existing.id)]
+      : [existing];
+    let affectedCount = 0;
+    for (const task of targets) {
+      const status = input.completed ? 'completed' : 'open';
+      if (task.status === status) continue;
+      task.status = status;
+      task.completedAt = input.completed ? timestamp : null;
+      task.updatedAt = timestamp;
+      affectedCount += 1;
+    }
+    return { task: existing, affectedCount };
+  }, storePath);
+  return { ...result, state: buildState(store, { now }) };
+}
+
+export async function setTaskProject(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const { result, store } = await mutateStore((current) => {
+    const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
+    if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    if (existing.parentTaskId) throw new Error('Only a top-level task can be assigned to a project.');
+    const projectId = normalizeTaskProjectId(current, input.projectId);
+    const targets = [existing, ...taskDescendants(current.tasks.items, existing.id)];
+    const timestamp = now.toISOString();
+    let affectedCount = 0;
+    for (const task of targets) {
+      if ((task.projectId || null) === projectId) continue;
+      task.projectId = projectId;
+      task.updatedAt = timestamp;
+      affectedCount += 1;
+    }
+    return { task: existing, affectedCount };
+  }, storePath);
+  return { ...result, state: buildState(store, { now }) };
 }
 
 export async function addReadingBook(input, storePath = DEFAULT_STORE_PATH) {
@@ -800,7 +1056,12 @@ export function buildState(store, options = {}) {
   const activeRange = ['week', 'month', 'quarter', 'year'].includes(options.range) ? options.range : 'week';
   const currentWeekBounds = rangeBounds('week', today);
   const selectedBounds = rangeBounds(activeRange, today);
-  const projects = hydrateProjects(copy, { now, currentWeekBounds });
+  const tasks = hydrateTasks(copy.tasks, copy.projects);
+  const projects = hydrateProjects(copy, {
+    now,
+    currentWeekBounds,
+    taskSummaryByProject: tasks.summary.byProject,
+  });
   const recommendations = buildRecommendations(projects);
   const todayEntries = copy.timeEntries.filter((entry) => entry.date === today && !entry.aggregation);
   const currentWeekEntries = filterEntries(copy.timeEntries, currentWeekBounds);
@@ -856,6 +1117,7 @@ export function buildState(store, options = {}) {
     rhythmHeatmap: rhythmHeatmap(copy, today),
     challenge,
     reading,
+    tasks,
     milestones: [...(copy.milestones || [])].sort((a, b) => b.date.localeCompare(a.date)),
     weekByDay: buildWeekByDay(currentWeekEntries, currentWeekBounds.start),
     summary: {
@@ -903,6 +1165,67 @@ function resolveNow(value) {
   const now = value ? new Date(value) : new Date();
   if (Number.isNaN(now.getTime())) throw new Error(`Invalid current time: ${value}`);
   return now;
+}
+
+function hydrateTasks(tasks, projects) {
+  const items = [...tasks.items];
+  const childrenByParent = new Map();
+  for (const task of items) {
+    const key = task.parentTaskId || null;
+    if (!childrenByParent.has(key)) childrenByParent.set(key, []);
+    childrenByParent.get(key).push(task);
+  }
+  for (const siblings of childrenByParent.values()) siblings.sort(compareTasks);
+
+  const hydratedById = new Map();
+  const hydrate = (task, depth) => {
+    const children = (childrenByParent.get(task.id) || []).map((child) => hydrate(child, depth + 1));
+    const subtreeTotal = 1 + children.reduce((sum, child) => sum + child.subtreeTotal, 0);
+    const subtreeCompleted = (task.status === 'completed' ? 1 : 0)
+      + children.reduce((sum, child) => sum + child.subtreeCompleted, 0);
+    const hydrated = {
+      ...task,
+      depth,
+      childIds: children.map((child) => child.id),
+      directSubtaskCount: children.length,
+      subtreeTotal,
+      subtreeCompleted,
+      progress: round2(subtreeCompleted / subtreeTotal),
+    };
+    hydratedById.set(task.id, hydrated);
+    return hydrated;
+  };
+  const roots = (childrenByParent.get(null) || []).map((task) => hydrate(task, 0));
+  const ordered = [];
+  const append = (task) => {
+    ordered.push(task);
+    for (const childId of task.childIds) append(hydratedById.get(childId));
+  };
+  for (const root of roots) append(root);
+
+  const byProject = Object.fromEntries(projects.map((project) => [project.id, summarizeTasks(
+    items.filter((task) => task.projectId === project.id),
+  )]));
+  return {
+    ...tasks,
+    items: ordered,
+    summary: {
+      ...summarizeTasks(items),
+      inbox: summarizeTasks(items.filter((task) => task.projectId == null)),
+      byProject,
+    },
+  };
+}
+
+function summarizeTasks(items) {
+  const total = items.length;
+  const completed = items.filter((task) => task.status === 'completed').length;
+  return {
+    total,
+    open: total - completed,
+    completed,
+    progress: total ? round2(completed / total) : 0,
+  };
 }
 
 function hydrateReading(reading) {
@@ -981,6 +1304,56 @@ function requireOptionalDateOnly(value, label) {
     throw new Error(`${label} must be a real calendar date.`);
   }
   return date;
+}
+
+function requireOptionalTime(value, label) {
+  if (value === null || value === undefined || value === '') return null;
+  const time = String(value).trim();
+  const match = time.match(/^(\d{2}):(\d{2})$/);
+  if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) {
+    throw new Error(`${label} must use HH:MM.`);
+  }
+  return time;
+}
+
+function requireOptionalTaskDuration(value, label) {
+  if (value === null || value === undefined || value === '') return null;
+  const duration = Number(value);
+  if (!Number.isInteger(duration) || duration < 1 || duration > 10_080) {
+    throw new Error(`${label} must be a whole number from 1 to 10080 minutes.`);
+  }
+  return duration;
+}
+
+function cleanTaskTitle(value) {
+  const title = String(value ?? '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
+  if (!title) throw new Error('A task title is required.');
+  return title;
+}
+
+function cleanTaskNotes(value) {
+  return String(value ?? '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\r\n?/g, '\n')
+    .slice(0, 20_000);
+}
+
+function normalizeTaskSchedule(input) {
+  const source = input.schedule && typeof input.schedule === 'object' && !Array.isArray(input.schedule)
+    ? input.schedule
+    : input;
+  const dueDate = requireOptionalDateOnly(source.dueDate, 'Task due date');
+  const startTime = requireOptionalTime(source.startTime, 'Task start time');
+  const durationMinutes = requireOptionalTaskDuration(source.durationMinutes, 'Task duration');
+  if (startTime && !dueDate) throw new Error('A task start time requires a due date.');
+  if (source.recurrence !== null && source.recurrence !== undefined) {
+    throw new Error('Recurring tasks are reserved for a future release.');
+  }
+  return { dueDate, startTime, durationMinutes, recurrence: null };
 }
 
 function applyReadingStatusDates(book, status, timestamp) {
@@ -1066,6 +1439,52 @@ function projectMatches(store, query) {
   return contained.sort((a, b) => normalizeText(a.name).length - normalizeText(b.name).length);
 }
 
+function taskMatches(store, query) {
+  const needle = normalizeText(query);
+  if (!needle) return [];
+  const tasks = store.tasks?.items || [];
+  const exact = tasks.filter((task) => normalizeText(task.id) === needle || normalizeText(task.title) === needle);
+  if (exact.length) return exact;
+  return tasks
+    .filter((task) => normalizeText(task.title).includes(needle))
+    .sort((a, b) => normalizeText(a.title).length - normalizeText(b.title).length);
+}
+
+function normalizeTaskProjectId(store, value) {
+  if (value === null || value === undefined || value === '') return null;
+  const projectId = String(value).trim();
+  if (!store.projects.some((project) => project.id === projectId)) {
+    throw new Error(`Project not found: ${projectId}`);
+  }
+  return projectId;
+}
+
+function taskDescendants(items, taskId) {
+  const descendants = [];
+  const queue = items.filter((task) => task.parentTaskId === taskId);
+  while (queue.length) {
+    const task = queue.shift();
+    descendants.push(task);
+    queue.push(...items.filter((candidate) => candidate.parentTaskId === task.id));
+  }
+  return descendants;
+}
+
+function nextTaskSortOrder(items, parentTaskId) {
+  return Math.max(
+    0,
+    ...items
+      .filter((task) => (task.parentTaskId || null) === (parentTaskId || null))
+      .map((task) => Number(task.sortOrder) || 0),
+  ) + 1;
+}
+
+function compareTasks(a, b) {
+  const statusDelta = TASK_STATUS_ORDER[a.status] - TASK_STATUS_ORDER[b.status];
+  const orderDelta = Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+  return statusDelta || orderDelta || a.title.localeCompare(b.title);
+}
+
 function resolveProjectForEntry(store, input) {
   if (input.projectId) {
     const project = store.projects.find((candidate) => candidate.id === input.projectId);
@@ -1122,6 +1541,7 @@ function hydrateProjects(store, options = {}) {
       weekHoursLabel: weekHours ? formatHours(weekHours) : '-',
       streak: projectStreak(project.id, store.timeEntries, today),
       weekHistory: projectWeekHistory(project.id, store.timeEntries, today),
+      taskSummary: options.taskSummaryByProject?.[project.id] || summarizeTasks([]),
     };
   }).sort((a, b) => {
     const healthDelta = HEALTH_ORDER[a.health] - HEALTH_ORDER[b.health];

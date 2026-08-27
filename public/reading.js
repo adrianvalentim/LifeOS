@@ -1,3 +1,5 @@
+import { renderCodexContextButton } from './codex-context.js';
+
 export const READING_STATUS_LABELS = {
   to_read: 'To read',
   next_up: 'Next up',
@@ -20,7 +22,14 @@ export function createReadingUiState() {
     catalogQuery: '',
     catalogResults: [],
     catalogError: null,
+    catalogLoadError: null,
+    catalogPage: 0,
+    catalogPageSize: 20,
+    catalogTotal: 0,
+    catalogHasMore: false,
+    catalogQueryType: 'text',
     searching: false,
+    loadingMore: false,
     selectedBookId: null,
     deleteBookId: null,
     movingBookId: null,
@@ -157,25 +166,52 @@ export function readingCoverUrl(book) {
 }
 
 function renderCatalogSearch(ui) {
+  const busy = ui.searching || ui.loadingMore;
   return `
-    <section class="catalog-panel">
+    <section class="catalog-panel" ${busy ? 'aria-busy="true"' : ''}>
       <div class="catalog-intro">
-        <div><span class="smallcaps-strong">Search Open Library</span><p>Search results are temporary. LifeOS saves only the book you choose.</p></div>
+        <div><span class="smallcaps-strong">Search Open Library</span><p id="catalog-search-hint">Search by title or author. Paste an ISBN for an exact lookup; LifeOS saves only what you add.</p></div>
         <a href="https://openlibrary.org" target="_blank" rel="noreferrer">Open Library ↗</a>
       </div>
       <form class="catalog-search-form" data-reading-catalog-form>
-        <input name="query" value="${escapeAttribute(ui.catalogQuery)}" placeholder="Title, author, or ISBN" autocomplete="off" aria-label="Search books">
-        <button type="submit" ${ui.searching ? 'disabled' : ''}>${ui.searching ? 'Searching…' : 'Search books'}</button>
+        <input type="search" name="query" value="${escapeAttribute(ui.catalogQuery)}" placeholder="Title, author, or ISBN" autocomplete="off" enterkeyhint="search" aria-label="Search books" aria-describedby="catalog-search-hint">
+        <button type="submit" ${busy ? 'disabled' : ''}>${ui.searching ? 'Searching…' : 'Search books'}</button>
       </form>
       ${ui.catalogError ? `<div class="catalog-error">${escapeHtml(ui.catalogError)}</div>` : ''}
-      ${ui.catalogResults.length ? `<div class="catalog-results">${ui.catalogResults.map(renderCatalogResult).join('')}</div>` : ui.catalogQuery && !ui.searching && !ui.catalogError ? '<p class="catalog-empty">No matching books found.</p>' : ''}
+      ${ui.searching ? '<p class="catalog-searching" role="status">Searching Open Library…</p>' : renderCatalogResults(ui)}
     </section>
+  `;
+}
+
+function renderCatalogResults(ui) {
+  if (!ui.catalogResults.length) {
+    if (!ui.catalogQuery || ui.catalogError) return '';
+    return `<p class="catalog-empty">${ui.catalogQueryType === 'isbn' ? 'No exact ISBN match found.' : 'No matching books found. Try an ISBN or a more specific title and author.'}</p>`;
+  }
+  const shown = ui.catalogResults.length;
+  const total = Math.max(shown, Number(ui.catalogTotal) || 0);
+  const summary = total > shown
+    ? `Showing ${shown} of ${total} matches`
+    : `${shown} ${shown === 1 ? 'result' : 'results'}`;
+  const remaining = Math.max(0, total - shown);
+  const nextCount = remaining ? Math.min(Number(ui.catalogPageSize) || 20, remaining) : Number(ui.catalogPageSize) || 20;
+  return `
+    <div class="catalog-results-head">
+      <p class="catalog-results-summary" role="status" aria-live="polite" tabindex="-1" data-catalog-results-summary>${escapeHtml(summary)}</p>
+      ${ui.catalogQueryType === 'isbn' ? '<span class="catalog-query-type">Exact ISBN</span>' : ''}
+    </div>
+    <div class="catalog-results">${ui.catalogResults.map(renderCatalogResult).join('')}</div>
+    <div class="catalog-results-footer">
+      <p>${ui.catalogHasMore ? 'Not there yet? Continue through Open Library without losing these results.' : 'You have reached the end of these results.'}</p>
+      ${ui.catalogHasMore ? `<button data-catalog-load-more type="button" aria-disabled="${ui.loadingMore ? 'true' : 'false'}">${ui.loadingMore ? 'Loading…' : `Load ${nextCount} more`}</button>` : ''}
+    </div>
+    ${ui.catalogLoadError ? `<div class="catalog-load-error" role="alert">${escapeHtml(ui.catalogLoadError)}</div>` : ''}
   `;
 }
 
 function renderCatalogResult(book, index) {
   return `
-    <article class="catalog-result">
+    <article class="catalog-result" data-catalog-result-index="${index}" tabindex="-1">
       ${renderCover(book, 'catalog-cover')}
       <div class="catalog-result-copy">
         <h3>${escapeHtml(book.title)}</h3>
@@ -292,6 +328,7 @@ function renderBookDetail(book, ui, timeZone) {
   return `
     <div class="book-detail-backdrop" data-reading-detail-close>
       <article class="book-detail" role="dialog" aria-modal="true" aria-labelledby="book-detail-title">
+        ${renderCodexContextButton('book', book.id, book.title)}
         <button class="book-detail-close" data-reading-detail-close type="button" aria-label="Close book details">×</button>
         <div class="book-detail-visual">${renderCover(book, 'detail-cover')}</div>
         <div class="book-detail-copy">

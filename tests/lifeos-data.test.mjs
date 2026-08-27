@@ -9,9 +9,11 @@ import {
   addReadingBook,
   buildCategoryStats,
   buildState,
+  createTask,
   dateOnly,
   deleteProject,
   deleteReadingBook,
+  deleteTask,
   logTime,
   migrateStore,
   parseDurationToMinutes,
@@ -19,10 +21,13 @@ import {
   reorderReadingBook,
   setProjectStatus,
   setReadingBookStatus,
+  setTaskCompletion,
+  setTaskProject,
   startSession,
   stopSession,
   updateReadingBookFinishedDate,
   updateReadingBookTags,
+  updateTask,
   validateStore,
 } from '../src/lifeos-data.mjs';
 
@@ -134,21 +139,23 @@ test('calendar dates honor the configured timezone', () => {
   assert.equal(dateOnly('2026-08-23T03:00:00Z', 'America/Sao_Paulo'), '2026-08-23');
 });
 
-test('older stores migrate to schema version 6 with Reading tags, project workflow statuses, and categories', async () => {
+test('older stores migrate to schema version 8 with Reading, project categories, tasks, and task notes', async () => {
   const store = await readStore(DEMO_STORE_PATH);
   delete store.reading;
+  delete store.tasks;
   store.meta.schemaVersion = 2;
   const migrated = migrateStore(store);
 
-  assert.equal(migrated.meta.schemaVersion, 6);
+  assert.equal(migrated.meta.schemaVersion, 8);
   assert.deepEqual(migrated.reading, { books: [] });
+  assert.deepEqual(migrated.tasks, { items: [] });
   assert.doesNotThrow(() => validateStore(migrated));
 
   const versionThree = await readStore(DEMO_STORE_PATH);
   versionThree.meta.schemaVersion = 3;
   for (const book of versionThree.reading.books) delete book.tags;
   const tagged = migrateStore(versionThree);
-  assert.equal(tagged.meta.schemaVersion, 6);
+  assert.equal(tagged.meta.schemaVersion, 8);
   assert.ok(tagged.reading.books.every((book) => Array.isArray(book.tags) && book.tags.length === 0));
 
   const versionFour = await readStore(DEMO_STORE_PATH);
@@ -156,7 +163,7 @@ test('older stores migrate to schema version 6 with Reading tags, project workfl
   for (const project of versionFour.projects) project.status = 'active';
   versionFour.projects.at(-1).status = 'inactive';
   const projectStatuses = migrateStore(versionFour);
-  assert.equal(projectStatuses.meta.schemaVersion, 6);
+  assert.equal(projectStatuses.meta.schemaVersion, 8);
   assert.ok(projectStatuses.projects.slice(0, -1).every((project) => project.status === 'next_up'));
   assert.equal(projectStatuses.projects.at(-1).status, 'dropped');
 
@@ -166,10 +173,24 @@ test('older stores migrate to schema version 6 with Reading tags, project workfl
   for (const project of versionFive.projects) delete project.categoryIds;
   for (const entry of versionFive.timeEntries) delete entry.categoryIds;
   const categorized = migrateStore(versionFive);
-  assert.equal(categorized.meta.schemaVersion, 6);
+  assert.equal(categorized.meta.schemaVersion, 8);
   assert.deepEqual(categorized.categories, {});
   assert.ok(categorized.projects.every((project) => Array.isArray(project.categoryIds)));
   assert.ok(categorized.timeEntries.every((entry) => Array.isArray(entry.categoryIds)));
+
+  const versionSix = await readStore(DEMO_STORE_PATH);
+  versionSix.meta.schemaVersion = 6;
+  delete versionSix.tasks;
+  const tasked = migrateStore(versionSix);
+  assert.equal(tasked.meta.schemaVersion, 8);
+  assert.deepEqual(tasked.tasks, { items: [] });
+
+  const versionSeven = await readStore(DEMO_STORE_PATH);
+  versionSeven.meta.schemaVersion = 7;
+  for (const task of versionSeven.tasks.items) delete task.notes;
+  const noted = migrateStore(versionSeven);
+  assert.equal(noted.meta.schemaVersion, 8);
+  assert.ok(noted.tasks.items.every((task) => task.notes === ''));
 });
 
 test('projects move across the five-status workflow and completed work leaves active recommendations', async () => {
@@ -225,6 +246,178 @@ test('project categories group shared time and project deletion preserves direct
   const invalid = structuredClone(after);
   invalid.projects[0].categoryIds = ['missing-category'];
   assert.throws(() => validateStore(invalid), /categoryIds/);
+});
+
+test('project UI deletion automatically preserves uncategorized time history', async () => {
+  const tmp = await makeStoreCopy('lifeos-project-ui-delete-');
+  const original = await readStore(tmp.storePath);
+  const project = original.projects.find((candidate) => candidate.id === 'substack');
+  const referencedEntryCount = original.timeEntries.filter((entry) => entry.projectId === project.id).length;
+  const originalState = buildState(original, { now: FIXED_NOW });
+
+  await assert.rejects(
+    deleteProject({ projectId: project.id, now: FIXED_NOW }, tmp.storePath),
+    /still has time history/,
+  );
+  await startSession({
+    projectId: project.id,
+    activityType: 'communication',
+    description: 'Draft a project update',
+    startedAt: '2026-08-22T14:00:00-03:00',
+    now: FIXED_NOW,
+  }, tmp.storePath);
+
+  const deleted = await deleteProject({
+    projectId: project.id,
+    preserveHistory: true,
+    now: FIXED_NOW,
+  }, tmp.storePath);
+
+  assert.equal(deleted.preservedEntryCount, referencedEntryCount);
+  assert.equal(deleted.preservedActiveSession, true);
+  assert.equal(deleted.preservedCategory.label, project.name);
+  assert.equal(deleted.state.projects.some((candidate) => candidate.id === project.id), false);
+  assert.equal(deleted.state.summary.totalRangeHours, originalState.summary.totalRangeHours);
+
+  const after = await readStore(tmp.storePath);
+  const preservedEntries = after.timeEntries.filter((entry) => entry.categoryIds.includes(deleted.preservedCategory.id));
+  assert.equal(preservedEntries.length, referencedEntryCount);
+  assert.ok(preservedEntries.every((entry) => entry.projectId === null && entry.domain === project.domain));
+  assert.equal(after.activeSession.projectId, null);
+  assert.equal(after.activeSession.domain, project.domain);
+  assert.ok(after.activeSession.categoryIds.includes(deleted.preservedCategory.id));
+
+  const stopped = await stopSession({
+    durationMinutes: 30,
+    stoppedAt: '2026-08-22T15:00:00-03:00',
+  }, tmp.storePath);
+  assert.equal(stopped.entry.projectId, null);
+  assert.equal(stopped.entry.domain, project.domain);
+  assert.ok(stopped.entry.categoryIds.includes(deleted.preservedCategory.id));
+});
+
+test('tasks can stand alone or inherit a project through nested subtasks with derived progress', async () => {
+  const tmp = await makeStoreCopy('lifeos-tasks-');
+  const before = buildState(await readStore(tmp.storePath), { now: FIXED_NOW });
+  const inbox = await createTask({
+    title: 'Independent errand',
+    dueDate: '2026-08-25',
+    now: FIXED_NOW,
+  }, tmp.storePath);
+  assert.equal(inbox.task.projectId, null);
+  assert.deepEqual(inbox.task.schedule, {
+    dueDate: '2026-08-25',
+    startTime: null,
+    durationMinutes: null,
+    recurrence: null,
+  });
+
+  const root = await createTask({
+    title: 'Plan the final scene',
+    projectId: 'portia',
+    dueDate: '2026-08-24',
+    startTime: '09:30',
+    durationMinutes: 90,
+    now: FIXED_NOW,
+  }, tmp.storePath);
+  const child = await createTask({
+    title: 'List the remaining beats',
+    parentTaskId: root.task.id,
+    now: FIXED_NOW,
+  }, tmp.storePath);
+  assert.equal(child.task.projectId, 'portia');
+  assert.equal(child.task.parentTaskId, root.task.id);
+
+  const completed = await setTaskCompletion({ taskId: child.task.id, completed: true, now: FIXED_NOW }, tmp.storePath);
+  const hydratedRoot = completed.state.tasks.items.find((task) => task.id === root.task.id);
+  assert.equal(hydratedRoot.subtreeTotal, 2);
+  assert.equal(hydratedRoot.subtreeCompleted, 1);
+  assert.equal(hydratedRoot.progress, 0.5);
+  assert.equal(completed.state.tasks.summary.inbox.total, before.tasks.summary.inbox.total + 1);
+  assert.equal(
+    completed.state.projects.find((project) => project.id === 'portia').taskSummary.total,
+    before.projects.find((project) => project.id === 'portia').taskSummary.total + 2,
+  );
+});
+
+test('completing a parent cascades to open subtasks and adding new work reopens its ancestors', async () => {
+  const tmp = await makeStoreCopy('lifeos-task-cascade-');
+  const root = await createTask({ title: 'Prepare release', projectId: 'vulcano', now: FIXED_NOW }, tmp.storePath);
+  const child = await createTask({ title: 'Export master', parentTaskId: root.task.id, now: FIXED_NOW }, tmp.storePath);
+  const grandchild = await createTask({ title: 'Verify audio', parentTaskId: child.task.id, now: FIXED_NOW }, tmp.storePath);
+  const completed = await setTaskCompletion({ taskId: root.task.id, completed: true, now: FIXED_NOW }, tmp.storePath);
+  assert.equal(completed.affectedCount, 3);
+  assert.ok(completed.state.tasks.items
+    .filter((task) => [root.task.id, child.task.id, grandchild.task.id].includes(task.id))
+    .every((task) => task.status === 'completed'));
+
+  const newWork = await createTask({ title: 'Share review link', parentTaskId: child.task.id, now: FIXED_NOW }, tmp.storePath);
+  assert.equal(newWork.state.tasks.items.find((task) => task.id === root.task.id).status, 'open');
+  assert.equal(newWork.state.tasks.items.find((task) => task.id === child.task.id).status, 'open');
+  assert.equal(newWork.state.tasks.items.find((task) => task.id === grandchild.task.id).status, 'completed');
+});
+
+test('task details persist multiline notes and deleting a task removes only its subtree', async () => {
+  const tmp = await makeStoreCopy('lifeos-task-details-');
+  const root = await createTask({ title: 'Prepare release', projectId: 'vulcano', now: FIXED_NOW }, tmp.storePath);
+  const child = await createTask({ title: 'Export master', parentTaskId: root.task.id, now: FIXED_NOW }, tmp.storePath);
+  const grandchild = await createTask({ title: 'Verify audio', parentTaskId: child.task.id, now: FIXED_NOW }, tmp.storePath);
+  const sibling = await createTask({ title: 'Write release note', parentTaskId: root.task.id, now: FIXED_NOW }, tmp.storePath);
+
+  const updated = await updateTask({
+    taskId: child.task.id,
+    title: 'Export final master',
+    notes: 'Use the approved grade.\r\n\r\nConfirm the stereo mix.',
+    now: '2026-08-22T16:00:00-03:00',
+  }, tmp.storePath);
+  assert.equal(updated.task.title, 'Export final master');
+  assert.equal(updated.task.notes, 'Use the approved grade.\n\nConfirm the stereo mix.');
+  assert.equal(updated.task.updatedAt, '2026-08-22T19:00:00.000Z');
+
+  const deleted = await deleteTask({ taskId: child.task.id, now: FIXED_NOW }, tmp.storePath);
+  assert.equal(deleted.deletedCount, 2);
+  assert.equal(deleted.state.tasks.items.some((task) => task.id === child.task.id), false);
+  assert.equal(deleted.state.tasks.items.some((task) => task.id === grandchild.task.id), false);
+  assert.equal(deleted.state.tasks.items.some((task) => task.id === root.task.id), true);
+  assert.equal(deleted.state.tasks.items.some((task) => task.id === sibling.task.id), true);
+  assert.equal(deleted.state.tasks.items.find((task) => task.id === root.task.id).subtreeTotal, 2);
+  await assert.rejects(deleteTask({ taskId: child.task.id }, tmp.storePath), /Task not found/);
+});
+
+test('top-level project assignment cascades through a task tree and project deletion preserves tasks in Inbox', async () => {
+  const tmp = await makeStoreCopy('lifeos-task-project-');
+  const root = await createTask({ title: 'Project-linked root', projectId: 'portia', now: FIXED_NOW }, tmp.storePath);
+  const child = await createTask({ title: 'Project-linked child', parentTaskId: root.task.id, now: FIXED_NOW }, tmp.storePath);
+  const detached = await setTaskProject({ taskId: root.task.id, projectId: null, now: FIXED_NOW }, tmp.storePath);
+  assert.equal(detached.affectedCount, 2);
+  assert.ok(detached.state.tasks.items
+    .filter((task) => [root.task.id, child.task.id].includes(task.id))
+    .every((task) => task.projectId == null));
+  await assert.rejects(setTaskProject({ taskId: child.task.id, projectId: 'vulcano' }, tmp.storePath), /top-level/);
+
+  const beforeDelete = await readStore(tmp.storePath);
+  const substackTaskCount = beforeDelete.tasks.items.filter((task) => task.projectId === 'substack').length;
+  const deleted = await deleteProject({
+    projectId: 'substack',
+    preserveCategory: 'Substack',
+    now: FIXED_NOW,
+  }, tmp.storePath);
+  assert.equal(deleted.detachedTaskCount, substackTaskCount);
+  assert.ok(deleted.state.tasks.items
+    .filter((task) => task.title === 'Rewrite the essay opening')
+    .every((task) => task.projectId == null));
+});
+
+test('task scheduling and hierarchy validation reject malformed future-calendar state', async () => {
+  const tmp = await makeStoreCopy('lifeos-task-validation-');
+  await assert.rejects(createTask({ title: 'Invalid time', startTime: '09:00' }, tmp.storePath), /requires a due date/);
+  await assert.rejects(createTask({ title: 'Invalid recurrence', recurrence: { frequency: 'daily' } }, tmp.storePath), /future release/);
+
+  const invalid = await readStore(tmp.storePath);
+  invalid.tasks.items[0].parentTaskId = invalid.tasks.items[1].id;
+  invalid.tasks.items[1].parentTaskId = invalid.tasks.items[0].id;
+  invalid.tasks.items[1].projectId = invalid.tasks.items[0].projectId;
+  assert.throws(() => validateStore(invalid), /cycle/);
 });
 
 test('reading books are added once and move across the shared status model', async () => {

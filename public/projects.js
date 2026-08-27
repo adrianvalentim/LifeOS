@@ -1,3 +1,6 @@
+import { renderCodexContextButton } from './codex-context.js';
+import { renderProjectTaskPanel } from './tasks.js';
+
 export const PROJECT_STATUS_LABELS = {
   to_do: 'To-do',
   next_up: 'Next up',
@@ -14,6 +17,9 @@ export function createProjectsUiState() {
   return {
     view: 'list',
     selectedProjectId: null,
+    deleteProjectId: null,
+    deletingProjectId: null,
+    deleteError: null,
     movingProjectId: null,
   };
 }
@@ -36,8 +42,9 @@ export function projectsWithStatus(dashboard, projectId, status) {
   };
 }
 
-export function renderProjects(projects, domains, ui) {
+export function renderProjects(projects, domains, ui, options = {}) {
   const selected = projects.find((project) => project.id === ui.selectedProjectId);
+  const deleteTarget = projects.find((project) => project.id === ui.deleteProjectId);
   return `
     <div class="projects-workspace">
       <div class="projects-toolbar">
@@ -47,7 +54,8 @@ export function renderProjects(projects, domains, ui) {
         </div>
       </div>
       ${ui.view === 'kanban' ? renderProjectBoard(projects, domains, ui) : renderProjectList(projects, domains)}
-      ${selected ? renderProjectDetail(selected, domains[selected.domain], ui.movingProjectId === selected.id) : ''}
+      ${selected ? renderProjectDetail(selected, domains[selected.domain], ui.movingProjectId === selected.id, domains, options) : ''}
+      ${deleteTarget ? renderDeleteConfirmation(deleteTarget, ui) : ''}
     </div>
   `;
 }
@@ -117,16 +125,18 @@ function renderProjectContent(project, domain, { showStatus = false } = {}) {
       <span class="stat"><span class="stat-k">Last</span><span class="stat-v ${lastClass}">${escapeHtml(project.lastTouchedLabel)}</span></span>
       <span class="stat"><span class="stat-k">Week</span><span class="stat-v">${escapeHtml(project.weekHoursLabel)}</span></span>
       <span class="stat"><span class="stat-k">Due</span><span class="stat-v ${dueClass}">${escapeHtml(due)}</span></span>
+      ${project.taskSummary?.total ? `<span class="stat"><span class="stat-k">Tasks</span><span class="stat-v">${project.taskSummary.completed}/${project.taskSummary.total}</span></span>` : ''}
       ${project.streak > 0 ? `<span class="stat"><span class="stat-k">Streak</span><span class="stat-v" style="color:var(--accent)">${project.streak}d</span></span>` : ''}
     </div>
     ${renderProgress(project)}
   `;
 }
 
-function renderProjectDetail(project, domain, moving) {
+function renderProjectDetail(project, domain, moving, domains, options) {
   return `
     <div class="project-detail-backdrop" data-project-detail-close>
       <article class="project-detail" style="--domain:${escapeAttribute(domain.color)}" role="dialog" aria-modal="true" aria-labelledby="project-detail-title">
+        ${renderCodexContextButton('project', project.id, project.name)}
         <button class="project-detail-close" data-project-detail-close type="button" aria-label="Close project details">×</button>
         <div class="project-detail-heading">
           <span class="project-detail-domain">${escapeHtml(domain.label)}</span>
@@ -147,11 +157,29 @@ function renderProjectDetail(project, domain, moving) {
           <span><b>Weekly plan</b>${escapeHtml(formatHours(project.plannedHours))}</span>
           <span><b>Due</b>${escapeHtml(dueLabel(project.dueInDays))}</span>
           <span><b>Streak</b>${project.streak ? `${project.streak}d` : '—'}</span>
+          <span><b>Tasks</b>${project.taskSummary?.total ? `${project.taskSummary.completed}/${project.taskSummary.total} complete` : 'None yet'}</span>
         </div>
         <section class="project-detail-note"><span class="smallcaps-strong">Current note</span><p>${escapeHtml(project.note || 'No project note.')}</p></section>
         ${project.nextAction ? `<section class="project-detail-note"><span class="smallcaps-strong">Next action</span><p>${escapeHtml(project.nextAction)}</p></section>` : ''}
         ${renderProgress(project, true)}
+        ${renderProjectTaskPanel(options.tasks, project, domains, options.tasksUi || {}, { today: options.today })}
+        <section class="project-danger-zone"><span class="smallcaps">Permanent action</span><button data-project-delete-request="${escapeAttribute(project.id)}" type="button">Delete project</button></section>
       </article>
+    </div>
+  `;
+}
+
+function renderDeleteConfirmation(project, ui) {
+  const deleting = ui.deletingProjectId === project.id;
+  return `
+    <div class="project-delete-backdrop">
+      <section class="project-delete-confirm" role="alertdialog" aria-modal="true" aria-labelledby="delete-project-title" aria-describedby="delete-project-description" ${deleting ? 'aria-busy="true"' : ''}>
+        <span class="smallcaps">Permanent deletion</span>
+        <h2 id="delete-project-title">Delete “${escapeHtml(project.name)}”?</h2>
+        <p id="delete-project-description">This removes the project from LifeOS. Its tracked time will remain in Analytics as historical category data. It cannot be undone inside the app.</p>
+        ${ui.deleteError ? `<p class="project-delete-error" role="alert">${escapeHtml(ui.deleteError)}</p>` : ''}
+        <div class="project-delete-actions"><button data-project-delete-cancel type="button" ${deleting ? 'disabled' : ''}>Cancel</button><button class="danger" data-project-delete-confirm="${escapeAttribute(project.id)}" type="button" ${deleting ? 'disabled' : ''}>${deleting ? 'Deleting…' : 'Delete permanently'}</button></div>
+      </section>
     </div>
   `;
 }

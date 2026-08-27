@@ -69,6 +69,7 @@ test('Kanban cards omit redundant status and order controls while retaining sort
   const html = renderReading(fixture(), ui);
 
   assert.match(html, /data-reading-drag-id="two"/);
+  assert.doesNotMatch(html, /data-codex-context-kind/);
   assert.doesNotMatch(html, /draggable="true"/);
   assert.match(html, /class="reading-card is-saving"/);
   assert.match(html, /aria-busy="true"/);
@@ -123,6 +124,9 @@ test('Finished book details expose manual date editing in the configured timezon
 
   assert.match(html, /class="book-detail-finished-date"/);
   assert.match(html, /data-reading-finished-date-book="local-boundary"/);
+  assert.match(html, /data-codex-context-kind="book"/);
+  assert.match(html, /data-codex-context-id="local-boundary"/);
+  assert.equal((html.match(/data-codex-context-id=/g) || []).length, 1);
   assert.match(html, /value="2026-12-31"/);
 });
 
@@ -133,6 +137,7 @@ test('Library keeps visible non-drag status controls', () => {
 
   assert.match(html, /data-reading-status-book="two"/);
   assert.match(html, /aria-label="Status for Two"/);
+  assert.doesNotMatch(html, /data-codex-context-kind/);
 });
 
 test('Library headers sort every displayed field and keep missing values last', () => {
@@ -198,4 +203,64 @@ test('temporary catalog results keep remote previews instead of entering the loc
   const html = renderReading(fixture(), ui);
 
   assert.match(html, /src="https:\/\/covers\.openlibrary\.org\/b\/id\/3-M\.jpg\?default=false"/);
+});
+
+test('catalog search presents twenty results at a time with a clear continuation action', () => {
+  const ui = createReadingUiState();
+  ui.catalogOpen = true;
+  ui.catalogQuery = 'history';
+  ui.catalogPage = 1;
+  ui.catalogTotal = 45;
+  ui.catalogHasMore = true;
+  ui.catalogResults = Array.from({ length: 20 }, (_, index) => ({
+    title: `History ${index + 1}`,
+    authors: ['A. Historian'],
+    source: { provider: 'open_library', workId: `OL${index + 1}W` },
+  }));
+
+  const html = renderReading(fixture(), ui);
+
+  assert.match(html, /Showing 20 of 45 matches/);
+  assert.match(html, /data-catalog-load-more/);
+  assert.match(html, />Load 20 more</);
+  assert.equal((html.match(/class="catalog-result"/g) || []).length, 20);
+});
+
+test('catalog search makes exact ISBN handling and loading state visible', () => {
+  const ui = createReadingUiState();
+  ui.catalogOpen = true;
+  ui.catalogQuery = '978-0-262-04995-5';
+  ui.catalogQueryType = 'isbn';
+  ui.catalogPage = 1;
+  ui.catalogTotal = 2;
+  ui.catalogHasMore = true;
+  ui.loadingMore = true;
+  ui.catalogResults = [
+    { title: 'What Is Intelligence?', authors: ['Blaise Agüera y Arcas'], source: { provider: 'open_library', workId: 'OL1W' } },
+  ];
+
+  const html = renderReading(fixture(), ui);
+
+  assert.match(html, /aria-busy="true"/);
+  assert.match(html, /class="catalog-query-type">Exact ISBN</);
+  assert.match(html, /data-catalog-load-more type="button" aria-disabled="true">Loading…/);
+  assert.match(html, /data-catalog-result-index="0" tabindex="-1"/);
+});
+
+test('catalog search explains empty and completed result sets', () => {
+  const emptyUi = createReadingUiState();
+  emptyUi.catalogOpen = true;
+  emptyUi.catalogQuery = '978-0-262-04995-5';
+  emptyUi.catalogQueryType = 'isbn';
+  assert.match(renderReading(fixture(), emptyUi), /No exact ISBN match found/);
+
+  const completeUi = createReadingUiState();
+  completeUi.catalogOpen = true;
+  completeUi.catalogQuery = 'specific title';
+  completeUi.catalogPage = 1;
+  completeUi.catalogTotal = 1;
+  completeUi.catalogResults = [{ title: 'Specific Title', authors: [], source: { provider: 'open_library', workId: 'OL1W' } }];
+  const completeHtml = renderReading(fixture(), completeUi);
+  assert.match(completeHtml, /You have reached the end of these results/);
+  assert.doesNotMatch(completeHtml, /data-catalog-load-more/);
 });

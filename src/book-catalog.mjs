@@ -1,5 +1,7 @@
 const OPEN_LIBRARY_SEARCH_URL = 'https://openlibrary.org/search.json';
 const OPEN_LIBRARY_BASE_URL = 'https://openlibrary.org';
+const OPEN_LIBRARY_PAGE_SIZE = 20;
+const OPEN_LIBRARY_MAX_PAGE = 50;
 const OPEN_LIBRARY_FIELDS = [
   'key',
   'title',
@@ -18,14 +20,40 @@ const OPEN_LIBRARY_FIELDS = [
 export async function searchOpenLibrary(query, options = {}) {
   const cleanQuery = cleanText(query, 160);
   if (!cleanQuery) throw new Error('Enter a title, author, or ISBN.');
+  const page = Math.min(OPEN_LIBRARY_MAX_PAGE, Math.max(1, Math.trunc(Number(options.page)) || 1));
+  const limit = Math.min(OPEN_LIBRARY_PAGE_SIZE, Math.max(1, Math.trunc(Number(options.limit)) || OPEN_LIBRARY_PAGE_SIZE));
+  const searchQuery = openLibrarySearchQuery(cleanQuery);
   const url = new URL(OPEN_LIBRARY_SEARCH_URL);
-  url.searchParams.set('q', cleanQuery);
+  url.searchParams.set('q', searchQuery.query);
   url.searchParams.set('fields', OPEN_LIBRARY_FIELDS);
-  url.searchParams.set('limit', String(Math.min(20, Math.max(1, Number(options.limit) || 12))));
-  const body = await fetchOpenLibraryJson(url, options);
-  return (Array.isArray(body.docs) ? body.docs : [])
+  url.searchParams.set('limit', String(limit));
+  url.searchParams.set('page', String(page));
+  const body = await fetchOpenLibraryJson(url, { ...options, timeoutMs: options.timeoutMs || 20_000 });
+  const results = (Array.isArray(body.docs) ? body.docs : [])
     .map(normalizeOpenLibraryDocument)
     .filter(Boolean);
+  const reportedTotal = Number(body.numFound ?? body.num_found);
+  const total = Number.isFinite(reportedTotal) && reportedTotal >= 0
+    ? Math.trunc(reportedTotal)
+    : (page - 1) * limit + results.length;
+  return {
+    results,
+    page,
+    pageSize: limit,
+    total,
+    hasMore: page < OPEN_LIBRARY_MAX_PAGE && page * limit < total,
+    queryType: searchQuery.type,
+  };
+}
+
+export function openLibrarySearchQuery(query) {
+  const cleanQuery = cleanText(query, 160);
+  const candidate = cleanQuery
+    .replace(/^isbn(?:-1[03])?\s*:?\s*/i, '')
+    .replace(/[\s-]/g, '')
+    .toUpperCase();
+  if (isValidIsbn(candidate)) return { query: `isbn:${candidate}`, type: 'isbn' };
+  return { query: cleanQuery, type: 'text' };
 }
 
 export function normalizeOpenLibraryDocument(document) {
@@ -95,9 +123,9 @@ async function fetchOpenLibraryJson(url, options) {
   const response = await fetchImpl(String(url), {
     headers: {
       accept: 'application/json',
-      'user-agent': 'LifeOS/0.1 (local personal reading catalog)',
+      'user-agent': 'LifeOS/0.1 (https://github.com/adrianvalentim/LifeOS)',
     },
-    signal: options.signal || AbortSignal.timeout(10_000),
+    signal: options.signal || AbortSignal.timeout(Number(options.timeoutMs) || 10_000),
   });
   if (!response.ok) throw new Error(`Open Library request failed (${response.status}).`);
   return response.json();
@@ -114,4 +142,20 @@ function cleanText(value, maxLength) {
 function cleanList(value, maxItems, maxLength) {
   if (!Array.isArray(value)) return [];
   return value.map((item) => cleanText(item, maxLength)).filter(Boolean).slice(0, maxItems);
+}
+
+function isValidIsbn(value) {
+  if (/^\d{13}$/.test(value)) {
+    const sum = [...value.slice(0, 12)].reduce((total, digit, index) => (
+      total + Number(digit) * (index % 2 === 0 ? 1 : 3)
+    ), 0);
+    return (10 - (sum % 10)) % 10 === Number(value[12]);
+  }
+  if (/^\d{9}[\dX]$/.test(value)) {
+    const sum = [...value].reduce((total, digit, index) => (
+      total + (digit === 'X' ? 10 : Number(digit)) * (10 - index)
+    ), 0);
+    return sum % 11 === 0;
+  }
+  return false;
 }

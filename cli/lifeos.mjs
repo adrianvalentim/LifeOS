@@ -4,6 +4,7 @@ import {
   addProjectCategory,
   buildCategoryStats,
   buildState,
+  createTask,
   deleteProject,
   findProject,
   formatHours,
@@ -12,7 +13,10 @@ import {
   logTime,
   readStore,
   requireProject,
+  requireTask,
   setProjectStatus,
+  setTaskCompletion,
+  setTaskProject,
   startSession,
   stopSession,
 } from '../src/lifeos-data.mjs';
@@ -25,6 +29,8 @@ try {
     printHelp();
   } else if (command === 'projects') {
     await projectsCommand(args.slice(1));
+  } else if (command === 'tasks') {
+    await tasksCommand(args.slice(1));
   } else if (command === 'stats') {
     await statsCommand(args.slice(1));
   } else if (command === 'recommend') {
@@ -51,6 +57,11 @@ Usage:
   lifeos projects categorize --project "Portia" --category "Infinitamente"
   lifeos projects status --project "Vulcano" --status done
   lifeos projects delete --project "Infinitamente" --preserve-category "Infinitamente"
+  lifeos tasks [--project "Portia" | --inbox] [--json]
+  lifeos tasks add --title "Draft Act III" [--project "Portia"] [--parent "Outline film"] [--due YYYY-MM-DD]
+  lifeos tasks complete --task "Draft Act III"
+  lifeos tasks reopen --task "Draft Act III"
+  lifeos tasks assign --task "Draft Act III" --project "Portia"|inbox
   lifeos stats [--project "Portia" | --category "Infinitamente"] [--range week|month|quarter|year] [--json]
   lifeos recommend [--json]
   lifeos log --project "Portia" --duration 90 --type creative --desc "Act III draft"
@@ -63,6 +74,84 @@ Usage:
 Activity types:
   ${ACTIVITY_TYPES.join(', ')}
 `);
+}
+
+async function tasksCommand(flags) {
+  const action = flags[0]?.startsWith('--') || !flags[0] ? 'list' : flags[0];
+  const parsed = parseFlags(action === 'list' ? flags : flags.slice(1));
+
+  if (action === 'add') {
+    const title = String(parsed.title || parsed._.join(' ')).trim();
+    if (!title) throw new Error('tasks add requires --title.');
+    const store = await readStore();
+    const parent = parsed.parent ? requireTask(store, parsed.parent) : null;
+    const projectId = parsed.project
+      ? resolveTaskProject(store, parsed.project)
+      : parent?.projectId;
+    const result = await createTask({
+      title,
+      parentTaskId: parent?.id,
+      projectId,
+      dueDate: parsed.due,
+      startTime: parsed.start,
+      durationMinutes: parsed.duration,
+    });
+    const project = result.task.projectId
+      ? result.state.projects.find((candidate) => candidate.id === result.task.projectId)?.name
+      : 'Inbox';
+    console.log(`Added task: ${result.task.title} - ${project}${parent ? ` under ${parent.title}` : ''}.`);
+    return;
+  }
+
+  if (['complete', 'reopen', 'assign'].includes(action)) {
+    if (!parsed.task) throw new Error(`tasks ${action} requires --task.`);
+    const store = await readStore();
+    const task = requireTask(store, parsed.task);
+    if (action === 'assign') {
+      if (!parsed.project) throw new Error('tasks assign requires --project (use inbox for no project).');
+      const projectId = resolveTaskProject(store, parsed.project);
+      const result = await setTaskProject({ taskId: task.id, projectId });
+      const project = projectId
+        ? result.state.projects.find((candidate) => candidate.id === projectId)?.name
+        : 'Inbox';
+      console.log(`Assigned ${result.task.title} to ${project}.`);
+      return;
+    }
+    const result = await setTaskCompletion({ taskId: task.id, completed: action === 'complete' });
+    console.log(`${result.task.title} is ${result.task.status}.${result.affectedCount > 1 ? ` Updated ${result.affectedCount} tasks including subtasks.` : ''}`);
+    return;
+  }
+
+  if (action !== 'list') throw new Error(`Unknown tasks action: ${action}`);
+  const state = await getState();
+  const projectId = parsed.project ? resolveTaskProject(await readStore(), parsed.project) : null;
+  const items = state.tasks.items.filter((task) => {
+    if (parsed.inbox) return task.projectId == null;
+    if (parsed.project) return task.projectId === projectId;
+    return true;
+  });
+  if (parsed.json) {
+    console.log(JSON.stringify(items, null, 2));
+    return;
+  }
+  if (!items.length) {
+    console.log('No tasks in this scope.');
+    return;
+  }
+  for (const task of items) {
+    const mark = task.status === 'completed' ? '[x]' : '[ ]';
+    const indent = '  '.repeat(task.depth);
+    const project = task.projectId
+      ? state.projects.find((candidate) => candidate.id === task.projectId)?.name
+      : 'Inbox';
+    const due = task.schedule.dueDate ? ` due ${task.schedule.dueDate}` : '';
+    console.log(`${indent}${mark} ${task.title} - ${project}${due}`);
+  }
+}
+
+function resolveTaskProject(store, query) {
+  if (['inbox', 'none', 'general'].includes(String(query).trim().toLowerCase())) return null;
+  return requireProject(store, query).id;
 }
 
 async function storageCommand(flags) {
@@ -132,7 +221,10 @@ async function projectsCommand(flags) {
       const preserved = result.preservedEntryCount
         ? ` Preserved ${result.preservedEntryCount} time entries${result.preservedCategory ? ` under ${result.preservedCategory.label}` : ''}.`
         : '';
-      console.log(`Deleted project ${result.project.name}.${preserved}`);
+      const detachedTasks = result.detachedTaskCount
+        ? ` Moved ${result.detachedTaskCount} associated ${result.detachedTaskCount === 1 ? 'task' : 'tasks'} to Inbox.`
+        : '';
+      console.log(`Deleted project ${result.project.name}.${preserved}${detachedTasks}`);
       return;
     }
     throw new Error(`Unknown projects action: ${action}`);
@@ -268,7 +360,7 @@ function parseFlags(values) {
       continue;
     }
     const key = value.slice(2);
-    if (key === 'json' || key === 'health') {
+    if (key === 'json' || key === 'health' || key === 'inbox') {
       parsed[key] = true;
       continue;
     }

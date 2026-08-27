@@ -46,6 +46,18 @@ const readingBooks = [
   readingBook('moby-dick', 'Moby-Dick', ['Herman Melville'], '9780142437247', 'dropped', 1, 1851, ['classic', 'adventure'], 'A sailor joins Captain Ahab\'s obsessive hunt for a white whale.'),
 ];
 
+const tasks = [
+  task('portia-act-three', 'Finish the Act III draft', 'portia', null, 'open', 1, 2, 'Carry the midpoint decision into the final confrontation.\n\nCheck the observatory motif before the last pass.'),
+  task('portia-midpoint', 'Resolve the midpoint turn', 'portia', 'portia-act-three', 'completed', 1),
+  task('portia-confrontation', 'Write the confrontation scene', 'portia', 'portia-act-three', 'open', 2, 2),
+  task('vulcano-observatory', 'Lock the observatory sequence', 'vulcano', null, 'open', 2, 6),
+  task('vulcano-color-notes', 'Review the color notes', 'vulcano', 'vulcano-observatory', 'completed', 1),
+  task('vulcano-review-cut', 'Export the review cut', 'vulcano', 'vulcano-observatory', 'open', 2, 5),
+  task('substack-opening', 'Rewrite the essay opening', 'substack', null, 'open', 3, 3),
+  task('inbox-passport', 'Renew passport', null, null, 'open', 4, 18),
+  task('inbox-backups', 'Review local backup recovery notes', null, null, 'completed', 5),
+];
+
 const history = {
   portia: [4.1, 3.2, 2.8, 1.6, 1.0, 0.4, 0],
   substack: [2.5, 2.0, 1.5, 1.0, 0.8, 0.7, 1.2],
@@ -125,7 +137,7 @@ for (const [dayOffset, time, durationMinutes, projectId, activityType, descripti
 
 const store = {
   meta: {
-    schemaVersion: 6,
+    schemaVersion: 8,
     appName: 'LifeOS',
     tagline: 'A personal almanac',
     timezone: 'America/Sao_Paulo',
@@ -152,6 +164,7 @@ const store = {
     },
   },
   projects,
+  tasks: { items: tasks },
   reading: { books: readingBooks },
   timeEntries,
   activeSession: null,
@@ -235,6 +248,31 @@ function readingBook(id, title, authors, isbn13, status, sortOrder, publishedYea
   if (status === 'finished') book.finishedAt = statusChangedAt;
   if (status === 'dropped') book.droppedAt = statusChangedAt;
   return book;
+}
+
+function task(id, title, projectId, parentTaskId, status, sortOrder, dueOffset = null, notes = '') {
+  const createdAt = `${addDays(demoDate, -14 + sortOrder)}T12:00:00-03:00`;
+  const completedAt = status === 'completed'
+    ? `${addDays(demoDate, -2)}T12:00:00-03:00`
+    : null;
+  return {
+    id: `demo-task-${id}`,
+    title,
+    notes,
+    projectId,
+    parentTaskId: parentTaskId ? `demo-task-${parentTaskId}` : null,
+    status,
+    sortOrder,
+    schedule: {
+      dueDate: dueOffset == null ? null : addDays(demoDate, dueOffset),
+      startTime: null,
+      durationMinutes: null,
+      recurrence: null,
+    },
+    createdAt,
+    updatedAt: completedAt || createdAt,
+    completedAt,
+  };
 }
 
 function defaultActivity(domain) {

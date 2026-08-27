@@ -10,17 +10,23 @@ import { CODEX_VOICE_CAPABILITY, codexAppServer } from '../src/codex-app-server.
 import { DEFAULT_STORE_PATH, initializeDefaultStore } from '../src/lifeos-storage.mjs';
 import {
   addReadingBook,
+  createTask,
+  deleteProject,
   deleteReadingBook,
+  deleteTask,
   getState,
   logTime,
   readStore,
   reorderReadingBook,
   setProjectStatus,
   setReadingBookStatus,
+  setTaskCompletion,
+  setTaskProject,
   startSession,
   stopSession,
   updateReadingBookFinishedDate,
   updateReadingBookTags,
+  updateTask,
 } from '../src/lifeos-data.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -70,10 +76,51 @@ const server = createServer(async (req, res) => {
       requireString(body.status, 'status');
       return sendJson(res, await projectStateAction(() => setProjectStatus(body)));
     }
+    if (url.pathname === '/api/projects/delete' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.projectId, 'projectId');
+      return sendJson(res, await projectStateAction(() => deleteProject({
+        projectId: body.projectId,
+        preserveHistory: true,
+      })));
+    }
+    if (url.pathname === '/api/tasks/create' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.title, 'title');
+      if (body.projectId !== null && body.projectId !== undefined) requireString(body.projectId, 'projectId');
+      if (body.parentTaskId !== null && body.parentTaskId !== undefined) requireString(body.parentTaskId, 'parentTaskId');
+      return sendJson(res, await taskStateAction(() => createTask(body)));
+    }
+    if (url.pathname === '/api/tasks/update' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.taskId, 'taskId');
+      if (body.title !== undefined) requireString(body.title, 'title');
+      if (body.notes !== undefined && typeof body.notes !== 'string') throw new ClientError('notes must be a string.');
+      return sendJson(res, await taskStateAction(() => updateTask(body)));
+    }
+    if (url.pathname === '/api/tasks/delete' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.taskId, 'taskId');
+      return sendJson(res, await taskStateAction(() => deleteTask(body)));
+    }
+    if (url.pathname === '/api/tasks/completion' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.taskId, 'taskId');
+      if (typeof body.completed !== 'boolean') throw new ClientError('completed must be true or false.');
+      return sendJson(res, await taskStateAction(() => setTaskCompletion(body)));
+    }
+    if (url.pathname === '/api/tasks/project' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.taskId, 'taskId');
+      if (body.projectId !== null) requireString(body.projectId, 'projectId');
+      return sendJson(res, await taskStateAction(() => setTaskProject(body)));
+    }
     if (url.pathname === '/api/books/search' && req.method === 'GET') {
       const query = url.searchParams.get('q') || '';
       if (!query.trim()) throw new ClientError('Enter a title, author, or ISBN.');
-      return sendJson(res, { provider: 'open_library', results: await searchOpenLibrary(query) });
+      const page = Number(url.searchParams.get('page') || 1);
+      if (!Number.isInteger(page) || page < 1) throw new ClientError('Search page must be a positive integer.');
+      return sendJson(res, { provider: 'open_library', ...await searchOpenLibrary(query, { page }) });
     }
     const readingCoverMatch = url.pathname.match(/^\/api\/reading\/books\/([^/]+)\/cover$/);
     if (readingCoverMatch && req.method === 'GET') {
@@ -333,7 +380,20 @@ async function projectStateAction(action) {
   try {
     return (await action()).state;
   } catch (error) {
-    if (/Project not found|Unknown project status/.test(error.message)) throw new ClientError(error.message);
+    if (/Project not found|Unknown project status|used by the active challenge|still has time history/.test(error.message)) {
+      throw new ClientError(error.message);
+    }
+    throw error;
+  }
+}
+
+async function taskStateAction(action) {
+  try {
+    return (await action()).state;
+  } catch (error) {
+    if (/Task not found|Parent task not found|Project not found|task title|task notes|task update|task must|top-level task|Task completion|Task due date|Task start time|Task duration|Recurring tasks|start time requires/.test(error.message)) {
+      throw new ClientError(error.message);
+    }
     throw error;
   }
 }

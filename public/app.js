@@ -1,4 +1,9 @@
 import {
+  codexMessageWithContext,
+  createBookCodexContext,
+  createProjectCodexContext,
+} from './codex-context.js';
+import {
   createProjectsUiState,
   PROJECT_BOARD_STATUSES,
   projectsWithStatus,
@@ -12,8 +17,13 @@ import {
   readingWithBookStatus,
   renderReading,
 } from './reading.js';
+import {
+  createTasksUiState,
+  renderTaskOverlays,
+  renderTasks,
+} from './tasks.js';
 
-const VALID_TABS = ['today', 'projects', 'reading', 'analytics', 'almanac'];
+const VALID_TABS = ['today', 'tasks', 'projects', 'reading', 'analytics', 'almanac'];
 let state = null;
 let activeTab = 'projects';
 let activeRange = 'week';
@@ -24,8 +34,10 @@ let stateRefreshTimer = null;
 let eventSource = null;
 let projectPointerDrag = null;
 let readingPointerDrag = null;
+let readingCatalogRequestId = 0;
 const projectsUi = createProjectsUiState();
 const readingUi = createReadingUiState();
+const tasksUi = createTasksUiState();
 
 const codex = {
   connection: 'connecting',
@@ -36,6 +48,7 @@ const codex = {
   runningTurns: {},
   pendingRequests: [],
   draft: '',
+  context: null,
   sending: false,
   opening: false,
   error: null,
@@ -60,9 +73,11 @@ async function init() {
   activeRange = ['week', 'month', 'quarter', 'year'].includes(params.get('range')) ? params.get('range') : 'week';
   projectsUi.view = params.get('projectView') === 'kanban' ? 'kanban' : 'list';
   readingUi.view = params.get('view') === 'library' ? 'library' : 'kanban';
+  tasksUi.filter = parseTaskFilter(params.get('taskScope'));
   try {
     state = await fetchState(activeRange);
     activeTab = validTab(params.get('tab')) || validTab(state.meta.activeTab) || 'projects';
+    tasksUi.filter = validTaskFilter(tasksUi.filter);
     render();
     connectEventStream();
     void bootstrapCodex();
@@ -71,6 +86,29 @@ async function init() {
   }
 
   window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && tasksUi.deleteTaskId && !tasksUi.deletingTaskId) {
+      tasksUi.deleteTaskId = null;
+      tasksUi.deleteError = null;
+      render();
+      document.querySelector('[data-task-delete-request]')?.focus();
+      return;
+    }
+    if (event.key === 'Escape' && tasksUi.selectedTaskId && !tasksUi.updatingTaskId) {
+      void requestCloseTaskDetail();
+      return;
+    }
+    if (event.key === 'Escape' && projectsUi.deleteProjectId && !projectsUi.deletingProjectId) {
+      projectsUi.deleteProjectId = null;
+      projectsUi.deleteError = null;
+      render();
+      document.querySelector('[data-project-delete-request]')?.focus();
+      return;
+    }
+    if (event.key === 'Escape' && tasksUi.addingSubtaskToId) {
+      tasksUi.addingSubtaskToId = null;
+      render();
+      return;
+    }
     if (event.key === 'Escape' && projectsUi.selectedProjectId) {
       projectsUi.selectedProjectId = null;
       render();
@@ -98,7 +136,9 @@ async function init() {
     activeRange = ['week', 'month', 'quarter', 'year'].includes(next.get('range')) ? next.get('range') : 'week';
     projectsUi.view = next.get('projectView') === 'kanban' ? 'kanban' : 'list';
     readingUi.view = next.get('view') === 'library' ? 'library' : 'kanban';
+    tasksUi.filter = parseTaskFilter(next.get('taskScope'));
     state = await fetchState(activeRange);
+    tasksUi.filter = validTaskFilter(tasksUi.filter);
     render();
   });
 }
@@ -131,10 +171,12 @@ function render() {
       ${pageError ? `<div class="page-error"><span>${escapeHtml(pageError)}</span><button data-page-error-dismiss type="button">Dismiss</button></div>` : ''}
       ${renderPage()}
     </section>
+    ${renderTaskOverlays(state.tasks, state.projects, tasksUi, { today: state.meta.today })}
     ${renderChat()}
   `;
   bindPageEvents();
   bindChatEvents();
+  syncCodexContextTriggers();
   scrollChatToEnd();
   if (focusedProjectId) {
     [...document.querySelectorAll('[data-project-drag-id]')]
@@ -216,7 +258,53 @@ function bindPageEvents() {
     render();
   });
   bindProjectEvents();
+  bindTaskEvents();
   bindReadingEvents();
+  bindCodexContextTriggers();
+}
+
+function bindCodexContextTriggers() {
+  document.querySelectorAll('[data-codex-context-kind]').forEach((button) => {
+    button.addEventListener('pointerdown', (event) => event.stopPropagation());
+    button.addEventListener('keydown', (event) => event.stopPropagation());
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      attachCodexContext(button.dataset.codexContextKind, button.dataset.codexContextId);
+    });
+  });
+}
+
+function attachCodexContext(kind, id) {
+  if (kind === 'project') {
+    const project = state.projects.find((candidate) => candidate.id === id);
+    codex.context = createProjectCodexContext(project, state.domains[project?.domain]);
+  } else if (kind === 'book') {
+    const book = state.reading.books.find((candidate) => candidate.id === id);
+    codex.context = createBookCodexContext(book);
+  }
+  if (!codex.context) return;
+  projectsUi.selectedProjectId = null;
+  readingUi.selectedBookId = null;
+  if (codexRailCollapsed) {
+    codexRailCollapsed = false;
+    localStorage.setItem(RAIL_STORAGE_KEY, 'false');
+  }
+  render();
+  requestAnimationFrame(() => document.querySelector('.chat-input')?.focus());
+}
+
+function syncCodexContextTriggers() {
+  document.querySelectorAll('[data-codex-context-kind]').forEach((button) => {
+    const attached = button.dataset.codexContextKind === codex.context?.kind
+      && button.dataset.codexContextId === codex.context?.id;
+    button.classList.toggle('is-attached', attached);
+    button.setAttribute('aria-pressed', String(attached));
+    button.setAttribute('aria-label', attached
+      ? `${codex.context.label} is attached to Codex`
+      : `Attach this ${button.dataset.codexContextKind === 'book' ? 'book' : 'project'} to Codex`);
+    button.title = attached ? 'Attached to Codex' : 'Attach to Codex';
+  });
 }
 
 function writePreferenceCookie(name, value) {
@@ -260,6 +348,21 @@ function bindProjectEvents() {
     select.addEventListener('change', () => {
       void changeProjectStatus(select.dataset.projectStatusProject, select.value, { optimistic: true });
     });
+  });
+  document.querySelector('[data-project-delete-request]')?.addEventListener('click', (event) => {
+    projectsUi.deleteProjectId = event.currentTarget.dataset.projectDeleteRequest;
+    projectsUi.deleteError = null;
+    render();
+    document.querySelector('[data-project-delete-cancel]')?.focus();
+  });
+  document.querySelector('[data-project-delete-cancel]')?.addEventListener('click', () => {
+    projectsUi.deleteProjectId = null;
+    projectsUi.deleteError = null;
+    render();
+    document.querySelector('[data-project-delete-request]')?.focus();
+  });
+  document.querySelector('[data-project-delete-confirm]')?.addEventListener('click', (event) => {
+    void permanentlyDeleteProject(event.currentTarget.dataset.projectDeleteConfirm);
   });
   bindProjectDragAndDrop();
 }
@@ -422,12 +525,342 @@ async function changeProjectStatus(projectId, status, { optimistic = false, rest
   }
 }
 
+async function permanentlyDeleteProject(projectId) {
+  pageError = null;
+  projectsUi.deletingProjectId = projectId;
+  projectsUi.deleteError = null;
+  render();
+  try {
+    state = await apiJson('/api/projects/delete', jsonRequest({ projectId }));
+    if (codex.context?.kind === 'project' && codex.context.id === projectId) codex.context = null;
+    projectsUi.selectedProjectId = null;
+    projectsUi.deleteProjectId = null;
+    projectsUi.deletingProjectId = null;
+    render();
+    requestAnimationFrame(() => document.querySelector(`[data-project-view="${projectsUi.view}"]`)?.focus());
+  } catch (error) {
+    projectsUi.deletingProjectId = null;
+    projectsUi.deleteError = error.message;
+    render();
+    requestAnimationFrame(() => document.querySelector('[data-project-delete-cancel]')?.focus());
+  }
+}
+
 function renderProjectMove(projectId, restoreFocus) {
   render();
   if (!restoreFocus) return;
   [...document.querySelectorAll('[data-project-drag-id]')]
     .find((card) => card.dataset.projectDragId === projectId)
     ?.focus();
+}
+
+function bindTaskEvents() {
+  if (!['tasks', 'projects'].includes(activeTab)) return;
+
+  document.querySelectorAll('[data-task-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      tasksUi.filter = validTaskFilter(button.dataset.taskFilter);
+      tasksUi.addingSubtaskToId = null;
+      updateLocation();
+      render();
+    });
+  });
+  document.querySelectorAll('[data-task-detail-button]').forEach((button) => {
+    button.addEventListener('click', () => openTaskDetail(button.dataset.taskDetailButton));
+  });
+  document.querySelectorAll('.task-item[data-task-detail]').forEach((item) => {
+    item.addEventListener('click', (event) => {
+      if (event.target.closest('button, input, select, textarea, label, a, form')) return;
+      openTaskDetail(item.dataset.taskDetail);
+    });
+  });
+  document.querySelectorAll('[data-task-create]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void createTaskFromForm(form);
+    });
+  });
+  document.querySelectorAll('[data-project-task-create]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void createTaskFromForm(form, { projectId: form.dataset.projectTaskCreate });
+    });
+  });
+  document.querySelectorAll('[data-task-subtask-create]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void createTaskFromForm(form, { parentTaskId: form.dataset.taskSubtaskCreate });
+    });
+  });
+  document.querySelectorAll('[data-task-completion]').forEach((input) => {
+    input.addEventListener('change', () => {
+      void changeTaskCompletion(input.dataset.taskCompletion, input.checked, input);
+    });
+  });
+  document.querySelectorAll('[data-task-project]').forEach((select) => {
+    select.addEventListener('change', () => {
+      void changeTaskProject(select.dataset.taskProject, select.value || null, select);
+    });
+  });
+  document.querySelectorAll('[data-task-subtask-open]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const taskId = button.dataset.taskSubtaskOpen;
+      tasksUi.addingSubtaskToId = tasksUi.addingSubtaskToId === taskId ? null : taskId;
+      render();
+      if (tasksUi.addingSubtaskToId) {
+        findTaskControl('[data-task-subtask-create]', taskId)?.querySelector('input[name="title"]')?.focus();
+      }
+    });
+  });
+  document.querySelectorAll('[data-task-subtask-cancel]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const taskId = tasksUi.addingSubtaskToId;
+      tasksUi.addingSubtaskToId = null;
+      render();
+      findTaskControl('[data-task-subtask-open]', taskId)?.focus();
+    });
+  });
+  document.querySelectorAll('[data-task-manage-project]').forEach((button) => {
+    button.addEventListener('click', () => {
+      tasksUi.filter = `project:${button.dataset.taskManageProject}`;
+      tasksUi.addingSubtaskToId = null;
+      projectsUi.selectedProjectId = null;
+      activeTab = 'tasks';
+      updateLocation();
+      render();
+      document.querySelector('[data-task-create] input[name="title"]')?.focus();
+    });
+  });
+  document.querySelectorAll('[data-task-detail-close]').forEach((control) => {
+    control.addEventListener('click', (event) => {
+      if (control.classList.contains('task-detail-backdrop') && event.target !== control) return;
+      void requestCloseTaskDetail();
+    });
+  });
+  document.querySelector('[data-task-update]')?.addEventListener('input', (event) => {
+    syncTaskDetailDraft(event.currentTarget);
+  });
+  document.querySelector('[data-task-update]')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    syncTaskDetailDraft(event.currentTarget);
+    void saveTaskDetails(event.currentTarget.dataset.taskUpdate);
+  });
+  document.querySelector('[data-task-update]')?.addEventListener('keydown', (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault();
+      event.currentTarget.requestSubmit();
+    }
+  });
+  document.querySelector('[data-task-delete-request]')?.addEventListener('click', (event) => {
+    tasksUi.deleteTaskId = event.currentTarget.dataset.taskDeleteRequest;
+    tasksUi.deleteError = null;
+    render();
+    document.querySelector('[data-task-delete-cancel]')?.focus();
+  });
+  document.querySelector('[data-task-delete-cancel]')?.addEventListener('click', () => {
+    tasksUi.deleteTaskId = null;
+    tasksUi.deleteError = null;
+    render();
+    document.querySelector('[data-task-delete-request]')?.focus();
+  });
+  document.querySelector('[data-task-delete-confirm]')?.addEventListener('click', (event) => {
+    void permanentlyDeleteTask(event.currentTarget.dataset.taskDeleteConfirm);
+  });
+}
+
+function openTaskDetail(taskId) {
+  const task = state.tasks.items.find((candidate) => candidate.id === taskId);
+  if (!task) return;
+  tasksUi.selectedTaskId = task.id;
+  tasksUi.detailDraft = { title: task.title, notes: task.notes || '' };
+  tasksUi.detailError = null;
+  tasksUi.deleteTaskId = null;
+  tasksUi.deleteError = null;
+  render();
+  document.querySelector('#task-detail-notes')?.focus();
+}
+
+function syncTaskDetailDraft(form) {
+  if (!form || form.dataset.taskUpdate !== tasksUi.selectedTaskId) return;
+  const values = new FormData(form);
+  tasksUi.detailDraft = {
+    title: String(values.get('title') || ''),
+    notes: String(values.get('notes') || ''),
+  };
+  const task = state.tasks.items.find((candidate) => candidate.id === tasksUi.selectedTaskId);
+  const dirty = Boolean(task) && (
+    tasksUi.detailDraft.title !== task.title
+    || tasksUi.detailDraft.notes !== (task.notes || '')
+  );
+  const submit = form.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = !dirty;
+  const status = form.querySelector('[data-task-save-state]');
+  if (status) status.textContent = dirty ? 'Unsaved changes' : 'Saved';
+}
+
+async function saveTaskDetails(taskId, { closeAfter = false } = {}) {
+  if (tasksUi.updatingTaskId) return false;
+  const task = state.tasks.items.find((candidate) => candidate.id === taskId);
+  const draft = tasksUi.detailDraft;
+  if (!task || !draft) return false;
+  const dirty = draft.title !== task.title || draft.notes !== (task.notes || '');
+  if (!dirty) {
+    if (closeAfter) closeTaskDetail(taskId);
+    return true;
+  }
+  tasksUi.updatingTaskId = taskId;
+  tasksUi.detailError = null;
+  render();
+  try {
+    state = await apiJson('/api/tasks/update', jsonRequest({
+      taskId,
+      title: draft.title,
+      notes: draft.notes,
+    }));
+    tasksUi.updatingTaskId = null;
+    const saved = state.tasks.items.find((candidate) => candidate.id === taskId);
+    tasksUi.detailDraft = saved ? { title: saved.title, notes: saved.notes || '' } : null;
+    if (closeAfter) closeTaskDetail(taskId);
+    else {
+      render();
+      document.querySelector('[data-task-update] button[type="submit"]')?.focus();
+    }
+    return true;
+  } catch (error) {
+    tasksUi.updatingTaskId = null;
+    tasksUi.detailError = error.message;
+    render();
+    document.querySelector('#task-detail-title')?.focus();
+    return false;
+  }
+}
+
+async function requestCloseTaskDetail() {
+  const taskId = tasksUi.selectedTaskId;
+  if (!taskId || tasksUi.updatingTaskId || tasksUi.deletingTaskId) return;
+  const task = state.tasks.items.find((candidate) => candidate.id === taskId);
+  const draft = tasksUi.detailDraft;
+  const dirty = Boolean(task && draft) && (
+    draft.title !== task.title
+    || draft.notes !== (task.notes || '')
+  );
+  if (dirty) {
+    await saveTaskDetails(taskId, { closeAfter: true });
+    return;
+  }
+  closeTaskDetail(taskId);
+}
+
+function closeTaskDetail(taskId) {
+  tasksUi.selectedTaskId = null;
+  tasksUi.detailDraft = null;
+  tasksUi.detailError = null;
+  tasksUi.deleteTaskId = null;
+  tasksUi.deleteError = null;
+  render();
+  document.querySelector(`[data-task-detail-button="${CSS.escape(taskId)}"]`)?.focus();
+}
+
+async function permanentlyDeleteTask(taskId) {
+  if (tasksUi.deletingTaskId) return;
+  tasksUi.deletingTaskId = taskId;
+  tasksUi.deleteError = null;
+  render();
+  try {
+    state = await apiJson('/api/tasks/delete', jsonRequest({ taskId }));
+    tasksUi.selectedTaskId = null;
+    tasksUi.detailDraft = null;
+    tasksUi.detailError = null;
+    tasksUi.deleteTaskId = null;
+    tasksUi.deletingTaskId = null;
+    tasksUi.deleteError = null;
+    render();
+    document.querySelector('[data-task-create] input[name="title"], [data-project-task-create] input[name="title"]')?.focus();
+  } catch (error) {
+    tasksUi.deletingTaskId = null;
+    tasksUi.deleteError = error.message;
+    render();
+    document.querySelector('[data-task-delete-cancel]')?.focus();
+  }
+}
+
+async function createTaskFromForm(form, fixed = {}) {
+  if (tasksUi.creating) return;
+  const values = new FormData(form);
+  const title = String(values.get('title') || '').trim();
+  if (!title) return;
+  const projectId = fixed.projectId !== undefined
+    ? fixed.projectId
+    : values.has('projectId') ? String(values.get('projectId') || '') || null : undefined;
+  const dueDate = String(values.get('dueDate') || '') || null;
+  pageError = null;
+  tasksUi.creating = true;
+  form.querySelectorAll('input, select, button').forEach((control) => { control.disabled = true; });
+  try {
+    state = await apiJson('/api/tasks/create', jsonRequest({
+      title,
+      projectId,
+      parentTaskId: fixed.parentTaskId,
+      dueDate,
+    }));
+    tasksUi.addingSubtaskToId = null;
+    tasksUi.creating = false;
+    render();
+    document.querySelector('[data-task-create] input[name="title"]')?.focus();
+  } catch (error) {
+    pageError = error.message;
+    tasksUi.creating = false;
+    render();
+  }
+}
+
+async function changeTaskCompletion(taskId, completed, control) {
+  if (tasksUi.savingTaskId) return;
+  pageError = null;
+  tasksUi.savingTaskId = taskId;
+  markTaskControlSaving(control);
+  try {
+    state = await apiJson('/api/tasks/completion', jsonRequest({ taskId, completed }));
+  } catch (error) {
+    pageError = error.message;
+  } finally {
+    tasksUi.savingTaskId = null;
+    render();
+    findTaskControl('[data-task-completion]', taskId)?.focus();
+  }
+}
+
+async function changeTaskProject(taskId, projectId, control) {
+  if (tasksUi.savingTaskId) return;
+  pageError = null;
+  tasksUi.savingTaskId = taskId;
+  markTaskControlSaving(control);
+  try {
+    state = await apiJson('/api/tasks/project', jsonRequest({ taskId, projectId }));
+  } catch (error) {
+    pageError = error.message;
+  } finally {
+    tasksUi.savingTaskId = null;
+    render();
+    findTaskControl('[data-task-project]', taskId)?.focus();
+  }
+}
+
+function markTaskControlSaving(control) {
+  if (!control) return;
+  control.disabled = true;
+  const item = control.closest('.task-item');
+  item?.classList.add('is-saving');
+  item?.setAttribute('aria-busy', 'true');
+}
+
+function findTaskControl(selector, taskId) {
+  return [...document.querySelectorAll(selector)].find((control) => (
+    control.dataset.taskCompletion === taskId
+    || control.dataset.taskProject === taskId
+    || control.dataset.taskSubtaskOpen === taskId
+    || control.dataset.taskSubtaskCreate === taskId
+  ));
 }
 
 function bindReadingEvents() {
@@ -451,6 +884,9 @@ function bindReadingEvents() {
     event.preventDefault();
     const query = String(new FormData(event.currentTarget).get('query') || '').trim();
     void searchReadingCatalog(query);
+  });
+  document.querySelector('[data-catalog-load-more]')?.addEventListener('click', () => {
+    void searchReadingCatalog(readingUi.catalogQuery, { append: true });
   });
   document.querySelectorAll('[data-catalog-add-index]').forEach((button) => {
     button.addEventListener('click', () => void addCatalogBook(Number(button.dataset.catalogAddIndex), button));
@@ -543,25 +979,69 @@ function bindReadingEvents() {
   bindReadingDragAndDrop();
 }
 
-async function searchReadingCatalog(query) {
-  readingUi.catalogQuery = query;
-  readingUi.catalogError = null;
-  readingUi.catalogResults = [];
+async function searchReadingCatalog(query, { append = false } = {}) {
+  if (readingUi.searching || readingUi.loadingMore) return;
+  const previousCount = append ? readingUi.catalogResults.length : 0;
+  const page = append ? readingUi.catalogPage + 1 : 1;
+  if (!append) {
+    readingUi.catalogQuery = query;
+    readingUi.catalogError = null;
+    readingUi.catalogLoadError = null;
+    readingUi.catalogResults = [];
+    readingUi.catalogPage = 0;
+    readingUi.catalogTotal = 0;
+    readingUi.catalogHasMore = false;
+    readingUi.catalogQueryType = 'text';
+  } else {
+    readingUi.catalogLoadError = null;
+  }
   if (!query) {
     readingUi.catalogError = 'Enter a title, author, or ISBN.';
     render();
     return;
   }
-  readingUi.searching = true;
+  const requestId = ++readingCatalogRequestId;
+  if (append) readingUi.loadingMore = true;
+  else readingUi.searching = true;
   render();
+  if (append) requestAnimationFrame(() => document.querySelector('[data-catalog-load-more]')?.focus());
   try {
-    const body = await apiJson(`/api/books/search?q=${encodeURIComponent(query)}`);
-    readingUi.catalogResults = body.results || [];
+    const body = await apiJson(`/api/books/search?q=${encodeURIComponent(query)}&page=${page}`);
+    if (requestId !== readingCatalogRequestId) return;
+    const incoming = Array.isArray(body.results) ? body.results : [];
+    if (append) {
+      const workIds = new Set(readingUi.catalogResults.map((book) => book.source?.workId).filter(Boolean));
+      for (const book of incoming) {
+        const workId = book.source?.workId;
+        if (workId && workIds.has(workId)) continue;
+        readingUi.catalogResults.push(book);
+        if (workId) workIds.add(workId);
+      }
+    } else {
+      readingUi.catalogResults = incoming;
+    }
+    readingUi.catalogPage = Number(body.page) || page;
+    readingUi.catalogPageSize = Number(body.pageSize) || 20;
+    readingUi.catalogTotal = Number(body.total) || 0;
+    readingUi.catalogHasMore = Boolean(body.hasMore);
+    readingUi.catalogQueryType = body.queryType === 'isbn' ? 'isbn' : 'text';
   } catch (error) {
-    readingUi.catalogError = error.message;
+    if (requestId !== readingCatalogRequestId) return;
+    if (append) readingUi.catalogLoadError = `Could not load more results. ${error.message}`;
+    else readingUi.catalogError = error.message;
   } finally {
+    if (requestId !== readingCatalogRequestId) return;
     readingUi.searching = false;
+    readingUi.loadingMore = false;
     render();
+    if (append) {
+      requestAnimationFrame(() => {
+        const target = readingUi.catalogLoadError
+          ? document.querySelector('[data-catalog-load-more]')
+          : document.querySelector(`[data-catalog-result-index="${previousCount}"]`) || document.querySelector('[data-catalog-results-summary]');
+        target?.focus();
+      });
+    }
   }
 }
 
@@ -899,6 +1379,7 @@ function updateLocation() {
   if (activeRange !== 'week') params.set('range', activeRange);
   if (activeTab === 'projects' && projectsUi.view !== 'list') params.set('projectView', projectsUi.view);
   if (activeTab === 'reading' && readingUi.view !== 'kanban') params.set('view', readingUi.view);
+  if (activeTab === 'tasks' && tasksUi.filter !== 'all') params.set('taskScope', tasksUi.filter);
   const query = params.toString();
   history.pushState(null, '', query ? `?${query}` : location.pathname);
 }
@@ -928,6 +1409,7 @@ function renderMasthead() {
 function renderTabs() {
   const tabs = [
     ['today', 'Today'],
+    ['tasks', 'Tasks'],
     ['projects', 'Projects'],
     ['analytics', 'Analytics'],
     ['almanac', 'Almanac'],
@@ -935,6 +1417,7 @@ function renderTabs() {
   ];
   const meta = {
     today: state.activeSession ? 'A focused session is running' : 'What now and what has happened',
+    tasks: `${titleNumber(state.tasks.summary.open)} open - ${titleNumber(state.tasks.summary.completed)} complete`,
     projects: `${titleNumber(state.summary.activeCount)} active - ${titleNumber(state.summary.criticalCount)} critical`,
     analytics: 'Where the hours actually went',
     almanac: 'A record of what got done',
@@ -952,13 +1435,20 @@ function renderTabs() {
 
 function renderPage() {
   if (activeTab === 'today') return renderToday();
+  if (activeTab === 'tasks') return renderTasks(state.tasks, state.projects, state.domains, tasksUi, {
+    today: state.meta.today,
+  });
   if (activeTab === 'reading') return renderReading(state.reading, readingUi, {
     today: state.meta.today,
     timeZone: state.meta.timezone,
   });
   if (activeTab === 'analytics') return renderAnalytics();
   if (activeTab === 'almanac') return renderAlmanac();
-  return renderProjectsWorkspace(state.projects, state.domains, projectsUi);
+  return renderProjectsWorkspace(state.projects, state.domains, projectsUi, {
+    tasks: state.tasks,
+    tasksUi,
+    today: state.meta.today,
+  });
 }
 
 function renderToday() {
@@ -1222,6 +1712,7 @@ function renderChat() {
             <button class="voice-button" type="button" disabled title="${escapeAttribute(codex.voice.reason)}">Voice unavailable</button>
             <span class="voice-status">${escapeHtml(codex.voice.reason)}</span>
           </div>
+          ${codex.context ? renderCodexContextAttachment(codex.context) : ''}
           <div class="chat-field">
             <span class="chat-caret">›</span>
             <textarea class="chat-input" name="message" rows="1" placeholder="Ask Codex to log, analyze, or change LifeOS…" ${!subscriptionReady || busy || codex.sending ? 'disabled' : ''}>${escapeHtml(codex.draft)}</textarea>
@@ -1231,6 +1722,20 @@ function renderChat() {
         </form>
       </div>
     </aside>
+  `;
+}
+
+function renderCodexContextAttachment(context) {
+  return `
+    <section class="codex-context-attachment" aria-label="Attached LifeOS context">
+      <span class="codex-context-attachment-icon" aria-hidden="true">›</span>
+      <span class="codex-context-attachment-copy">
+        <small>${context.kind === 'book' ? 'Reading book' : 'Project'}</small>
+        <b>${escapeHtml(context.label)}</b>
+        ${context.meta ? `<span>${escapeHtml(context.meta)}</span>` : ''}
+      </span>
+      <button data-codex-context-remove type="button" aria-label="Remove ${escapeAttribute(context.label)} from Codex context" title="Remove context">×</button>
+    </section>
   `;
 }
 
@@ -1323,6 +1828,12 @@ function bindChatEvents() {
   document.querySelector('[data-codex-error-dismiss]')?.addEventListener('click', () => {
     codex.error = null;
     renderChatRegion();
+  });
+  document.querySelector('[data-codex-context-remove]')?.addEventListener('click', () => {
+    codex.context = null;
+    renderChatRegion();
+    syncCodexContextTriggers();
+    requestAnimationFrame(() => document.querySelector('.chat-input')?.focus());
   });
   document.querySelectorAll('[data-request-decision]').forEach((button) => {
     button.addEventListener('click', () => void resolveApproval(Number(button.dataset.requestIndex), button.dataset.requestDecision));
@@ -1435,13 +1946,17 @@ async function newCodexThread() {
 }
 
 async function sendCodexMessage(explicitText = null) {
-  const text = String(explicitText ?? codex.draft).trim();
+  const draftText = String(explicitText ?? codex.draft).trim();
+  const text = codexMessageWithContext(codex.context, draftText);
   if (!text || codex.sending) return;
   codex.sending = true;
   codex.error = null;
   const previousDraft = codex.draft;
+  const previousContext = codex.context;
   codex.draft = '';
+  codex.context = null;
   renderChatRegion();
+  syncCodexContextTriggers();
   try {
     const thread = codex.activeThread || await newCodexThread();
     if (!thread) throw new Error('Could not start a Codex task.');
@@ -1450,10 +1965,12 @@ async function sendCodexMessage(explicitText = null) {
     codex.runningTurns[thread.id] = body.turn.id;
   } catch (error) {
     codex.error = error.message;
-    codex.draft = previousDraft || text;
+    codex.draft = previousDraft || draftText;
+    codex.context = previousContext;
   } finally {
     codex.sending = false;
     renderChatRegion();
+    syncCodexContextTriggers();
   }
 }
 
@@ -1688,6 +2205,19 @@ function titleNumber(value) {
 
 function validTab(value) {
   return VALID_TABS.includes(value) ? value : null;
+}
+
+function parseTaskFilter(value) {
+  if (value === 'inbox' || String(value || '').startsWith('project:')) return String(value);
+  return 'all';
+}
+
+function validTaskFilter(value) {
+  if (value === 'inbox') return value;
+  if (String(value || '').startsWith('project:') && state?.projects.some((project) => project.id === value.slice(8))) {
+    return value;
+  }
+  return 'all';
 }
 
 function heatmapColor(value) {

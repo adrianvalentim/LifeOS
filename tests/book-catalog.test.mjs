@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { enrichOpenLibraryBook, normalizeOpenLibraryDocument, searchOpenLibrary } from '../src/book-catalog.mjs';
+import {
+  enrichOpenLibraryBook,
+  normalizeOpenLibraryDocument,
+  openLibrarySearchQuery,
+  searchOpenLibrary,
+} from '../src/book-catalog.mjs';
 
 test('Open Library search results normalize to the local Reading shape', () => {
   const book = normalizeOpenLibraryDocument({
@@ -27,17 +32,54 @@ test('Open Library search results normalize to the local Reading shape', () => {
 
 test('Open Library search requests a bounded result set and maps documents', async () => {
   let requestedUrl;
-  const results = await searchOpenLibrary('book title', {
+  const page = await searchOpenLibrary('book title', {
     fetchImpl: async (url) => {
       requestedUrl = new URL(url);
-      return { ok: true, json: async () => ({ docs: [{ key: '/works/OL1W', title: 'Book title' }] }) };
+      return { ok: true, json: async () => ({ numFound: 45, docs: [{ key: '/works/OL1W', title: 'Book title' }] }) };
     },
   });
 
   assert.equal(requestedUrl.origin, 'https://openlibrary.org');
   assert.equal(requestedUrl.searchParams.get('q'), 'book title');
-  assert.equal(requestedUrl.searchParams.get('limit'), '12');
-  assert.equal(results[0].title, 'Book title');
+  assert.equal(requestedUrl.searchParams.get('limit'), '20');
+  assert.equal(requestedUrl.searchParams.get('page'), '1');
+  assert.equal(page.results[0].title, 'Book title');
+  assert.equal(page.total, 45);
+  assert.equal(page.hasMore, true);
+  assert.equal(page.queryType, 'text');
+});
+
+test('Open Library pagination stays bounded and reports when no more pages remain', async () => {
+  let requestedUrl;
+  const page = await searchOpenLibrary('book title', {
+    page: 3,
+    fetchImpl: async (url) => {
+      requestedUrl = new URL(url);
+      return { ok: true, json: async () => ({ num_found: 45, docs: [{ key: '/works/OL45W', title: 'Last book' }] }) };
+    },
+  });
+
+  assert.equal(requestedUrl.searchParams.get('limit'), '20');
+  assert.equal(requestedUrl.searchParams.get('page'), '3');
+  assert.equal(page.page, 3);
+  assert.equal(page.pageSize, 20);
+  assert.equal(page.total, 45);
+  assert.equal(page.hasMore, false);
+});
+
+test('valid ISBN input becomes an exact Open Library query', async () => {
+  assert.deepEqual(openLibrarySearchQuery('978-0-262-04995-5'), {
+    query: 'isbn:9780262049955',
+    type: 'isbn',
+  });
+  assert.deepEqual(openLibrarySearchQuery('ISBN 0-262-04995-3'), {
+    query: 'isbn:0262049953',
+    type: 'isbn',
+  });
+  assert.deepEqual(openLibrarySearchQuery('978-0-262-04995-4'), {
+    query: '978-0-262-04995-4',
+    type: 'text',
+  });
 });
 
 test('Open Library work details enrich description without making import fragile', async () => {

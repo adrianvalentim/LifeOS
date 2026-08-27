@@ -1,12 +1,13 @@
 # LifeOS
 
-LifeOS is a local-first personal almanac for coordinating projects, focused
-work, and reading. It is built to answer four practical questions:
+LifeOS is a local-first personal almanac for coordinating projects, tasks,
+focused work, and reading. It is built to answer five practical questions:
 
 1. Where is my time going?
 2. What is the state of my projects?
 3. What should I do next?
-4. What am I reading now and next?
+4. What concrete commitments are open, and how do they break down?
+5. What am I reading now and next?
 
 It combines an editorial dashboard, a portable JSON store, a concise CLI, and a
 Codex rail connected to the Codex installation and ChatGPT account already on
@@ -32,11 +33,17 @@ the computer.
 ## Current capabilities
 
 - Projects list and focused Kanban with five persistent workflow states,
-  reusable categories, deadlines, progress, health, streaks, and weekly effort.
+  reusable categories, deadlines, progress, health, streaks, weekly effort, and
+  confirmed deletion that preserves historical analytics.
+- First-class Tasks workspace with Inbox/project scopes, project assignment,
+  nested subtasks, completion progress, optional due dates, click-through details
+  with editable notes/title and confirmed subtree deletion, and task controls in
+  project details.
 - Today view with recommendations and a real start/stop timer.
 - Week, month, quarter, and year analytics derived from recorded work.
-- Reading Kanban and full library with tags, queue ordering, date read, Open
-  Library import, local cover caching, and confirmed deletion.
+- Reading Kanban and full library with tags, queue ordering, date read,
+  paginated Open Library search with exact ISBN lookup, local cover caching,
+  and confirmed deletion.
 - Workspace-scoped Codex tasks with streaming output, interruption, approvals,
   and user questions.
 - Source-backed macOS Tauri development app plus browser mode.
@@ -82,6 +89,9 @@ Useful CLI commands:
 
 ```bash
 npm run lifeos -- projects --health
+npm run lifeos -- tasks --project "Portia"
+npm run lifeos -- tasks add --title "Draft Act III" --project "Portia" --due 2026-09-01
+npm run lifeos -- tasks complete --task "Draft Act III"
 npm run lifeos -- stats --range month
 npm run lifeos -- recommend
 npm run lifeos -- log --project "Vulcano" --duration 90 --type creative --desc "Edited sequence"
