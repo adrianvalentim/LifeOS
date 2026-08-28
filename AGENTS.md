@@ -52,7 +52,7 @@ Use `--json` on read commands when structured output helps. Do not inspect the b
 - Preserve the user's original language in `rawInput`.
 - Never silently map an unknown explicit project to general work; ask or report the match error.
 - Visible statistics must be derived from source entries. Do not add display-only totals or hardcode dashboard numbers.
-- Project statuses are `to_do`, `next_up`, `doing`, `done`, or `dropped`; the Projects Kanban intentionally shows only `next_up`, `doing`, and `done`, while the list and project detail keep all five reachable.
+- Project statuses are `to_do`, `next_up`, `doing`, `paused`, `done`, or `dropped`; the Projects Kanban intentionally shows only `next_up`, `doing`, and `done`, while the grouped, filterable list and project detail keep all six reachable. Paused work is excluded from active summaries and recommendations without becoming archived or dropped.
 - Project categories are reusable many-to-many labels referenced by stable category IDs. Category analytics includes current project membership plus category-only history preserved when a project is deleted.
 - Tasks live in one `tasks.items[]` collection. A task can be in Inbox or reference one project; subtasks inherit the project of their parent. Completing a parent completes its descendants, while adding a subtask reopens completed ancestors. Task notes are multiline text stored on the task. Deleting a task removes its subtree, while deleting a project moves its task tree to Inbox rather than deleting it.
 - Task priority is exactly `none`, `low`, `medium`, or `high`. Task tags are free-form labels normalized and deduplicated case-insensitively, at most 12 per task, following the reading-tag rules.

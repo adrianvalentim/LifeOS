@@ -45,7 +45,7 @@ sidecar packaging, notarized distribution, and updates remain deferred.
 
 | Area | State | What is true now |
 | --- | --- | --- |
-| Project dashboard | Implemented | Clickable two-column list plus a three-column drag Kanban, reusable category labels, five persistent workflow statuses, confirmed history-preserving deletion, computed health, last touch, weekly hours, deadline, progress, and streak |
+| Project dashboard | Implemented | Status-grouped and filterable portfolio list plus a focused three-column drag Kanban, reusable category labels, six persistent workflow statuses, confirmed history-preserving deletion, computed health, last touch, weekly hours, deadline, progress, and streak |
 | Tasks | Focused first release implemented | First-class All/Inbox/project scopes, optional project association, nested subtasks, optional due dates, completion cascade, derived subtree/project progress, click-through details with editable notes/title and confirmed subtree deletion, project-detail creation and controls, and CLI operations |
 | Today | Implemented foundation | Computed daily entries and total, recommendation selection, real start/stop timer |
 | Analytics | Implemented foundation | Week/month/quarter/year totals, domain allocation, rhythm heatmap, trends, composition, production/consumption, deep-work counts |
@@ -251,8 +251,8 @@ coalesced. The shell does not bundle Node or copy the browser application.
 
 ## 7. Persisted data model
 
-The active store is a single JSON object. `schemaVersion` is currently 8, with
-explicit compatibility migrations from versions 2, 3, 4, 5, 6, and 7; there is no
+The active store is a single JSON object. `schemaVersion` is currently 9, with
+explicit compatibility migrations from versions 2 through 8; there is no
 general migration framework yet.
 
 ### `meta`
@@ -311,8 +311,9 @@ Required by the current validator:
 Fields used by the current application:
 
 - `subtitle` and `note`;
-- `status`, one of `to_do`, `next_up`, `doing`, `done`, or `dropped`; the first
-  three count toward active/critical summaries and recommendations;
+- `status`, one of `to_do`, `next_up`, `doing`, `paused`, `done`, or `dropped`;
+  the first three count toward active/critical summaries and recommendations.
+  `paused` means intentionally on hold and is not an archive or a dropped project;
 - numeric `priority`;
 - `plannedHours` for the current week;
 - `deadline` as `YYYY-MM-DD` or `null`;
@@ -490,13 +491,14 @@ files edited by hand, or project progress bounds.
 
 Reads migrate schema version 2 stores in memory by adding an empty Reading
 collection, migrate version 3 books by adding empty tag arrays, migrate legacy
-project statuses into the five-state workflow, migrate version 5 by adding the
+project statuses into the original five-state workflow, migrate version 5 by adding the
 category registry and category reference arrays, migrate version 6 by adding
 `tasks: { items: [] }`, migrate version 7 tasks by adding empty note strings,
-and migrate version 8 tasks by adding `priority: 'none'` and empty tag arrays
-before advancing to version 9. Existing user data therefore gains the task
-collection, notes, priority, and tags without rewriting projects or reading
-records. The migrated
+and migrate version 8 tasks by adding `priority: 'none'` and empty tag arrays.
+Schema version 9 safely expands the accepted project workflow with `paused`
+without rewriting any existing status. Existing user data therefore gains the
+task collection, notes, priority, and tags without rewriting projects or
+reading records. The migrated
 shape is persisted on the next supported write. Any
 further schema evolution must likewise add
 validation and migration/compatibility behavior; incrementing `schemaVersion`
@@ -675,7 +677,7 @@ the entire result, and retain an out-of-repository backup first.
 | `POST /api/log` | Create a time entry and return updated state |
 | `POST /api/session/start` | Persist a running session and return updated state |
 | `POST /api/session/stop` | Stop, log elapsed time, and return updated state |
-| `POST /api/projects/status` | Move one project to one of the five workflow statuses |
+| `POST /api/projects/status` | Move one project to one of the six workflow statuses |
 | `POST /api/projects/delete` | Permanently remove one exact project while preserving its tracked-time history |
 | `POST /api/tasks/create` | Create an Inbox/project root task or inherited-project subtask |
 | `POST /api/tasks/update` | Update one task's title and multiline notes |
@@ -835,16 +837,24 @@ below the page on narrow screens.
 ### Projects
 
 - Default first screen.
-- The original two-column list remains the default and includes every project.
+- The default List is the complete portfolio, grouped by workflow status; empty
+  groups stay out of the normal page.
+- One-click focus presets show All, Doing, Next up plus Doing, or Done. A custom
+  filter combines any of the six statuses. The view and focus persist locally and
+  are URL-backed for navigation.
+- List **Organize** mode temporarily reveals all six drop lanes, including empty
+  ones, and supports pointer dragging plus Control + Left/Right keyboard movement.
 - The alternate Kanban shows exactly Next up, Doing, and Done; To-do and Dropped
-  remain available in the list and project detail without cluttering the board.
+  remain available in the list and project detail without cluttering the board;
+  Paused is likewise deliberately absent.
 - List entries and board cards open the same project detail overlay. The detail
-  status control exposes all five statuses.
+  status control exposes all six statuses and describes their meaning.
 - Reusable categories appear as compact labels on project cards and details.
 - Task counts on cards and the task panel in project details come from the
   shared task collection; projects do not embed their own task arrays.
-- Kanban cards use pointer dragging between columns, with Control + Left/Right as
-  the keyboard equivalent. Moves are optimistic and roll back if persistence fails.
+- Status moves are optimistic and roll back if persistence fails. When a detail
+  change moves a project outside the active List focus, the detail explains why
+  and a recovery message offers both Show and Undo.
 - Every project detail view has a compact Codex control that attaches the exact
   project snapshot to the rail composer without sending it.
 - Project deletion appears only in the open detail and requires a named warning.
@@ -1249,7 +1259,7 @@ It performs JavaScript syntax checks for the browser, server, data/storage
 modules, Codex bridge, CLI, and desktop launcher; runs Node's built-in test
 suite; then compile-checks the pinned Tauri shell.
 
-At this handoff, the suite contains 62 tests covering:
+At this handoff, the suite contains 65 tests covering:
 
 - duration parsing;
 - demo-derived totals and recommendation;
@@ -1262,11 +1272,12 @@ At this handoff, the suite contains 62 tests covering:
 - validated latest/daily/monthly snapshot creation and configured-timezone dates;
 - timer-to-entry behavior;
 - configured-timezone calendar boundaries;
-- version-2/3/4/5/6/7-to-8 reading/project/category/task/notes migration and invalid-reference rejection;
+- version-2-through-8-to-9 reading/project/category/task/notes/status compatibility
+  and invalid-reference rejection;
 - reusable project categories, derived category totals, and history-preserving
   project deletion;
-- five-status project movement, active/recommendation derivation, and Projects
-  list/Kanban projection;
+- six-status project movement, active/recommendation derivation, Projects List
+  grouping/filtering/organizing, hidden-move recovery, and focused Kanban projection;
 - independent/project task creation, nested project inheritance, schedule
   validation, completion/reopen cascades, subtree/project progress, root
   reassignment, note/title updates, exact subtree deletion, cycle rejection, and
@@ -1321,8 +1332,8 @@ standard check to catch repository drift.
 
 ### Technical limitations
 
-- Validation is partial; only the focused version-2/3/4/5/6-to-7 migrations are
-  implemented, not a general migration framework.
+- Validation is partial; only the focused version-2-through-8 compatibility steps
+  are implemented, not a general migration framework.
 - Daily/monthly JSON snapshots provide history but not cross-device merge or
   immutable disaster recovery.
 - Timers crossing midnight are logged as one entry on the start date.

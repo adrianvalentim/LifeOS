@@ -30,7 +30,7 @@ A thin, source-backed Tauri shell is now the daily-use macOS development app. It
 ## Completed foundation
 
 - V2 Editorial Projects, Today, Analytics, and Almanac screens, including a
-  two-column Projects list and three-column drag Kanban backed by five statuses.
+  grouped, filterable Projects portfolio and three-column drag Kanban backed by six statuses.
 - All dashboard statistics calculated from the active Application Support store.
 - Deterministic, replaceable demonstration data.
 - Live state refresh when the JSON store changes.
@@ -53,7 +53,7 @@ A thin, source-backed Tauri shell is now the daily-use macOS development app. It
 1. Replace the demo snapshot with the user's real domains, projects, historical entries, deadlines, milestones, and weekly plan.
 2. Observe which fields and recommendation rules the real data exposes as necessary; evolve the schema once, deliberately.
 3. Add project creation and field-editing workflows beyond the implemented
-   five-status movement.
+   six-status movement.
 4. Add manual time-entry browse/edit/delete workflows with recoverable history.
 5. Add goals, deadlines, settings, imports, exports, and almanac search.
 6. Replace the source-backed development shell with a self-contained sidecar build, then add notarized distribution, updates, and platform-specific microphone validation.

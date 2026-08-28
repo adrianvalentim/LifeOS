@@ -144,7 +144,7 @@ test('calendar dates honor the configured timezone', () => {
   assert.equal(dateOnly('2026-08-23T03:00:00Z', 'America/Sao_Paulo'), '2026-08-23');
 });
 
-test('older stores migrate to schema version 9 with Reading, project categories, tasks, notes, priority, and tags', async () => {
+test('older stores migrate to schema version 9 with Reading, project categories, task metadata, and six project statuses', async () => {
   const store = await readStore(DEMO_STORE_PATH);
   delete store.reading;
   delete store.tasks;
@@ -210,7 +210,7 @@ test('older stores migrate to schema version 9 with Reading, project categories,
   assert.doesNotThrow(() => validateStore(prioritized));
 });
 
-test('projects move across the five-status workflow and completed work leaves active recommendations', async () => {
+test('projects move across the six-status workflow and completed or paused work leaves active recommendations', async () => {
   const tmp = await makeStoreCopy('lifeos-project-status-');
   const moved = await setProjectStatus({
     projectId: 'portia',
@@ -222,6 +222,15 @@ test('projects move across the five-status workflow and completed work leaves ac
   assert.equal(moved.state.summary.activeCount, 8);
   assert.notEqual(moved.state.recommendation.projectId, 'portia');
   assert.equal(moved.project.statusChangedAt, new Date(FIXED_NOW).toISOString());
+
+  const paused = await setProjectStatus({
+    projectId: 'vulcano',
+    status: 'paused',
+    now: FIXED_NOW,
+  }, tmp.storePath);
+  assert.equal(paused.project.status, 'paused');
+  assert.equal(paused.state.summary.activeCount, 7);
+  assert.ok(paused.state.recommendations.every((item) => item.projectId !== 'vulcano'));
 
   await assert.rejects(setProjectStatus({ projectId: 'portia', status: 'someday' }, tmp.storePath), /Unknown project status/);
   const invalid = await readStore(tmp.storePath);

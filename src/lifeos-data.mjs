@@ -19,7 +19,7 @@ export const ACTIVITY_TYPES = [
   'creative',
   'communication',
 ];
-export const PROJECT_STATUSES = ['to_do', 'next_up', 'doing', 'done', 'dropped'];
+export const PROJECT_STATUSES = ['to_do', 'next_up', 'doing', 'paused', 'done', 'dropped'];
 export const READING_STATUSES = ['to_read', 'next_up', 'reading', 'finished', 'dropped'];
 export const TASK_STATUSES = ['open', 'completed'];
 export const TASK_PRIORITIES = ['none', 'low', 'medium', 'high'];

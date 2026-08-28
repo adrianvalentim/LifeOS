@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   createProjectsUiState,
+  normalizeProjectStatusFilter,
+  projectStatusFilterPreset,
   projectsWithStatus,
   renderProjects,
 } from '../public/projects.js';
@@ -35,6 +37,7 @@ function dashboard() {
       project('todo', 'Backlog', 'to_do'),
       project('next', 'Next', 'next_up', 'critical'),
       project('doing', 'Doing', 'doing'),
+      project('paused', 'Paused', 'paused'),
       project('done', 'Done', 'done'),
       project('dropped', 'Dropped', 'dropped'),
     ],
@@ -63,6 +66,7 @@ test('Kanban shows only Next up, Doing, and Done while keeping cards clickable a
   assert.match(html, /data-project-drop-status="doing"/);
   assert.match(html, /data-project-drop-status="done"/);
   assert.doesNotMatch(html, /data-project-drop-status="to_do"/);
+  assert.doesNotMatch(html, /data-project-drop-status="paused"/);
   assert.doesNotMatch(html, /data-project-drop-status="dropped"/);
   assert.match(html, /data-project-drag-id="doing"/);
   assert.match(html, /data-project-detail="doing"/);
@@ -72,15 +76,48 @@ test('Kanban shows only Next up, Doing, and Done while keeping cards clickable a
   assert.match(html, /aria-roledescription="movable project"/);
   assert.match(html, /class="project-category">Infinitamente<\/span>/);
   assert.doesNotMatch(html, /data-project-drag-id="todo"/);
+  assert.doesNotMatch(html, /data-project-drag-id="paused"/);
   assert.doesNotMatch(html, /data-project-drag-id="dropped"/);
 });
 
-test('the list stays uncluttered while the open detail exposes statuses and Codex context', () => {
+test('the List groups the complete portfolio and supports preset or custom status combinations', () => {
+  const ui = createProjectsUiState();
+  ui.statusFilter = normalizeProjectStatusFilter(['next_up', 'doing']);
+  ui.filtersOpen = true;
+  const html = renderProjects(dashboard().projects, domains, ui);
+
+  assert.equal(projectStatusFilterPreset(ui.statusFilter), 'next_doing');
+  assert.match(html, /data-project-filter-preset="next_up,doing"/);
+  assert.match(html, /class="project-list-section status-next_up"/);
+  assert.match(html, /class="project-list-section status-doing"/);
+  assert.doesNotMatch(html, /data-project-detail="todo"/);
+  assert.doesNotMatch(html, /data-project-detail="paused"/);
+  assert.match(html, /data-project-filter-status="paused"/);
+
+  ui.statusFilter = normalizeProjectStatusFilter(['to_do', 'paused', 'dropped']);
+  assert.equal(projectStatusFilterPreset(ui.statusFilter), 'custom');
+});
+
+test('Organize mode exposes every status as a direct-manipulation target, including empty sections', () => {
+  const ui = createProjectsUiState();
+  ui.organizing = true;
+  const projects = dashboard().projects.filter((item) => item.status !== 'paused');
+  const html = renderProjects(projects, domains, ui);
+
+  for (const status of ['to_do', 'next_up', 'doing', 'paused', 'done', 'dropped']) {
+    assert.match(html, new RegExp(`data-project-drop-status="${status}"`));
+  }
+  assert.match(html, /class="project-list-drop-empty">Drop a project here/);
+  assert.match(html, /data-project-drag-id="todo"/);
+  assert.match(html, /aria-roledescription="movable project"/);
+});
+
+test('the open project detail exposes all statuses and Codex context', () => {
   const ui = createProjectsUiState();
   ui.selectedProjectId = 'todo';
   const html = renderProjects(dashboard().projects, domains, ui);
 
-  for (const id of ['todo', 'next', 'doing', 'done', 'dropped']) {
+  for (const id of ['todo', 'next', 'doing', 'paused', 'done', 'dropped']) {
     assert.match(html, new RegExp(`data-project-detail="${id}"`));
   }
   assert.match(html, /data-codex-context-kind="project"/);
@@ -90,11 +127,30 @@ test('the list stays uncluttered while the open detail exposes statuses and Code
   assert.equal((html.match(/data-project-delete-request=/g) || []).length, 1);
   assert.doesNotMatch(html, /role="alertdialog"/);
   assert.match(html, /data-project-status-project="todo"/);
-  assert.match(html, /<option value="to_do" selected>To-do<\/option>/);
+  assert.match(html, /<option value="to_do" selected>To do<\/option>/);
   assert.match(html, /<option value="next_up" >Next up<\/option>/);
   assert.match(html, /<option value="doing" >Doing<\/option>/);
+  assert.match(html, /<option value="paused" >Paused<\/option>/);
   assert.match(html, /<option value="done" >Done<\/option>/);
   assert.match(html, /<option value="dropped" >Dropped<\/option>/);
+});
+
+test('a move outside the current focus explains recovery and offers show and undo actions', () => {
+  const ui = createProjectsUiState();
+  ui.statusFilter = ['doing'];
+  ui.selectedProjectId = 'paused';
+  ui.statusNotice = {
+    projectId: 'paused',
+    name: 'Paused',
+    fromStatus: 'doing',
+    toStatus: 'paused',
+  };
+  const html = renderProjects(dashboard().projects, domains, ui);
+
+  assert.match(html, /outside the current focus/);
+  assert.match(html, /data-project-notice-show="paused"/);
+  assert.match(html, /data-project-notice-undo="paused" data-project-notice-status="doing"/);
+  assert.match(html, /This project is outside the current List focus/);
 });
 
 test('project deletion uses a named confirmation and explains preserved time history', () => {

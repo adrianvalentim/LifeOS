@@ -6,6 +6,8 @@ import {
 import {
   createProjectsUiState,
   PROJECT_BOARD_STATUSES,
+  PROJECT_LIST_STATUSES,
+  normalizeProjectStatusFilter,
   projectsWithStatus,
   renderProjects as renderProjectsWorkspace,
 } from './projects.js';
@@ -68,6 +70,7 @@ const app = document.getElementById('app');
 const THREAD_STORAGE_KEY = 'lifeos.codex.threadId';
 const RAIL_STORAGE_KEY = 'lifeos.codex.railCollapsed';
 const THEME_STORAGE_KEY = 'lifeos.theme';
+const PROJECTS_STORAGE_KEY = 'lifeos.projects.preferences';
 const THEME_COOKIE = 'lifeosTheme';
 const TASK_VIEW_STORAGE_KEY = 'lifeos.tasks.view';
 const TASK_INDENT_STEP = 27;
@@ -78,8 +81,14 @@ void init();
 
 async function init() {
   const params = new URLSearchParams(location.search);
+  const savedProjectPreferences = readProjectPreferences();
   activeRange = ['week', 'month', 'quarter', 'year'].includes(params.get('range')) ? params.get('range') : 'week';
-  projectsUi.view = params.get('projectView') === 'kanban' ? 'kanban' : 'list';
+  projectsUi.view = params.has('projectView')
+    ? params.get('projectView') === 'kanban' ? 'kanban' : 'list'
+    : savedProjectPreferences.view;
+  projectsUi.statusFilter = params.has('projectStatus')
+    ? normalizeProjectStatusFilter(params.get('projectStatus'))
+    : savedProjectPreferences.statusFilter;
   readingUi.view = params.get('view') === 'library' ? 'library' : 'kanban';
   tasksUi.filter = parseTaskFilter(params.get('taskScope'));
   loadTaskViewPreferences();
@@ -158,6 +167,12 @@ async function init() {
     activeTab = validTab(next.get('tab')) || 'projects';
     activeRange = ['week', 'month', 'quarter', 'year'].includes(next.get('range')) ? next.get('range') : 'week';
     projectsUi.view = next.get('projectView') === 'kanban' ? 'kanban' : 'list';
+    projectsUi.statusFilter = next.has('projectStatus')
+      ? normalizeProjectStatusFilter(next.get('projectStatus'))
+      : [...PROJECT_LIST_STATUSES];
+    projectsUi.filtersOpen = false;
+    projectsUi.organizing = false;
+    persistProjectPreferences();
     readingUi.view = next.get('view') === 'library' ? 'library' : 'kanban';
     tasksUi.filter = parseTaskFilter(next.get('taskScope'));
     state = await fetchState(activeRange);
@@ -348,9 +363,62 @@ function bindProjectEvents() {
     button.addEventListener('click', () => {
       projectsUi.view = button.dataset.projectView;
       projectsUi.selectedProjectId = null;
+      projectsUi.filtersOpen = false;
+      projectsUi.organizing = false;
+      projectsUi.statusNotice = null;
+      persistProjectPreferences();
       updateLocation();
       render();
     });
+  });
+  document.querySelectorAll('[data-project-filter-preset]').forEach((button) => {
+    button.addEventListener('click', () => {
+      setProjectStatusFilter(button.dataset.projectFilterPreset.split(','));
+      projectsUi.filtersOpen = false;
+      projectsUi.statusNotice = null;
+      render();
+    });
+  });
+  document.querySelector('[data-project-filter-toggle]')?.addEventListener('click', () => {
+    projectsUi.filtersOpen = !projectsUi.filtersOpen;
+    render();
+    if (projectsUi.filtersOpen) document.querySelector('[data-project-filter-status]')?.focus();
+  });
+  document.querySelectorAll('[data-project-filter-status]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const status = button.dataset.projectFilterStatus;
+      const selected = new Set(projectsUi.statusFilter);
+      if (selected.has(status) && selected.size > 1) selected.delete(status);
+      else selected.add(status);
+      setProjectStatusFilter([...selected]);
+      projectsUi.statusNotice = null;
+      render();
+      document.querySelector(`[data-project-filter-status="${CSS.escape(status)}"]`)?.focus();
+    });
+  });
+  document.querySelector('[data-project-organize]')?.addEventListener('click', () => {
+    projectsUi.organizing = !projectsUi.organizing;
+    projectsUi.filtersOpen = false;
+    projectsUi.statusNotice = null;
+    render();
+    document.querySelector('[data-project-organize]')?.focus();
+  });
+  document.querySelector('[data-project-notice-show]')?.addEventListener('click', (event) => {
+    const status = event.currentTarget.dataset.projectNoticeShow;
+    setProjectStatusFilter([...projectsUi.statusFilter, status]);
+    projectsUi.statusNotice = null;
+    render();
+    document.querySelector(`[data-project-detail="${CSS.escape(projectsUi.selectedProjectId || '')}"]`)?.focus();
+  });
+  document.querySelector('[data-project-notice-undo]')?.addEventListener('click', (event) => {
+    const projectId = event.currentTarget.dataset.projectNoticeUndo;
+    const status = event.currentTarget.dataset.projectNoticeStatus;
+    projectsUi.statusNotice = null;
+    void changeProjectStatus(projectId, status, { optimistic: true, restoreFocus: true, showHiddenNotice: false });
+  });
+  document.querySelector('[data-project-notice-dismiss]')?.addEventListener('click', () => {
+    projectsUi.statusNotice = null;
+    render();
   });
   document.querySelectorAll('[data-project-detail]').forEach((card) => {
     card.addEventListener('click', () => {
@@ -376,7 +444,7 @@ function bindProjectEvents() {
   });
   document.querySelectorAll('[data-project-status-project]').forEach((select) => {
     select.addEventListener('change', () => {
-      void changeProjectStatus(select.dataset.projectStatusProject, select.value, { optimistic: true });
+      void changeProjectStatus(select.dataset.projectStatusProject, select.value, { optimistic: true, restoreFocus: true });
     });
   });
   document.querySelector('[data-project-delete-request]')?.addEventListener('click', (event) => {
@@ -398,7 +466,8 @@ function bindProjectEvents() {
 }
 
 function bindProjectDragAndDrop() {
-  if (projectsUi.view !== 'kanban' || projectsUi.movingProjectId) return;
+  const movableView = projectsUi.view === 'kanban' || (projectsUi.view === 'list' && projectsUi.organizing);
+  if (!movableView || projectsUi.movingProjectId) return;
   document.querySelectorAll('[data-project-drag-id]').forEach((card) => {
     card.addEventListener('pointerdown', (event) => beginProjectPointerDrag(event, card));
     card.addEventListener('keydown', (event) => moveProjectCardWithKeyboard(event, card));
@@ -462,9 +531,9 @@ function startProjectPointerDrag(drag) {
   drag.card.setPointerCapture?.(drag.pointerId);
   document.body.classList.add('project-drag-active');
 
-  const board = drag.card.closest('.project-board');
-  board?.classList.add('is-dragging');
-  board?.querySelectorAll('[data-project-drop-status]').forEach((column) => {
+  const surface = drag.card.closest('.project-move-surface');
+  surface?.classList.add('is-dragging');
+  surface?.querySelectorAll('[data-project-drop-status]').forEach((column) => {
     column.classList.add(column.dataset.projectDropStatus === drag.originStatus ? 'drop-current' : 'drop-available');
   });
 
@@ -472,7 +541,8 @@ function startProjectPointerDrag(drag) {
   preview.removeAttribute('data-project-drag-id');
   preview.removeAttribute('data-project-detail');
   preview.removeAttribute('aria-busy');
-  preview.className = 'project-board-card project-drag-preview';
+  preview.classList.remove('dragging', 'is-saving');
+  preview.classList.add('project-drag-preview');
   preview.setAttribute('aria-hidden', 'true');
   preview.style.width = `${drag.card.getBoundingClientRect().width}px`;
   document.body.append(preview);
@@ -515,7 +585,7 @@ function cancelProjectPointerDrag() {
   if (drag.card.hasPointerCapture?.(drag.pointerId)) drag.card.releasePointerCapture(drag.pointerId);
   drag.preview?.remove();
   document.body.classList.remove('project-drag-active');
-  document.querySelector('.project-board')?.classList.remove('is-dragging');
+  document.querySelector('.project-move-surface')?.classList.remove('is-dragging');
   document.querySelectorAll('.project-column.drop-current, .project-column.drop-available').forEach((column) => {
     column.classList.remove('drop-current', 'drop-available');
   });
@@ -524,20 +594,24 @@ function cancelProjectPointerDrag() {
 function moveProjectCardWithKeyboard(event, card) {
   if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || projectsUi.movingProjectId) return;
   if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
-  const statusIndex = PROJECT_BOARD_STATUSES.indexOf(card.dataset.projectDragStatus);
+  const statuses = projectsUi.view === 'kanban' ? PROJECT_BOARD_STATUSES : PROJECT_LIST_STATUSES;
+  const statusIndex = statuses.indexOf(card.dataset.projectDragStatus);
   const offset = event.key === 'ArrowLeft' ? -1 : 1;
-  const nextStatus = PROJECT_BOARD_STATUSES[statusIndex + offset];
+  const nextStatus = statuses[statusIndex + offset];
   if (!nextStatus) return;
   event.preventDefault();
   event.stopPropagation();
   void changeProjectStatus(card.dataset.projectDragId, nextStatus, { optimistic: true, restoreFocus: true });
 }
 
-async function changeProjectStatus(projectId, status, { optimistic = false, restoreFocus = false } = {}) {
+async function changeProjectStatus(projectId, status, { optimistic = false, restoreFocus = false, showHiddenNotice = true } = {}) {
   const current = state.projects.find((project) => project.id === projectId);
   if (current?.status === status || projectsUi.movingProjectId) return;
   pageError = null;
   const previousState = state;
+  const previousNotice = projectsUi.statusNotice;
+  const fromStatus = current?.status;
+  projectsUi.statusNotice = null;
   if (optimistic) {
     projectsUi.movingProjectId = projectId;
     state = projectsWithStatus(state, projectId, status);
@@ -546,10 +620,14 @@ async function changeProjectStatus(projectId, status, { optimistic = false, rest
   try {
     state = await apiJson('/api/projects/status', jsonRequest({ projectId, status }));
     projectsUi.movingProjectId = null;
+    if (showHiddenNotice && projectsUi.view === 'list' && !projectsUi.organizing && !projectsUi.statusFilter.includes(status)) {
+      projectsUi.statusNotice = { projectId, name: current.name, fromStatus, toStatus: status };
+    }
     renderProjectMove(projectId, restoreFocus);
   } catch (error) {
     if (optimistic) state = previousState;
     projectsUi.movingProjectId = null;
+    projectsUi.statusNotice = previousNotice;
     pageError = error.message;
     renderProjectMove(projectId, restoreFocus);
   }
@@ -582,6 +660,38 @@ function renderProjectMove(projectId, restoreFocus) {
   [...document.querySelectorAll('[data-project-drag-id]')]
     .find((card) => card.dataset.projectDragId === projectId)
     ?.focus();
+  if (document.activeElement === document.body) {
+    document.querySelector(`[data-project-status-project="${CSS.escape(projectId)}"]`)?.focus();
+  }
+}
+
+function setProjectStatusFilter(statuses) {
+  projectsUi.statusFilter = normalizeProjectStatusFilter(statuses);
+  persistProjectPreferences();
+  updateLocation();
+}
+
+function readProjectPreferences() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PROJECTS_STORAGE_KEY) || '{}');
+    return {
+      view: saved.view === 'kanban' ? 'kanban' : 'list',
+      statusFilter: normalizeProjectStatusFilter(saved.statusFilter),
+    };
+  } catch {
+    return { view: 'list', statusFilter: [...PROJECT_LIST_STATUSES] };
+  }
+}
+
+function persistProjectPreferences() {
+  try {
+    localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify({
+      view: projectsUi.view,
+      statusFilter: projectsUi.statusFilter,
+    }));
+  } catch {
+    // URL state still keeps the current view usable when browser storage is unavailable.
+  }
 }
 
 function bindTaskEvents() {
@@ -1943,6 +2053,9 @@ function updateLocation() {
   if (activeTab !== 'projects') params.set('tab', activeTab);
   if (activeRange !== 'week') params.set('range', activeRange);
   if (activeTab === 'projects' && projectsUi.view !== 'list') params.set('projectView', projectsUi.view);
+  if (activeTab === 'projects' && projectsUi.statusFilter.length !== PROJECT_LIST_STATUSES.length) {
+    params.set('projectStatus', projectsUi.statusFilter.join(','));
+  }
   if (activeTab === 'reading' && readingUi.view !== 'kanban') params.set('view', readingUi.view);
   if (activeTab === 'tasks' && tasksUi.filter !== 'all') params.set('taskScope', tasksUi.filter);
   const query = params.toString();

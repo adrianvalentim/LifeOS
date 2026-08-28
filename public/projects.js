@@ -2,20 +2,41 @@ import { renderCodexContextButton } from './codex-context.js';
 import { renderProjectTaskPanel } from './tasks.js';
 
 export const PROJECT_STATUS_LABELS = {
-  to_do: 'To-do',
+  to_do: 'To do',
   next_up: 'Next up',
   doing: 'Doing',
+  paused: 'Paused',
   done: 'Done',
   dropped: 'Dropped',
 };
 
+export const PROJECT_STATUS_DESCRIPTIONS = {
+  to_do: 'Someday, not yet committed',
+  next_up: 'Ready to begin',
+  doing: 'Actively receiving attention',
+  paused: 'Intentionally on hold',
+  done: 'Completed history',
+  dropped: 'Deliberately abandoned',
+};
+
 export const PROJECT_BOARD_STATUSES = ['next_up', 'doing', 'done'];
 export const ACTIVE_PROJECT_STATUSES = ['to_do', 'next_up', 'doing'];
-const ALL_PROJECT_STATUSES = Object.keys(PROJECT_STATUS_LABELS);
+export const PROJECT_LIST_STATUSES = Object.keys(PROJECT_STATUS_LABELS);
+
+const PROJECT_FILTER_PRESETS = [
+  { id: 'all', label: 'All', statuses: PROJECT_LIST_STATUSES },
+  { id: 'next_doing', label: 'Next up + Doing', statuses: ['next_up', 'doing'] },
+  { id: 'doing', label: 'Doing', statuses: ['doing'] },
+  { id: 'done', label: 'Done', statuses: ['done'] },
+];
 
 export function createProjectsUiState() {
   return {
     view: 'list',
+    statusFilter: [...PROJECT_LIST_STATUSES],
+    filtersOpen: false,
+    organizing: false,
+    statusNotice: null,
     selectedProjectId: null,
     deleteProjectId: null,
     deletingProjectId: null,
@@ -26,7 +47,7 @@ export function createProjectsUiState() {
 
 export function projectsWithStatus(dashboard, projectId, status) {
   const current = dashboard?.projects?.find((project) => project.id === projectId);
-  if (!current || current.status === status || !ALL_PROJECT_STATUSES.includes(status)) return dashboard;
+  if (!current || current.status === status || !PROJECT_LIST_STATUSES.includes(status)) return dashboard;
 
   const projects = dashboard.projects.map((project) => project.id === projectId ? { ...project, status } : project);
   const activeCount = projects.filter((project) => ACTIVE_PROJECT_STATUSES.includes(project.status)).length;
@@ -42,31 +63,111 @@ export function projectsWithStatus(dashboard, projectId, status) {
   };
 }
 
+export function normalizeProjectStatusFilter(value) {
+  const requested = Array.isArray(value) ? value : String(value || '').split(',');
+  const selected = new Set(requested.filter((status) => PROJECT_LIST_STATUSES.includes(status)));
+  return selected.size ? PROJECT_LIST_STATUSES.filter((status) => selected.has(status)) : [...PROJECT_LIST_STATUSES];
+}
+
+export function projectStatusFilterPreset(statuses) {
+  const normalized = normalizeProjectStatusFilter(statuses);
+  return PROJECT_FILTER_PRESETS.find((preset) => sameStatuses(normalized, preset.statuses))?.id || 'custom';
+}
+
 export function renderProjects(projects, domains, ui, options = {}) {
   const selected = projects.find((project) => project.id === ui.selectedProjectId);
   const deleteTarget = projects.find((project) => project.id === ui.deleteProjectId);
   return `
     <div class="projects-workspace">
       <div class="projects-toolbar">
+        ${ui.view === 'list' ? renderProjectListControls(projects, ui) : '<p class="project-board-purpose">Focused execution: Next up, Doing, and Done</p>'}
         <div class="project-view-switch" role="group" aria-label="Projects view">
           <button class="project-view-button ${ui.view === 'list' ? 'active' : ''}" data-project-view="list" type="button">List</button>
           <button class="project-view-button ${ui.view === 'kanban' ? 'active' : ''}" data-project-view="kanban" type="button">Kanban</button>
         </div>
       </div>
-      ${ui.view === 'kanban' ? renderProjectBoard(projects, domains, ui) : renderProjectList(projects, domains)}
-      ${selected ? renderProjectDetail(selected, domains[selected.domain], ui.movingProjectId === selected.id, domains, options) : ''}
+      ${ui.view === 'list' && ui.filtersOpen && !ui.organizing ? renderProjectFilters(projects, ui) : ''}
+      ${renderProjectStatusNotice(ui)}
+      ${ui.view === 'kanban' ? renderProjectBoard(projects, domains, ui) : renderProjectList(projects, domains, ui)}
+      ${selected ? renderProjectDetail(selected, domains[selected.domain], ui.movingProjectId === selected.id, domains, { ...options, statusFilter: ui.statusFilter }) : ''}
       ${deleteTarget ? renderDeleteConfirmation(deleteTarget, ui) : ''}
     </div>
   `;
 }
 
-function renderProjectList(projects, domains) {
-  return `<div class="projects-grid projects-list" aria-label="All projects">${projects.map((project) => renderProjectEntry(project, domains[project.domain])).join('')}</div>`;
+function renderProjectListControls(projects, ui) {
+  const activePreset = projectStatusFilterPreset(ui.statusFilter);
+  return `
+    <div class="project-list-tools">
+      <div class="project-focus-presets" role="group" aria-label="Project status focus">
+        <span class="project-tool-label">Focus</span>
+        ${PROJECT_FILTER_PRESETS.map((preset) => `<button class="project-focus-button ${activePreset === preset.id ? 'active' : ''}" data-project-filter-preset="${preset.statuses.join(',')}" type="button" aria-pressed="${activePreset === preset.id}">${preset.label}</button>`).join('')}
+        <button class="project-focus-button project-custom-filter ${activePreset === 'custom' ? 'active' : ''}" data-project-filter-toggle type="button" aria-expanded="${ui.filtersOpen}" aria-controls="project-status-filters">${activePreset === 'custom' ? `${ui.statusFilter.length} statuses` : 'Custom'}</button>
+      </div>
+      <button class="project-organize-button ${ui.organizing ? 'active' : ''}" data-project-organize type="button" aria-pressed="${ui.organizing}">${ui.organizing ? 'Done organizing' : 'Organize'}</button>
+    </div>
+  `;
+}
+
+function renderProjectFilters(projects, ui) {
+  return `
+    <div class="project-status-filters" id="project-status-filters">
+      <span class="smallcaps">Show statuses</span>
+      <div class="project-status-filter-options">
+        ${PROJECT_LIST_STATUSES.map((status) => {
+          const selected = ui.statusFilter.includes(status);
+          const count = projects.filter((project) => project.status === status).length;
+          return `<button class="project-status-filter ${selected ? 'active' : ''}" data-project-filter-status="${status}" type="button" aria-pressed="${selected}"><span class="project-status-dot status-${status}"></span>${PROJECT_STATUS_LABELS[status]} <b>${count}</b></button>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderProjectStatusNotice(ui) {
+  const notice = ui.statusNotice;
+  if (!notice) return '';
+  return `
+    <div class="project-status-notice" role="status">
+      <span><b>${escapeHtml(notice.name)}</b> moved to ${escapeHtml(PROJECT_STATUS_LABELS[notice.toStatus])}. It is outside the current focus.</span>
+      <span class="project-status-notice-actions">
+        <button data-project-notice-show="${notice.toStatus}" type="button">Show ${escapeHtml(PROJECT_STATUS_LABELS[notice.toStatus])}</button>
+        <button data-project-notice-undo="${escapeAttribute(notice.projectId)}" data-project-notice-status="${notice.fromStatus}" type="button">Undo</button>
+        <button data-project-notice-dismiss type="button" aria-label="Dismiss status message">×</button>
+      </span>
+    </div>
+  `;
+}
+
+function renderProjectList(projects, domains, ui) {
+  const statuses = ui.organizing ? PROJECT_LIST_STATUSES : ui.statusFilter;
+  const sections = statuses
+    .map((status) => ({ status, items: projects.filter((project) => project.status === status) }))
+    .filter(({ items }) => ui.organizing || items.length);
+  if (!sections.length) {
+    return `<div class="project-list-empty"><p>No projects match this focus.</p><button data-project-filter-preset="${PROJECT_LIST_STATUSES.join(',')}" type="button">Show all projects</button></div>`;
+  }
+  return `
+    <div class="projects-list project-move-surface ${ui.organizing ? 'is-organizing' : ''} ${ui.movingProjectId ? 'is-saving' : ''}" aria-label="Project portfolio" ${ui.movingProjectId ? 'aria-busy="true"' : ''}>
+      ${ui.organizing ? '<p class="project-organize-instructions" id="project-organize-instructions">Drag a project to any status. Keyboard users can focus a project and press Control plus the left or right arrow key.</p>' : ''}
+      ${sections.map(({ status, items }) => `
+        <section class="project-list-section status-${status}" ${ui.organizing ? `data-project-drop-status="${status}" data-project-drop-label="${PROJECT_STATUS_LABELS[status]}"` : ''}>
+          <header class="project-list-section-head">
+            <div><span class="project-status-dot status-${status}"></span><h2>${PROJECT_STATUS_LABELS[status]}</h2><span>${PROJECT_STATUS_DESCRIPTIONS[status]}</span></div>
+            <b>${items.length}</b>
+          </header>
+          <div class="projects-grid project-list-section-body">
+            ${items.length ? items.map((project) => renderProjectEntry(project, domains[project.domain], ui)).join('') : '<div class="project-list-drop-empty">Drop a project here</div>'}
+          </div>
+        </section>
+      `).join('')}
+    </div>
+  `;
 }
 
 function renderProjectBoard(projects, domains, ui) {
   return `
-    <div class="project-board ${ui.movingProjectId ? 'is-saving' : ''}" aria-describedby="project-board-instructions" ${ui.movingProjectId ? 'aria-busy="true"' : ''}>
+    <div class="project-board project-move-surface ${ui.movingProjectId ? 'is-saving' : ''}" aria-describedby="project-board-instructions" ${ui.movingProjectId ? 'aria-busy="true"' : ''}>
       <p class="project-board-instructions" id="project-board-instructions">Drag projects between columns. Keyboard users can focus a card and press Control plus the left or right arrow key.</p>
       ${PROJECT_BOARD_STATUSES.map((status) => {
         const items = projects.filter((project) => project.status === status);
@@ -86,11 +187,14 @@ function renderProjectBoard(projects, domains, ui) {
   `;
 }
 
-function renderProjectEntry(project, domain) {
+function renderProjectEntry(project, domain, ui) {
+  const moving = ui.movingProjectId === project.id;
+  const movable = ui.organizing;
   return `
-    <article class="project-entry project-openable" style="--domain:${escapeAttribute(domain.color)}" data-project-detail="${escapeAttribute(project.id)}" role="button" tabindex="0" aria-label="Open ${escapeAttribute(project.name)} details">
+    <article class="project-entry project-openable ${movable ? 'is-movable' : ''} ${moving ? 'is-saving' : ''}" style="--domain:${escapeAttribute(domain.color)}" data-project-detail="${escapeAttribute(project.id)}" ${movable ? `data-project-drag-id="${escapeAttribute(project.id)}" data-project-drag-status="${project.status}" aria-roledescription="movable project"` : ''} role="button" tabindex="0" aria-label="${escapeAttribute(project.name)}. ${escapeAttribute(PROJECT_STATUS_LABELS[project.status])}." ${moving ? 'aria-busy="true"' : ''}>
+      ${movable ? '<span class="project-drag-grip" aria-hidden="true">⠿</span>' : ''}
       <div class="swatch"></div>
-      <div>${renderProjectContent(project, domain, { showStatus: true })}</div>
+      <div>${renderProjectContent(project, domain)}</div>
     </article>
   `;
 }
@@ -133,6 +237,7 @@ function renderProjectContent(project, domain, { showStatus = false } = {}) {
 }
 
 function renderProjectDetail(project, domain, moving, domains, options) {
+  const outsideFocus = options.statusFilter && !options.statusFilter.includes(project.status);
   return `
     <div class="project-detail-backdrop" data-project-detail-close>
       <article class="project-detail" style="--domain:${escapeAttribute(domain.color)}" role="dialog" aria-modal="true" aria-labelledby="project-detail-title">
@@ -149,7 +254,9 @@ function renderProjectDetail(project, domain, moving, domains, options) {
           <select data-project-status-project="${escapeAttribute(project.id)}" aria-label="Status for ${escapeAttribute(project.name)}" ${moving ? 'disabled' : ''}>
             ${projectStatusOptions(project.status)}
           </select>
+          <small>${escapeHtml(PROJECT_STATUS_DESCRIPTIONS[project.status])}</small>
         </label>
+        ${outsideFocus ? `<p class="project-detail-focus-note" role="status">This project is outside the current List focus. It will remain available in ${escapeHtml(PROJECT_STATUS_LABELS[project.status])} after you close details.</p>` : ''}
         <div class="project-detail-metadata">
           <span><b>Health</b>${escapeHtml(project.health)}</span>
           <span><b>Last touched</b>${escapeHtml(project.lastTouchedLabel)}</span>
@@ -201,7 +308,11 @@ function renderProjectCategories(labels = []) {
 }
 
 function projectStatusOptions(selected) {
-  return ALL_PROJECT_STATUSES.map((status) => `<option value="${status}" ${status === selected ? 'selected' : ''}>${PROJECT_STATUS_LABELS[status]}</option>`).join('');
+  return PROJECT_LIST_STATUSES.map((status) => `<option value="${status}" ${status === selected ? 'selected' : ''}>${PROJECT_STATUS_LABELS[status]}</option>`).join('');
+}
+
+function sameStatuses(left, right) {
+  return left.length === right.length && left.every((status) => right.includes(status));
 }
 
 function dueLabel(dueInDays) {

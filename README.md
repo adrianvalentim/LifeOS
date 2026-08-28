@@ -32,7 +32,7 @@ the computer.
 
 ## Current capabilities
 
-- Projects list and focused Kanban with five persistent workflow states,
+- status-grouped, filterable Projects portfolio plus a focused Kanban backed by six persistent workflow states,
   reusable categories, deadlines, progress, health, streaks, weekly effort, and
   confirmed deletion that preserves historical analytics.
 - First-class Tasks workspace with Inbox/project/tag scopes and Today and
