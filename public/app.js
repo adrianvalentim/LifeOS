@@ -18,9 +18,13 @@ import {
   renderReading,
 } from './reading.js';
 import {
+  canReorder,
   createTasksUiState,
   renderTaskOverlays,
   renderTasks,
+  TASK_DENSITIES,
+  TASK_GROUPINGS,
+  TASK_SORTS,
 } from './tasks.js';
 
 const VALID_TABS = ['today', 'tasks', 'projects', 'reading', 'analytics', 'almanac'];
@@ -34,6 +38,8 @@ let stateRefreshTimer = null;
 let eventSource = null;
 let projectPointerDrag = null;
 let readingPointerDrag = null;
+let taskPointerDrag = null;
+let taskViewDismiss = null;
 let readingCatalogRequestId = 0;
 const projectsUi = createProjectsUiState();
 const readingUi = createReadingUiState();
@@ -63,6 +69,8 @@ const THREAD_STORAGE_KEY = 'lifeos.codex.threadId';
 const RAIL_STORAGE_KEY = 'lifeos.codex.railCollapsed';
 const THEME_STORAGE_KEY = 'lifeos.theme';
 const THEME_COOKIE = 'lifeosTheme';
+const TASK_VIEW_STORAGE_KEY = 'lifeos.tasks.view';
+const TASK_INDENT_STEP = 27;
 let codexRailCollapsed = localStorage.getItem(RAIL_STORAGE_KEY) === 'true';
 let activeTheme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
 
@@ -74,6 +82,7 @@ async function init() {
   projectsUi.view = params.get('projectView') === 'kanban' ? 'kanban' : 'list';
   readingUi.view = params.get('view') === 'library' ? 'library' : 'kanban';
   tasksUi.filter = parseTaskFilter(params.get('taskScope'));
+  loadTaskViewPreferences();
   try {
     state = await fetchState(activeRange);
     activeTab = validTab(params.get('tab')) || validTab(state.meta.activeTab) || 'projects';
@@ -86,6 +95,20 @@ async function init() {
   }
 
   window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && taskPointerDrag) {
+      cancelTaskPointerDrag();
+      return;
+    }
+    if (event.key === 'Escape' && tasksUi.menu) {
+      closeTaskMenu();
+      return;
+    }
+    if (event.key === 'Escape' && tasksUi.viewOptionsOpen) {
+      tasksUi.viewOptionsOpen = false;
+      render();
+      document.querySelector('[data-task-view-options]')?.focus();
+      return;
+    }
     if (event.key === 'Escape' && tasksUi.deleteTaskId && !tasksUi.deletingTaskId) {
       tasksUi.deleteTaskId = null;
       tasksUi.deleteError = null;
@@ -161,8 +184,12 @@ function render() {
   const focusedReadingBookId = document.activeElement
     ?.closest?.('[data-reading-drag-id]')
     ?.dataset.readingDragId;
+  const focusedTaskId = document.activeElement?.classList?.contains('task-item')
+    ? document.activeElement.dataset.taskDetail
+    : null;
   cancelProjectPointerDrag();
   cancelReadingPointerDrag();
+  cancelTaskPointerDrag();
   app.className = `lifeos${codexRailCollapsed ? ' rail-collapsed' : ''}`;
   app.innerHTML = `
     ${renderMasthead()}
@@ -187,6 +214,9 @@ function render() {
     [...document.querySelectorAll('[data-reading-drag-id]')]
       .find((card) => card.dataset.readingDragId === focusedReadingBookId)
       ?.focus();
+  }
+  if (focusedTaskId) {
+    document.querySelector(`.task-item[data-task-detail="${CSS.escape(focusedTaskId)}"]`)?.focus();
   }
 }
 
@@ -558,12 +588,7 @@ function bindTaskEvents() {
   if (!['tasks', 'projects'].includes(activeTab)) return;
 
   document.querySelectorAll('[data-task-filter]').forEach((button) => {
-    button.addEventListener('click', () => {
-      tasksUi.filter = validTaskFilter(button.dataset.taskFilter);
-      tasksUi.addingSubtaskToId = null;
-      updateLocation();
-      render();
-    });
+    button.addEventListener('click', () => applyTaskFilter(button.dataset.taskFilter));
   });
   document.querySelectorAll('[data-task-detail-button]').forEach((button) => {
     button.addEventListener('click', () => openTaskDetail(button.dataset.taskDetailButton));
@@ -602,6 +627,40 @@ function bindTaskEvents() {
       void changeTaskProject(select.dataset.taskProject, select.value || null, select);
     });
   });
+  document.querySelectorAll('[data-task-priority]').forEach((select) => {
+    select.addEventListener('change', () => {
+      void runTaskAction('/api/tasks/priority', { taskId: select.dataset.taskPriority, priority: select.value }, select);
+    });
+  });
+  document.querySelectorAll('[data-task-due]').forEach((input) => {
+    input.addEventListener('change', () => {
+      void runTaskAction('/api/tasks/schedule', { taskId: input.dataset.taskDue, dueDate: input.value || null }, input);
+    });
+  });
+  document.querySelectorAll('[data-task-tag-filter]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      applyTaskFilter(`tag:${button.dataset.taskTagFilter}`);
+    });
+  });
+  document.querySelectorAll('[data-task-tag-remove]').forEach((button) => {
+    button.addEventListener('click', () => {
+      void toggleTaskTag(button.dataset.taskId, button.dataset.taskTagRemove, button);
+    });
+  });
+  document.querySelectorAll('[data-task-tag-create]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const input = form.querySelector('input[name="tag"]');
+      const tag = String(input?.value || '').trim();
+      if (!tag) return;
+      if (input) input.value = '';
+      void toggleTaskTag(form.dataset.taskTagCreate, tag, form, { add: true });
+    });
+  });
+  bindTaskViewOptions();
+  bindTaskContextMenu();
+  bindTaskDragAndDrop();
   document.querySelectorAll('[data-task-subtask-open]').forEach((button) => {
     button.addEventListener('click', () => {
       const taskId = button.dataset.taskSubtaskOpen;
@@ -651,11 +710,14 @@ function bindTaskEvents() {
       event.currentTarget.requestSubmit();
     }
   });
-  document.querySelector('[data-task-delete-request]')?.addEventListener('click', (event) => {
-    tasksUi.deleteTaskId = event.currentTarget.dataset.taskDeleteRequest;
-    tasksUi.deleteError = null;
-    render();
-    document.querySelector('[data-task-delete-cancel]')?.focus();
+  document.querySelectorAll('[data-task-delete-request]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      tasksUi.deleteTaskId = event.currentTarget.dataset.taskDeleteRequest;
+      tasksUi.deleteError = null;
+      tasksUi.menu = null;
+      render();
+      document.querySelector('[data-task-delete-cancel]')?.focus();
+    });
   });
   document.querySelector('[data-task-delete-cancel]')?.addEventListener('click', () => {
     tasksUi.deleteTaskId = null;
@@ -666,6 +728,272 @@ function bindTaskEvents() {
   document.querySelector('[data-task-delete-confirm]')?.addEventListener('click', (event) => {
     void permanentlyDeleteTask(event.currentTarget.dataset.taskDeleteConfirm);
   });
+}
+
+function applyTaskFilter(filter) {
+  tasksUi.filter = validTaskFilter(filter);
+  tasksUi.addingSubtaskToId = null;
+  tasksUi.menu = null;
+  tasksUi.viewOptionsOpen = false;
+  updateLocation();
+  render();
+}
+
+function bindTaskViewOptions() {
+  document.querySelector('[data-task-view-options]')?.addEventListener('click', () => {
+    tasksUi.viewOptionsOpen = !tasksUi.viewOptionsOpen;
+    render();
+    if (tasksUi.viewOptionsOpen) document.querySelector('[data-task-group-by]')?.focus();
+  });
+  const commit = (key, value) => {
+    tasksUi[key] = value;
+    saveTaskViewPreferences();
+    render();
+    document.querySelector('[data-task-view-options]')?.focus();
+  };
+  document.querySelector('[data-task-group-by]')?.addEventListener('change', (event) => {
+    commit('groupBy', event.currentTarget.value);
+  });
+  document.querySelector('[data-task-sort-by]')?.addEventListener('change', (event) => {
+    commit('sortBy', event.currentTarget.value);
+  });
+  document.querySelector('[data-task-density]')?.addEventListener('change', (event) => {
+    commit('density', event.currentTarget.value);
+  });
+  document.querySelector('[data-task-show-completed]')?.addEventListener('change', (event) => {
+    tasksUi.showCompleted = event.currentTarget.checked;
+    saveTaskViewPreferences();
+    render();
+    document.querySelector('[data-task-show-completed]')?.focus();
+  });
+  if (taskViewDismiss) {
+    document.removeEventListener('pointerdown', taskViewDismiss, true);
+    taskViewDismiss = null;
+  }
+  if (!tasksUi.viewOptionsOpen) return;
+  taskViewDismiss = (event) => {
+    if (event.target.closest('.task-view-options')) return;
+    document.removeEventListener('pointerdown', taskViewDismiss, true);
+    taskViewDismiss = null;
+    tasksUi.viewOptionsOpen = false;
+    render();
+  };
+  document.addEventListener('pointerdown', taskViewDismiss, true);
+}
+
+function bindTaskContextMenu() {
+  document.querySelectorAll('[data-task-menu]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const bounds = button.getBoundingClientRect();
+      openTaskMenu(button.dataset.taskMenu, bounds.right - 236, bounds.bottom + 4);
+    });
+  });
+  document.querySelectorAll('.task-item[data-task-detail]').forEach((item) => {
+    item.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      openTaskMenu(item.dataset.taskDetail, event.clientX, event.clientY);
+    });
+    item.addEventListener('keydown', (event) => handleTaskRowKeydown(event, item));
+  });
+  document.querySelectorAll('[data-task-menu-close]').forEach((backdrop) => {
+    backdrop.addEventListener('pointerdown', (event) => {
+      if (event.target !== backdrop) return;
+      closeTaskMenu();
+    });
+    backdrop.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      closeTaskMenu();
+    });
+  });
+  document.querySelector('[data-task-menu-detail]')?.addEventListener('click', (event) => {
+    const taskId = event.currentTarget.dataset.taskMenuDetail;
+    tasksUi.menu = null;
+    openTaskDetail(taskId);
+  });
+  document.querySelector('[data-task-menu-subtask]')?.addEventListener('click', (event) => {
+    const taskId = event.currentTarget.dataset.taskMenuSubtask;
+    tasksUi.menu = null;
+    tasksUi.addingSubtaskToId = taskId;
+    render();
+    findTaskControl('[data-task-subtask-create]', taskId)?.querySelector('input[name="title"]')?.focus();
+  });
+  document.querySelector('[data-task-menu-move]')?.addEventListener('click', () => toggleTaskSubmenu('project'));
+  document.querySelector('[data-task-menu-tags]')?.addEventListener('click', () => toggleTaskSubmenu('tag'));
+  document.querySelectorAll('[data-task-priority-set]').forEach((button) => {
+    button.addEventListener('click', () => {
+      void runTaskAction('/api/tasks/priority', {
+        taskId: button.dataset.taskPrioritySet,
+        priority: button.dataset.taskPriority,
+      }, button, { closeMenu: true });
+    });
+  });
+  document.querySelectorAll('[data-task-due-set]').forEach((button) => {
+    button.addEventListener('click', () => {
+      void runTaskAction('/api/tasks/schedule', {
+        taskId: button.dataset.taskDueSet,
+        dueDate: button.dataset.taskDueDate || null,
+      }, button, { closeMenu: true });
+    });
+  });
+  document.querySelectorAll('[data-task-project-set]').forEach((button) => {
+    button.addEventListener('click', () => {
+      void runTaskAction('/api/tasks/project', {
+        taskId: button.dataset.taskProjectSet,
+        projectId: button.dataset.taskProjectId || null,
+      }, button, { closeMenu: true });
+    });
+  });
+  document.querySelectorAll('[data-task-tag-toggle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      void toggleTaskTag(button.dataset.taskTagToggle, button.dataset.taskTag, button, { keepMenu: true });
+    });
+  });
+  document.querySelectorAll('[data-task-duplicate]').forEach((button) => {
+    button.addEventListener('click', () => {
+      void runTaskAction('/api/tasks/duplicate', { taskId: button.dataset.taskDuplicate }, button, { closeMenu: true });
+    });
+  });
+}
+
+function openTaskMenu(taskId, x, y) {
+  tasksUi.menu = {
+    taskId,
+    x: Math.max(8, Math.min(x, window.innerWidth - 244)),
+    y: Math.max(8, y),
+    submenu: null,
+  };
+  tasksUi.viewOptionsOpen = false;
+  render();
+  keepTaskMenuOnScreen();
+  document.querySelector('.task-menu [role="menuitem"]')?.focus();
+}
+
+function keepTaskMenuOnScreen() {
+  const menu = document.querySelector('.task-menu');
+  if (!menu || !tasksUi.menu) return;
+  // offsetHeight ignores the entry animation's transform, which getBoundingClientRect would include.
+  const overflow = tasksUi.menu.y + menu.offsetHeight - (window.innerHeight - 10);
+  if (overflow <= 0) return;
+  tasksUi.menu.y = Math.max(10, tasksUi.menu.y - overflow);
+  menu.style.setProperty('--task-menu-y', `${Math.round(tasksUi.menu.y)}px`);
+}
+
+function closeTaskMenu() {
+  const taskId = tasksUi.menu?.taskId;
+  if (!taskId) return;
+  tasksUi.menu = null;
+  render();
+  document.querySelector(`[data-task-menu="${CSS.escape(taskId)}"]`)?.focus();
+}
+
+function toggleTaskSubmenu(submenu) {
+  if (!tasksUi.menu) return;
+  tasksUi.menu.submenu = tasksUi.menu.submenu === submenu ? null : submenu;
+  render();
+  keepTaskMenuOnScreen();
+  document.querySelector(submenu === 'project' ? '[data-task-menu-move]' : '[data-task-menu-tags]')?.focus();
+}
+
+function handleTaskRowKeydown(event, item) {
+  const taskId = item.dataset.taskDetail;
+  if (event.key === 'Enter' && event.target === item) {
+    event.preventDefault();
+    openTaskDetail(taskId);
+    return;
+  }
+  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    event.preventDefault();
+    const bounds = item.getBoundingClientRect();
+    openTaskMenu(taskId, bounds.left + 24, bounds.bottom);
+    return;
+  }
+  // Option is offered alongside Control because macOS gives Control-Arrow to Mission Control.
+  if (!(event.ctrlKey || event.altKey) || event.metaKey || event.shiftKey) return;
+  const direction = {
+    ArrowUp: 'up',
+    ArrowDown: 'down',
+    ArrowRight: 'indent',
+    ArrowLeft: 'outdent',
+  }[event.key];
+  if (!direction) return;
+  event.preventDefault();
+  void moveTaskStep(taskId, direction);
+}
+
+async function moveTaskStep(taskId, direction) {
+  if (tasksUi.savingTaskId) return;
+  const task = state.tasks.items.find((candidate) => candidate.id === taskId);
+  if (!task) return;
+  if (!canReorder(tasksUi)) {
+    pageError = 'Switch to custom order without grouping before moving tasks.';
+    render();
+    return;
+  }
+  const scoped = taskSiblings(task);
+  const index = scoped.findIndex((candidate) => candidate.id === task.id);
+  let payload = null;
+
+  if (direction === 'up' || direction === 'down') {
+    const step = direction === 'up' ? -1 : 1;
+    const target = scoped[index + step];
+    if (!target) return;
+    const beforeTaskId = direction === 'up'
+      ? target.id
+      : scoped[index + 2]?.id || null;
+    payload = { taskId, beforeTaskId };
+  } else if (direction === 'indent') {
+    const previous = scoped[index - 1];
+    if (!previous) return;
+    payload = { taskId, parentTaskId: previous.id, beforeTaskId: null };
+  } else if (direction === 'outdent') {
+    if (!task.parentTaskId) return;
+    const parent = state.tasks.items.find((candidate) => candidate.id === task.parentTaskId);
+    if (!parent) return;
+    const grandparentSiblings = taskSiblings(parent);
+    const parentIndex = grandparentSiblings.findIndex((candidate) => candidate.id === parent.id);
+    payload = {
+      taskId,
+      parentTaskId: parent.parentTaskId || null,
+      beforeTaskId: grandparentSiblings[parentIndex + 1]?.id || null,
+    };
+  }
+  if (!payload) return;
+  await runTaskAction('/api/tasks/reorder', payload, null, { focusTaskId: taskId });
+}
+
+function taskSiblings(task) {
+  return state.tasks.items
+    .filter((candidate) => (candidate.parentTaskId || null) === (task.parentTaskId || null));
+}
+
+async function toggleTaskTag(taskId, tag, control, { add = false, keepMenu = false } = {}) {
+  const task = state.tasks.items.find((candidate) => candidate.id === taskId);
+  if (!task || !tag) return;
+  const current = task.tags || [];
+  const exists = current.some((entry) => normalizeTagKey(entry) === normalizeTagKey(tag));
+  const tags = exists && !add
+    ? current.filter((entry) => normalizeTagKey(entry) !== normalizeTagKey(tag))
+    : exists ? current : [...current, tag];
+  await runTaskAction('/api/tasks/tags', { taskId, tags }, control, { closeMenu: !keepMenu && Boolean(tasksUi.menu) });
+}
+
+async function runTaskAction(url, payload, control, { closeMenu = false, focusTaskId = null } = {}) {
+  if (tasksUi.savingTaskId) return;
+  pageError = null;
+  tasksUi.savingTaskId = payload.taskId;
+  if (control) markTaskControlSaving(control);
+  try {
+    state = await apiJson(url, jsonRequest(payload));
+  } catch (error) {
+    pageError = error.message;
+  } finally {
+    tasksUi.savingTaskId = null;
+    if (closeMenu) tasksUi.menu = null;
+    render();
+    const taskId = focusTaskId || payload.taskId;
+    document.querySelector(`.task-item[data-task-detail="${CSS.escape(taskId)}"]`)?.focus();
+  }
 }
 
 function openTaskDetail(taskId) {
@@ -787,21 +1115,24 @@ async function permanentlyDeleteTask(taskId) {
 async function createTaskFromForm(form, fixed = {}) {
   if (tasksUi.creating) return;
   const values = new FormData(form);
-  const title = String(values.get('title') || '').trim();
-  if (!title) return;
+  const parsed = parseTaskQuickAdd(String(values.get('title') || ''));
+  if (!parsed.title) return;
   const projectId = fixed.projectId !== undefined
     ? fixed.projectId
     : values.has('projectId') ? String(values.get('projectId') || '') || null : undefined;
   const dueDate = String(values.get('dueDate') || '') || null;
+  const priority = parsed.priority || String(values.get('priority') || '') || 'none';
   pageError = null;
   tasksUi.creating = true;
   form.querySelectorAll('input, select, button').forEach((control) => { control.disabled = true; });
   try {
     state = await apiJson('/api/tasks/create', jsonRequest({
-      title,
+      title: parsed.title,
       projectId,
       parentTaskId: fixed.parentTaskId,
       dueDate,
+      priority,
+      tags: parsed.tags,
     }));
     tasksUi.addingSubtaskToId = null;
     tasksUi.creating = false;
@@ -846,6 +1177,24 @@ async function changeTaskProject(taskId, projectId, control) {
   }
 }
 
+function parseTaskQuickAdd(raw) {
+  const tags = [];
+  let priority = null;
+  const title = raw
+    .replace(/(?:^|\s)#([^\s#!]{1,40})/g, (match, tag) => {
+      tags.push(tag.replace(/[-_]+/g, ' ').trim());
+      return ' ';
+    })
+    .replace(/(?:^|\s)!(high|medium|med|low|none|1|2|3)\b/gi, (match, token) => {
+      const value = token.toLowerCase();
+      priority = { 1: 'high', 2: 'medium', 3: 'low', med: 'medium' }[value] || value;
+      return ' ';
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { title: title || raw.trim(), priority, tags: tags.filter(Boolean) };
+}
+
 function markTaskControlSaving(control) {
   if (!control) return;
   control.disabled = true;
@@ -861,6 +1210,222 @@ function findTaskControl(selector, taskId) {
     || control.dataset.taskSubtaskOpen === taskId
     || control.dataset.taskSubtaskCreate === taskId
   ));
+}
+
+function bindTaskDragAndDrop() {
+  if (tasksUi.savingTaskId) return;
+  document.querySelectorAll('[data-task-drag-id]').forEach((item) => {
+    item.addEventListener('pointerdown', (event) => beginTaskPointerDrag(event, item));
+    item.addEventListener('click', (event) => {
+      if (item.dataset.taskDragSuppressClick !== 'true') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      delete item.dataset.taskDragSuppressClick;
+    }, true);
+  });
+}
+
+function beginTaskPointerDrag(event, item) {
+  if (event.isPrimary === false || (event.pointerType === 'mouse' && event.button !== 0)) return;
+  if (event.target.closest('input, select, textarea, a, .task-row-actions, .task-tag')) return;
+  cancelTaskPointerDrag();
+
+  const drag = {
+    taskId: item.dataset.taskDragId,
+    item,
+    pointerId: event.pointerId,
+    pointerType: event.pointerType,
+    startX: event.clientX,
+    startY: event.clientY,
+    started: false,
+    originDepth: currentTaskDepth(item.dataset.taskDragId),
+    preview: null,
+    line: null,
+    slotElements: [],
+    target: null,
+    dropFilter: null,
+    dropFilterButton: null,
+  };
+  drag.move = (moveEvent) => moveTaskPointerDrag(moveEvent, drag);
+  drag.end = (endEvent) => endTaskPointerDrag(endEvent, drag, true);
+  drag.cancel = (cancelEvent) => endTaskPointerDrag(cancelEvent, drag, false);
+  taskPointerDrag = drag;
+  window.addEventListener('pointermove', drag.move, { passive: false });
+  window.addEventListener('pointerup', drag.end);
+  window.addEventListener('pointercancel', drag.cancel);
+}
+
+function moveTaskPointerDrag(event, drag) {
+  if (taskPointerDrag !== drag || event.pointerId !== drag.pointerId) return;
+  const deltaX = event.clientX - drag.startX;
+  const deltaY = event.clientY - drag.startY;
+
+  if (!drag.started) {
+    if (Math.hypot(deltaX, deltaY) < 6) return;
+    startTaskPointerDrag(drag);
+  }
+  event.preventDefault();
+  drag.preview.style.transform = `translate3d(${event.clientX + 12}px, ${event.clientY + 10}px, 0)`;
+  updateTaskDropTarget(drag, event.clientX, event.clientY);
+}
+
+function startTaskPointerDrag(drag) {
+  drag.started = true;
+  drag.item.dataset.taskDragSuppressClick = 'true';
+  drag.item.classList.add('dragging');
+  drag.item.setPointerCapture?.(drag.pointerId);
+  document.body.classList.add('task-drag-active');
+  drag.slotElements = collectTaskDropSlots(drag.taskId);
+
+  const preview = drag.item.cloneNode(true);
+  preview.removeAttribute('data-task-drag-id');
+  preview.removeAttribute('data-task-detail');
+  preview.removeAttribute('tabindex');
+  preview.className = 'task-item task-drag-preview';
+  preview.setAttribute('aria-hidden', 'true');
+  preview.style.width = `${drag.item.getBoundingClientRect().width}px`;
+  preview.querySelectorAll('button, select, input, a').forEach((control) => control.setAttribute('tabindex', '-1'));
+  document.body.append(preview);
+  drag.preview = preview;
+
+  const line = document.createElement('div');
+  line.className = 'task-drop-line';
+  line.hidden = true;
+  document.body.append(line);
+  drag.line = line;
+}
+
+function collectTaskDropSlots(taskId) {
+  const excluded = new Set([taskId]);
+  const queue = [taskId];
+  while (queue.length) {
+    const current = queue.shift();
+    for (const child of state.tasks.items.filter((task) => task.parentTaskId === current)) {
+      excluded.add(child.id);
+      queue.push(child.id);
+    }
+  }
+  return [...document.querySelectorAll('.task-item[data-task-drag-id]')]
+    .filter((item) => !excluded.has(item.dataset.taskDragId))
+    .map((item) => ({
+      item,
+      task: state.tasks.items.find((candidate) => candidate.id === item.dataset.taskDragId),
+    }))
+    .filter((slot) => Boolean(slot.task));
+}
+
+function updateTaskDropTarget(drag, clientX, clientY) {
+  const dropFilterButton = document.elementFromPoint(clientX, clientY)?.closest('[data-task-drop-filter]') || null;
+  if (drag.dropFilterButton !== dropFilterButton) {
+    drag.dropFilterButton?.classList.remove('drop-target');
+    drag.dropFilterButton = dropFilterButton;
+    dropFilterButton?.classList.add('drop-target');
+  }
+  if (dropFilterButton) {
+    drag.dropFilter = dropFilterButton.dataset.taskDropFilter;
+    drag.target = null;
+    drag.line.hidden = true;
+    return;
+  }
+  drag.dropFilter = null;
+
+  const slots = drag.slotElements.map((slot) => ({ ...slot, bounds: slot.item.getBoundingClientRect() }));
+  if (!slots.length) {
+    drag.line.hidden = true;
+    return;
+  }
+  let insertIndex = slots.length;
+  for (const [index, slot] of slots.entries()) {
+    if (clientY < slot.bounds.top + slot.bounds.height / 2) {
+      insertIndex = index;
+      break;
+    }
+  }
+  const previous = slots[insertIndex - 1] || null;
+  const next = slots[insertIndex] || null;
+  const maxDepth = previous ? (previous.task.depth || 0) + 1 : 0;
+  const minDepth = next ? next.task.depth || 0 : 0;
+  const requestedDepth = drag.originDepth + Math.round((clientX - drag.startX) / TASK_INDENT_STEP);
+  const depth = Math.max(0, Math.max(minDepth, Math.min(maxDepth, requestedDepth)));
+
+  let parentTaskId = null;
+  if (depth > 0 && previous) {
+    let candidate = previous.task;
+    while (candidate && (candidate.depth || 0) >= depth) {
+      candidate = state.tasks.items.find((task) => task.id === candidate.parentTaskId) || null;
+    }
+    parentTaskId = candidate?.id || null;
+  }
+  const beforeTaskId = next && (next.task.parentTaskId || null) === parentTaskId ? next.task.id : null;
+  drag.target = { parentTaskId, beforeTaskId };
+
+  const reference = next?.bounds || previous?.bounds;
+  if (!reference) {
+    drag.line.hidden = true;
+    return;
+  }
+  drag.line.hidden = false;
+  drag.line.style.top = `${next ? reference.top : reference.bottom}px`;
+  const indent = Math.max(0, depth - (next?.task.depth || 0)) * TASK_INDENT_STEP;
+  drag.line.style.left = `${reference.left + indent}px`;
+  drag.line.style.width = `${Math.max(60, reference.width - indent)}px`;
+}
+
+function currentTaskDepth(taskId) {
+  return state.tasks.items.find((task) => task.id === taskId)?.depth || 0;
+}
+
+function endTaskPointerDrag(event, drag, shouldDrop) {
+  if (taskPointerDrag !== drag || event.pointerId !== drag.pointerId) return;
+  if (drag.started) event.preventDefault();
+  const { taskId, item, target, dropFilter } = drag;
+  const started = drag.started;
+  cancelTaskPointerDrag();
+
+  if (started) {
+    item.dataset.taskDragSuppressClick = 'true';
+    setTimeout(() => {
+      if (item.isConnected) delete item.dataset.taskDragSuppressClick;
+    }, 0);
+  }
+  if (!shouldDrop || !started) return;
+  if (dropFilter) {
+    void dropTaskOnFilter(taskId, dropFilter);
+    return;
+  }
+  if (target) void runTaskAction('/api/tasks/reorder', { taskId, ...target }, null, { focusTaskId: taskId });
+}
+
+async function dropTaskOnFilter(taskId, filter) {
+  const task = state.tasks.items.find((candidate) => candidate.id === taskId);
+  if (!task) return;
+  if (filter === 'inbox' || filter.startsWith('project:')) {
+    const projectId = filter === 'inbox' ? null : filter.slice(8);
+    if ((task.projectId || null) === projectId && !task.parentTaskId) return;
+    if (task.parentTaskId) {
+      await runTaskAction('/api/tasks/reorder', { taskId, parentTaskId: null, beforeTaskId: null }, null, { focusTaskId: taskId });
+    }
+    await runTaskAction('/api/tasks/project', { taskId, projectId }, null, { focusTaskId: taskId });
+    return;
+  }
+  if (filter.startsWith('tag:')) {
+    await toggleTaskTag(taskId, filter.slice(4), null, { add: true });
+  }
+}
+
+function cancelTaskPointerDrag() {
+  const drag = taskPointerDrag;
+  if (!drag) return;
+  taskPointerDrag = null;
+  window.removeEventListener('pointermove', drag.move);
+  window.removeEventListener('pointerup', drag.end);
+  window.removeEventListener('pointercancel', drag.cancel);
+  drag.item.classList.remove('dragging');
+  if (drag.item.hasPointerCapture?.(drag.pointerId)) drag.item.releasePointerCapture(drag.pointerId);
+  drag.dropFilterButton?.classList.remove('drop-target');
+  drag.preview?.remove();
+  drag.line?.remove();
+  document.body.classList.remove('task-drag-active');
 }
 
 function bindReadingEvents() {
@@ -2208,16 +2773,56 @@ function validTab(value) {
 }
 
 function parseTaskFilter(value) {
-  if (value === 'inbox' || String(value || '').startsWith('project:')) return String(value);
+  const filter = String(value || '');
+  if (['inbox', 'today', 'next7'].includes(filter)) return filter;
+  if (filter.startsWith('project:') || filter.startsWith('tag:')) return filter;
   return 'all';
 }
 
 function validTaskFilter(value) {
-  if (value === 'inbox') return value;
-  if (String(value || '').startsWith('project:') && state?.projects.some((project) => project.id === value.slice(8))) {
-    return value;
+  const filter = String(value || '');
+  if (['inbox', 'today', 'next7'].includes(filter)) return filter;
+  if (filter.startsWith('project:') && state?.projects.some((project) => project.id === filter.slice(8))) {
+    return filter;
+  }
+  if (filter.startsWith('tag:') && filter.length > 4) {
+    const known = (state?.tasks.items || [])
+      .flatMap((task) => task.tags || [])
+      .find((tag) => normalizeTagKey(tag) === normalizeTagKey(filter.slice(4)));
+    return known ? `tag:${known}` : 'all';
   }
   return 'all';
+}
+
+function normalizeTagKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function loadTaskViewPreferences() {
+  let stored = {};
+  try {
+    stored = JSON.parse(localStorage.getItem(TASK_VIEW_STORAGE_KEY) || '{}');
+  } catch {
+    stored = {};
+  }
+  if (TASK_GROUPINGS.includes(stored.groupBy)) tasksUi.groupBy = stored.groupBy;
+  if (TASK_SORTS.includes(stored.sortBy)) tasksUi.sortBy = stored.sortBy;
+  if (TASK_DENSITIES.includes(stored.density)) tasksUi.density = stored.density;
+  if (typeof stored.showCompleted === 'boolean') tasksUi.showCompleted = stored.showCompleted;
+}
+
+function saveTaskViewPreferences() {
+  localStorage.setItem(TASK_VIEW_STORAGE_KEY, JSON.stringify({
+    groupBy: tasksUi.groupBy,
+    sortBy: tasksUi.sortBy,
+    density: tasksUi.density,
+    showCompleted: tasksUi.showCompleted,
+  }));
 }
 
 function heatmapColor(value) {

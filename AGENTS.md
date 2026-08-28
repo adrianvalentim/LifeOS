@@ -9,8 +9,10 @@ For implementation work, read [`PROJECT_STATE.md`](PROJECT_STATE.md) first. It i
 ```bash
 npm run lifeos -- projects --health
 npm run lifeos -- tasks --project "Portia"
-npm run lifeos -- tasks add --title "Draft Act III" --project "Portia"
+npm run lifeos -- tasks add --title "Draft Act III" --project "Portia" --priority high --tag writing
 npm run lifeos -- tasks complete --task "Draft Act III"
+npm run lifeos -- tasks priority --task "Draft Act III" --priority medium
+npm run lifeos -- tasks tag --task "Draft Act III" --tag writing --tag "deep work"
 npm run lifeos -- stats --range week
 npm run lifeos -- stats --category "Infinitamente" --range year
 npm run lifeos -- recommend
@@ -38,7 +40,7 @@ Use `--json` on read commands when structured output helps. Do not inspect the b
 - `scripts/dev-server.mjs` — dependency-free web server, JSON routes, live refresh, and Codex relay.
 - `src-tauri/` — source-backed Tauri development shell; it starts the repository's Node server and opens its loopback URL in WKWebView.
 - `public/` — V2 Editorial browser UI.
-- `public/tasks.js` and `public/tasks.css` — Tasks workspace, nested task tree, and project-detail task controls.
+- `public/tasks.js` and `public/tasks.css` — Tasks workspace, nested task tree, context menu, grouping/sorting view options, and project-detail task controls.
 - `scripts/create-demo-data.mjs` — generates both demo files; `--write-active` overwrites the active store.
 - `design plan/` — original visual references; do not revise unless asked.
 
@@ -53,6 +55,9 @@ Use `--json` on read commands when structured output helps. Do not inspect the b
 - Project statuses are `to_do`, `next_up`, `doing`, `done`, or `dropped`; the Projects Kanban intentionally shows only `next_up`, `doing`, and `done`, while the list and project detail keep all five reachable.
 - Project categories are reusable many-to-many labels referenced by stable category IDs. Category analytics includes current project membership plus category-only history preserved when a project is deleted.
 - Tasks live in one `tasks.items[]` collection. A task can be in Inbox or reference one project; subtasks inherit the project of their parent. Completing a parent completes its descendants, while adding a subtask reopens completed ancestors. Task notes are multiline text stored on the task. Deleting a task removes its subtree, while deleting a project moves its task tree to Inbox rather than deleting it.
+- Task priority is exactly `none`, `low`, `medium`, or `high`. Task tags are free-form labels normalized and deduplicated case-insensitively, at most 12 per task, following the reading-tag rules.
+- `sortOrder` is the manual sibling order and is deliberately independent of status, so reopening a task never reshuffles it. Re-parenting carries the whole subtree into the new parent's project and rejects nesting a task under its own descendant.
+- Task grouping, sorting, smart lists (Today, Next 7 days), tag scopes, and their counts are derived in the browser from priority, tags, due date, and status. Never persist a group, a smart-list membership, or a tag index. Tasks view preferences live in `localStorage`, never in the portable store.
 - Task progress is derived from task status across each subtree or project; never persist a second progress total. The schedule envelope reserves due date, optional start time, duration, and recurrence, but recurrence and calendar synchronization are not implemented.
 - Keep the personal store outside Git. Cloud snapshots are secondary copies and must never become the live store.
 - Google Drive backup must be configured to one explicit folder; do not guess between accounts. Backup failure must not invalidate a successful local write.

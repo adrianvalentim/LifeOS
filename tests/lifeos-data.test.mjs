@@ -14,20 +14,25 @@ import {
   deleteProject,
   deleteReadingBook,
   deleteTask,
+  duplicateTask,
   logTime,
   migrateStore,
   parseDurationToMinutes,
   readStore,
   reorderReadingBook,
+  reorderTask,
   setProjectStatus,
   setReadingBookStatus,
   setTaskCompletion,
+  setTaskPriority,
   setTaskProject,
+  setTaskSchedule,
   startSession,
   stopSession,
   updateReadingBookFinishedDate,
   updateReadingBookTags,
   updateTask,
+  updateTaskTags,
   validateStore,
 } from '../src/lifeos-data.mjs';
 
@@ -139,14 +144,14 @@ test('calendar dates honor the configured timezone', () => {
   assert.equal(dateOnly('2026-08-23T03:00:00Z', 'America/Sao_Paulo'), '2026-08-23');
 });
 
-test('older stores migrate to schema version 8 with Reading, project categories, tasks, and task notes', async () => {
+test('older stores migrate to schema version 9 with Reading, project categories, tasks, notes, priority, and tags', async () => {
   const store = await readStore(DEMO_STORE_PATH);
   delete store.reading;
   delete store.tasks;
   store.meta.schemaVersion = 2;
   const migrated = migrateStore(store);
 
-  assert.equal(migrated.meta.schemaVersion, 8);
+  assert.equal(migrated.meta.schemaVersion, 9);
   assert.deepEqual(migrated.reading, { books: [] });
   assert.deepEqual(migrated.tasks, { items: [] });
   assert.doesNotThrow(() => validateStore(migrated));
@@ -155,7 +160,7 @@ test('older stores migrate to schema version 8 with Reading, project categories,
   versionThree.meta.schemaVersion = 3;
   for (const book of versionThree.reading.books) delete book.tags;
   const tagged = migrateStore(versionThree);
-  assert.equal(tagged.meta.schemaVersion, 8);
+  assert.equal(tagged.meta.schemaVersion, 9);
   assert.ok(tagged.reading.books.every((book) => Array.isArray(book.tags) && book.tags.length === 0));
 
   const versionFour = await readStore(DEMO_STORE_PATH);
@@ -163,7 +168,7 @@ test('older stores migrate to schema version 8 with Reading, project categories,
   for (const project of versionFour.projects) project.status = 'active';
   versionFour.projects.at(-1).status = 'inactive';
   const projectStatuses = migrateStore(versionFour);
-  assert.equal(projectStatuses.meta.schemaVersion, 8);
+  assert.equal(projectStatuses.meta.schemaVersion, 9);
   assert.ok(projectStatuses.projects.slice(0, -1).every((project) => project.status === 'next_up'));
   assert.equal(projectStatuses.projects.at(-1).status, 'dropped');
 
@@ -173,7 +178,7 @@ test('older stores migrate to schema version 8 with Reading, project categories,
   for (const project of versionFive.projects) delete project.categoryIds;
   for (const entry of versionFive.timeEntries) delete entry.categoryIds;
   const categorized = migrateStore(versionFive);
-  assert.equal(categorized.meta.schemaVersion, 8);
+  assert.equal(categorized.meta.schemaVersion, 9);
   assert.deepEqual(categorized.categories, {});
   assert.ok(categorized.projects.every((project) => Array.isArray(project.categoryIds)));
   assert.ok(categorized.timeEntries.every((entry) => Array.isArray(entry.categoryIds)));
@@ -182,15 +187,27 @@ test('older stores migrate to schema version 8 with Reading, project categories,
   versionSix.meta.schemaVersion = 6;
   delete versionSix.tasks;
   const tasked = migrateStore(versionSix);
-  assert.equal(tasked.meta.schemaVersion, 8);
+  assert.equal(tasked.meta.schemaVersion, 9);
   assert.deepEqual(tasked.tasks, { items: [] });
 
   const versionSeven = await readStore(DEMO_STORE_PATH);
   versionSeven.meta.schemaVersion = 7;
   for (const task of versionSeven.tasks.items) delete task.notes;
   const noted = migrateStore(versionSeven);
-  assert.equal(noted.meta.schemaVersion, 8);
+  assert.equal(noted.meta.schemaVersion, 9);
   assert.ok(noted.tasks.items.every((task) => task.notes === ''));
+
+  const versionEight = await readStore(DEMO_STORE_PATH);
+  versionEight.meta.schemaVersion = 8;
+  for (const task of versionEight.tasks.items) {
+    delete task.priority;
+    delete task.tags;
+  }
+  const prioritized = migrateStore(versionEight);
+  assert.equal(prioritized.meta.schemaVersion, 9);
+  assert.ok(prioritized.tasks.items.every((task) => task.priority === 'none'));
+  assert.ok(prioritized.tasks.items.every((task) => Array.isArray(task.tags) && task.tags.length === 0));
+  assert.doesNotThrow(() => validateStore(prioritized));
 });
 
 test('projects move across the five-status workflow and completed work leaves active recommendations', async () => {
@@ -382,6 +399,164 @@ test('task details persist multiline notes and deleting a task removes only its 
   assert.equal(deleted.state.tasks.items.some((task) => task.id === sibling.task.id), true);
   assert.equal(deleted.state.tasks.items.find((task) => task.id === root.task.id).subtreeTotal, 2);
   await assert.rejects(deleteTask({ taskId: child.task.id }, tmp.storePath), /Task not found/);
+});
+
+test('tasks carry a validated priority and normalized tag set', async () => {
+  const tmp = await makeStoreCopy('lifeos-task-labels-');
+  const created = await createTask({
+    title: 'Send the festival submission',
+    priority: 'high',
+    tags: ['Admin', 'admin', '  deadlines  ', ''],
+    now: FIXED_NOW,
+  }, tmp.storePath);
+
+  assert.equal(created.task.priority, 'high');
+  assert.deepEqual(created.task.tags, ['Admin', 'deadlines']);
+
+  const lowered = await setTaskPriority({ taskId: created.task.id, priority: 'low', now: FIXED_NOW }, tmp.storePath);
+  assert.equal(lowered.task.priority, 'low');
+  await assert.rejects(
+    setTaskPriority({ taskId: created.task.id, priority: 'urgent' }, tmp.storePath),
+    /Task priority must be one of/,
+  );
+
+  const retagged = await updateTaskTags({
+    taskId: created.task.id,
+    tags: ['Deadlines', 'festival'],
+    now: FIXED_NOW,
+  }, tmp.storePath);
+  assert.deepEqual(retagged.task.tags, ['Deadlines', 'festival']);
+  await assert.rejects(updateTaskTags({ taskId: created.task.id, tags: 'festival' }, tmp.storePath), /must be an array/);
+
+  const untouched = await readStore(tmp.storePath);
+  untouched.tasks.items.find((task) => task.id === created.task.id).priority = 'someday';
+  assert.throws(() => validateStore(untouched), /unknown priority/);
+});
+
+test('a task due date can be set and cleared without disturbing the rest of its schedule', async () => {
+  const tmp = await makeStoreCopy('lifeos-task-schedule-');
+  const created = await createTask({
+    title: 'Book the mixing room',
+    dueDate: '2026-08-25',
+    startTime: '14:00',
+    durationMinutes: 90,
+    now: FIXED_NOW,
+  }, tmp.storePath);
+
+  const moved = await setTaskSchedule({ taskId: created.task.id, dueDate: '2026-08-27', now: FIXED_NOW }, tmp.storePath);
+  assert.deepEqual(moved.task.schedule, {
+    dueDate: '2026-08-27',
+    startTime: '14:00',
+    durationMinutes: 90,
+    recurrence: null,
+  });
+
+  const cleared = await setTaskSchedule({
+    taskId: created.task.id,
+    dueDate: null,
+    startTime: null,
+    now: FIXED_NOW,
+  }, tmp.storePath);
+  assert.equal(cleared.task.schedule.dueDate, null);
+  assert.equal(cleared.task.schedule.startTime, null);
+});
+
+test('reordering places a task among its siblings, re-parents subtrees, and refuses cycles', async () => {
+  const tmp = await makeStoreCopy('lifeos-task-reorder-');
+  const first = await createTask({ title: 'First', projectId: 'portia', now: FIXED_NOW }, tmp.storePath);
+  const second = await createTask({ title: 'Second', projectId: 'portia', now: FIXED_NOW }, tmp.storePath);
+  const third = await createTask({ title: 'Third', projectId: 'portia', now: FIXED_NOW }, tmp.storePath);
+  const childOfThird = await createTask({ title: 'Third child', parentTaskId: third.task.id, now: FIXED_NOW }, tmp.storePath);
+
+  const moved = await reorderTask({
+    taskId: third.task.id,
+    parentTaskId: null,
+    beforeTaskId: first.task.id,
+    now: FIXED_NOW,
+  }, tmp.storePath);
+  const rootOrder = moved.state.tasks.items
+    .filter((task) => task.parentTaskId == null && task.projectId === 'portia')
+    .map((task) => task.title)
+    .filter((title) => ['First', 'Second', 'Third'].includes(title));
+  assert.deepEqual(rootOrder, ['Third', 'First', 'Second']);
+
+  const nested = await reorderTask({
+    taskId: second.task.id,
+    parentTaskId: first.task.id,
+    beforeTaskId: null,
+    now: FIXED_NOW,
+  }, tmp.storePath);
+  const nestedTask = nested.state.tasks.items.find((task) => task.id === second.task.id);
+  assert.equal(nestedTask.parentTaskId, first.task.id);
+  assert.equal(nestedTask.depth, 1);
+
+  const inbox = await reorderTask({ taskId: first.task.id, parentTaskId: null, now: FIXED_NOW }, tmp.storePath);
+  assert.equal(inbox.state.tasks.items.find((task) => task.id === second.task.id).projectId, 'portia');
+
+  await assert.rejects(
+    reorderTask({ taskId: third.task.id, parentTaskId: childOfThird.task.id }, tmp.storePath),
+    /cannot be nested under one of its own subtasks/,
+  );
+  await assert.rejects(
+    reorderTask({ taskId: third.task.id, parentTaskId: third.task.id }, tmp.storePath),
+    /cannot be nested under itself/,
+  );
+  await assert.rejects(
+    reorderTask({ taskId: third.task.id, beforeTaskId: 'missing-task' }, tmp.storePath),
+    /Task position target not found/,
+  );
+});
+
+test('re-parenting a task carries its whole subtree into the new list', async () => {
+  const tmp = await makeStoreCopy('lifeos-task-reparent-');
+  const before = buildState(await readStore(tmp.storePath), { now: FIXED_NOW });
+  const inboxRoot = await createTask({ title: 'Loose thread', now: FIXED_NOW }, tmp.storePath);
+  const inboxChild = await createTask({ title: 'Loose detail', parentTaskId: inboxRoot.task.id, now: FIXED_NOW }, tmp.storePath);
+  const projectRoot = await createTask({ title: 'Release plan', projectId: 'vulcano', now: FIXED_NOW }, tmp.storePath);
+
+  const adopted = await reorderTask({
+    taskId: inboxRoot.task.id,
+    parentTaskId: projectRoot.task.id,
+    beforeTaskId: null,
+    now: FIXED_NOW,
+  }, tmp.storePath);
+
+  assert.equal(adopted.state.tasks.items.find((task) => task.id === inboxRoot.task.id).projectId, 'vulcano');
+  assert.equal(adopted.state.tasks.items.find((task) => task.id === inboxChild.task.id).projectId, 'vulcano');
+  assert.equal(
+    adopted.state.tasks.summary.inbox.total,
+    before.tasks.summary.inbox.total,
+  );
+});
+
+test('duplicating a task copies its subtree with new ids directly beneath the original', async () => {
+  const tmp = await makeStoreCopy('lifeos-task-duplicate-');
+  const root = await createTask({
+    title: 'Weekly review',
+    projectId: 'portia',
+    priority: 'medium',
+    tags: ['ritual'],
+    notes: 'Read last week first.',
+    now: FIXED_NOW,
+  }, tmp.storePath);
+  await createTask({ title: 'Skim the log', parentTaskId: root.task.id, now: FIXED_NOW }, tmp.storePath);
+  const trailing = await createTask({ title: 'Something after', projectId: 'portia', now: FIXED_NOW }, tmp.storePath);
+
+  const copied = await duplicateTask({ taskId: root.task.id, now: FIXED_NOW }, tmp.storePath);
+  assert.equal(copied.copiedCount, 2);
+  assert.notEqual(copied.task.id, root.task.id);
+  assert.equal(copied.task.title, 'Weekly review');
+  assert.equal(copied.task.priority, 'medium');
+  assert.deepEqual(copied.task.tags, ['ritual']);
+  assert.equal(copied.task.notes, 'Read last week first.');
+
+  const copiedTree = copied.state.tasks.items.find((task) => task.id === copied.task.id);
+  assert.equal(copiedTree.subtreeTotal, 2);
+  const order = copied.state.tasks.items
+    .filter((task) => task.parentTaskId == null && task.projectId === 'portia')
+    .map((task) => task.id);
+  assert.equal(order.indexOf(copied.task.id), order.indexOf(root.task.id) + 1);
+  assert.ok(order.indexOf(trailing.task.id) > order.indexOf(copied.task.id));
 });
 
 test('top-level project assignment cascades through a task tree and project deletion preserves tasks in Inbox', async () => {

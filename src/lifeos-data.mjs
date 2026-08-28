@@ -10,7 +10,7 @@ import {
 } from './lifeos-storage.mjs';
 
 export { DEFAULT_STORE_PATH, DEMO_STORE_PATH, ROOT_DIR } from './lifeos-storage.mjs';
-export const CURRENT_SCHEMA_VERSION = 8;
+export const CURRENT_SCHEMA_VERSION = 9;
 export const ACTIVITY_TYPES = [
   'deep_work',
   'shallow_work',
@@ -22,11 +22,13 @@ export const ACTIVITY_TYPES = [
 export const PROJECT_STATUSES = ['to_do', 'next_up', 'doing', 'done', 'dropped'];
 export const READING_STATUSES = ['to_read', 'next_up', 'reading', 'finished', 'dropped'];
 export const TASK_STATUSES = ['open', 'completed'];
+export const TASK_PRIORITIES = ['none', 'low', 'medium', 'high'];
 
 const HEALTH_ORDER = { critical: 0, attention: 1, healthy: 2 };
 const ACTIVE_PROJECT_STATUSES = new Set(['to_do', 'next_up', 'doing']);
 const READING_STATUS_ORDER = Object.fromEntries(READING_STATUSES.map((status, index) => [status, index]));
 const TASK_STATUS_ORDER = Object.fromEntries(TASK_STATUSES.map((status, index) => [status, index]));
+const MAX_TASK_TAGS = 12;
 const DAY_MS = 86_400_000;
 const LOCK_TIMEOUT_MS = 5_000;
 const STALE_LOCK_MS = 30_000;
@@ -147,6 +149,12 @@ export function migrateStore(input) {
   if (version < 8) {
     for (const task of store.tasks?.items || []) {
       if (typeof task.notes !== 'string') task.notes = '';
+    }
+  }
+  if (version < 9) {
+    for (const task of store.tasks?.items || []) {
+      if (!TASK_PRIORITIES.includes(task.priority)) task.priority = 'none';
+      if (!Array.isArray(task.tags)) task.tags = [];
     }
   }
   if (store.meta) store.meta.schemaVersion = CURRENT_SCHEMA_VERSION;
@@ -275,6 +283,10 @@ export function validateStore(store) {
     if (!Number.isFinite(Number(task.sortOrder))) {
       throw new Error(`Task ${task.id} needs a finite sortOrder.`);
     }
+    if (!TASK_PRIORITIES.includes(task.priority)) {
+      throw new Error(`Task ${task.id} has unknown priority ${task.priority}.`);
+    }
+    validateTaskTags(task.tags, task.id);
     validateTaskTimestamp(task.createdAt, `Task ${task.id} createdAt`);
     validateTaskTimestamp(task.updatedAt, `Task ${task.id} updatedAt`);
     if (task.status === 'completed') {
@@ -320,6 +332,21 @@ function validateCategoryIds(values, knownIds, owner) {
 
 function validateTaskTimestamp(value, label) {
   if (!value || Number.isNaN(new Date(value).getTime())) throw new Error(`${label} must be a valid timestamp.`);
+}
+
+function validateTaskTags(tags, taskId) {
+  if (!Array.isArray(tags) || tags.length > MAX_TASK_TAGS) {
+    throw new Error(`Task ${taskId} needs no more than ${MAX_TASK_TAGS} tags.`);
+  }
+  const normalizedTags = new Set();
+  for (const tag of tags) {
+    const cleanTag = String(tag || '').trim();
+    const normalized = normalizeText(cleanTag);
+    if (!cleanTag || cleanTag.length > 40 || !normalized || normalizedTags.has(normalized)) {
+      throw new Error(`Task ${taskId} has invalid or duplicate tags.`);
+    }
+    normalizedTags.add(normalized);
+  }
 }
 
 function validateTaskSchedule(schedule, taskId) {
@@ -737,6 +764,8 @@ export async function createTask(input, storePath = DEFAULT_STORE_PATH) {
       projectId,
       parentTaskId,
       status: 'open',
+      priority: cleanTaskPriority(input.priority),
+      tags: cleanTaskTags(input.tags),
       sortOrder: nextTaskSortOrder(current.tasks.items, parentTaskId),
       schedule,
       createdAt: input.createdAt || timestamp,
@@ -836,6 +865,155 @@ export async function setTaskProject(input, storePath = DEFAULT_STORE_PATH) {
       affectedCount += 1;
     }
     return { task: existing, affectedCount };
+  }, storePath);
+  return { ...result, state: buildState(store, { now }) };
+}
+
+export async function setTaskPriority(input, storePath = DEFAULT_STORE_PATH) {
+  const priority = cleanTaskPriority(input.priority, { required: true });
+  const now = resolveNow(input.now);
+  const { result: task, store } = await mutateStore((current) => {
+    const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
+    if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    if (existing.priority !== priority) {
+      existing.priority = priority;
+      existing.updatedAt = now.toISOString();
+    }
+    return existing;
+  }, storePath);
+  return { task, state: buildState(store, { now }) };
+}
+
+export async function updateTaskTags(input, storePath = DEFAULT_STORE_PATH) {
+  if (!Array.isArray(input.tags)) throw new Error('Task tags must be an array.');
+  const tags = cleanTaskTags(input.tags);
+  const now = resolveNow(input.now);
+  const { result: task, store } = await mutateStore((current) => {
+    const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
+    if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    if (existing.tags.join('\u0000') !== tags.join('\u0000')) {
+      existing.tags = tags;
+      existing.updatedAt = now.toISOString();
+    }
+    return existing;
+  }, storePath);
+  return { task, state: buildState(store, { now }) };
+}
+
+export async function setTaskSchedule(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const { result: task, store } = await mutateStore((current) => {
+    const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
+    if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    const schedule = normalizeTaskSchedule({
+      dueDate: Object.hasOwn(input, 'dueDate') ? input.dueDate : existing.schedule.dueDate,
+      startTime: Object.hasOwn(input, 'startTime') ? input.startTime : existing.schedule.startTime,
+      durationMinutes: Object.hasOwn(input, 'durationMinutes')
+        ? input.durationMinutes
+        : existing.schedule.durationMinutes,
+    });
+    if (JSON.stringify(existing.schedule) !== JSON.stringify(schedule)) {
+      existing.schedule = schedule;
+      existing.updatedAt = now.toISOString();
+    }
+    return existing;
+  }, storePath);
+  return { task, state: buildState(store, { now }) };
+}
+
+export async function reorderTask(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const beforeTaskId = input.beforeTaskId === null || input.beforeTaskId === undefined
+    ? null
+    : String(input.beforeTaskId).trim();
+  const { result: task, store } = await mutateStore((current) => {
+    const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
+    if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+
+    const keepParent = !Object.hasOwn(input, 'parentTaskId');
+    const requestedParentId = keepParent
+      ? existing.parentTaskId || null
+      : input.parentTaskId === null || input.parentTaskId === undefined || input.parentTaskId === ''
+        ? null
+        : String(input.parentTaskId).trim();
+    if (requestedParentId === existing.id) throw new Error('A task cannot be nested under itself.');
+
+    const descendants = taskDescendants(current.tasks.items, existing.id);
+    if (requestedParentId && descendants.some((task) => task.id === requestedParentId)) {
+      throw new Error('A task cannot be nested under one of its own subtasks.');
+    }
+    const parent = requestedParentId
+      ? current.tasks.items.find((candidate) => candidate.id === requestedParentId)
+      : null;
+    if (requestedParentId && !parent) throw new Error(`Parent task not found: ${requestedParentId}`);
+
+    const timestamp = now.toISOString();
+    const projectId = parent ? parent.projectId || null : existing.projectId || null;
+    if (existing.parentTaskId !== requestedParentId) {
+      existing.parentTaskId = requestedParentId;
+      existing.updatedAt = timestamp;
+    }
+    for (const member of [existing, ...descendants]) {
+      if ((member.projectId || null) === projectId) continue;
+      member.projectId = projectId;
+      member.updatedAt = timestamp;
+    }
+
+    const siblings = current.tasks.items
+      .filter((candidate) => (candidate.parentTaskId || null) === requestedParentId && candidate.id !== existing.id)
+      .sort(compareTaskOrder);
+    const targetIndex = beforeTaskId === null
+      ? siblings.length
+      : siblings.findIndex((candidate) => candidate.id === beforeTaskId);
+    if (targetIndex < 0) throw new Error(`Task position target not found: ${beforeTaskId}`);
+    siblings.splice(targetIndex, 0, existing);
+    for (const [index, sibling] of siblings.entries()) {
+      const sortOrder = index + 1;
+      if (Number(sibling.sortOrder) === sortOrder) continue;
+      sibling.sortOrder = sortOrder;
+      sibling.updatedAt = timestamp;
+    }
+    return existing;
+  }, storePath);
+  return { task, state: buildState(store, { now }) };
+}
+
+export async function duplicateTask(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const { result, store } = await mutateStore((current) => {
+    const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
+    if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    const timestamp = now.toISOString();
+    const copies = [];
+    const copySubtree = (source, parentTaskId) => {
+      const copy = {
+        ...structuredClone(source),
+        id: randomUUID(),
+        parentTaskId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      copies.push(copy);
+      for (const child of current.tasks.items.filter((candidate) => candidate.parentTaskId === source.id)) {
+        copySubtree(child, copy.id);
+      }
+      return copy;
+    };
+    const root = copySubtree(existing, existing.parentTaskId || null);
+    current.tasks.items.push(...copies);
+
+    const siblings = current.tasks.items
+      .filter((candidate) => (candidate.parentTaskId || null) === (existing.parentTaskId || null) && candidate.id !== root.id)
+      .sort(compareTaskOrder);
+    const targetIndex = siblings.findIndex((candidate) => candidate.id === existing.id) + 1;
+    siblings.splice(targetIndex, 0, root);
+    for (const [index, sibling] of siblings.entries()) {
+      const sortOrder = index + 1;
+      if (Number(sibling.sortOrder) === sortOrder) continue;
+      sibling.sortOrder = sortOrder;
+      sibling.updatedAt = timestamp;
+    }
+    return { task: root, copiedCount: copies.length };
   }, storePath);
   return { ...result, state: buildState(store, { now }) };
 }
@@ -1335,6 +1513,33 @@ function cleanTaskTitle(value) {
   return title;
 }
 
+function cleanTaskPriority(value, { required = false } = {}) {
+  if (value === null || value === undefined || value === '') {
+    if (required) throw new Error(`Task priority must be one of ${TASK_PRIORITIES.join(', ')}.`);
+    return 'none';
+  }
+  const priority = String(value).trim().toLowerCase();
+  if (!TASK_PRIORITIES.includes(priority)) {
+    throw new Error(`Task priority must be one of ${TASK_PRIORITIES.join(', ')}.`);
+  }
+  return priority;
+}
+
+function cleanTaskTags(value) {
+  if (!Array.isArray(value)) return [];
+  const tags = [];
+  const seen = new Set();
+  for (const item of value) {
+    const tag = String(item ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    const normalized = normalizeText(tag);
+    if (!tag || !normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    tags.push(tag);
+    if (tags.length === MAX_TASK_TAGS) break;
+  }
+  return tags;
+}
+
 function cleanTaskNotes(value) {
   return String(value ?? '')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
@@ -1481,8 +1686,12 @@ function nextTaskSortOrder(items, parentTaskId) {
 
 function compareTasks(a, b) {
   const statusDelta = TASK_STATUS_ORDER[a.status] - TASK_STATUS_ORDER[b.status];
+  return statusDelta || compareTaskOrder(a, b);
+}
+
+function compareTaskOrder(a, b) {
   const orderDelta = Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
-  return statusDelta || orderDelta || a.title.localeCompare(b.title);
+  return orderDelta || a.title.localeCompare(b.title);
 }
 
 function resolveProjectForEntry(store, input) {

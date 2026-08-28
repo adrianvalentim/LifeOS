@@ -14,19 +14,24 @@ import {
   deleteProject,
   deleteReadingBook,
   deleteTask,
+  duplicateTask,
   getState,
   logTime,
   readStore,
   reorderReadingBook,
+  reorderTask,
   setProjectStatus,
   setReadingBookStatus,
   setTaskCompletion,
+  setTaskPriority,
   setTaskProject,
+  setTaskSchedule,
   startSession,
   stopSession,
   updateReadingBookFinishedDate,
   updateReadingBookTags,
   updateTask,
+  updateTaskTags,
 } from '../src/lifeos-data.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -89,6 +94,8 @@ const server = createServer(async (req, res) => {
       requireString(body.title, 'title');
       if (body.projectId !== null && body.projectId !== undefined) requireString(body.projectId, 'projectId');
       if (body.parentTaskId !== null && body.parentTaskId !== undefined) requireString(body.parentTaskId, 'parentTaskId');
+      if (body.priority !== undefined) requireString(body.priority, 'priority');
+      if (body.tags !== undefined && !Array.isArray(body.tags)) throw new ClientError('tags must be an array.');
       return sendJson(res, await taskStateAction(() => createTask(body)));
     }
     if (url.pathname === '/api/tasks/update' && req.method === 'POST') {
@@ -114,6 +121,38 @@ const server = createServer(async (req, res) => {
       requireString(body.taskId, 'taskId');
       if (body.projectId !== null) requireString(body.projectId, 'projectId');
       return sendJson(res, await taskStateAction(() => setTaskProject(body)));
+    }
+    if (url.pathname === '/api/tasks/priority' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.taskId, 'taskId');
+      requireString(body.priority, 'priority');
+      return sendJson(res, await taskStateAction(() => setTaskPriority(body)));
+    }
+    if (url.pathname === '/api/tasks/tags' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.taskId, 'taskId');
+      if (!Array.isArray(body.tags)) throw new ClientError('tags must be an array.');
+      return sendJson(res, await taskStateAction(() => updateTaskTags(body)));
+    }
+    if (url.pathname === '/api/tasks/schedule' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.taskId, 'taskId');
+      if (body.dueDate !== null && body.dueDate !== undefined && typeof body.dueDate !== 'string') {
+        throw new ClientError('dueDate must be a YYYY-MM-DD string or null.');
+      }
+      return sendJson(res, await taskStateAction(() => setTaskSchedule(body)));
+    }
+    if (url.pathname === '/api/tasks/reorder' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.taskId, 'taskId');
+      if (body.parentTaskId !== null && body.parentTaskId !== undefined) requireString(body.parentTaskId, 'parentTaskId');
+      if (body.beforeTaskId !== null && body.beforeTaskId !== undefined) requireString(body.beforeTaskId, 'beforeTaskId');
+      return sendJson(res, await taskStateAction(() => reorderTask(body)));
+    }
+    if (url.pathname === '/api/tasks/duplicate' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.taskId, 'taskId');
+      return sendJson(res, await taskStateAction(() => duplicateTask(body)));
     }
     if (url.pathname === '/api/books/search' && req.method === 'GET') {
       const query = url.searchParams.get('q') || '';
@@ -391,7 +430,7 @@ async function taskStateAction(action) {
   try {
     return (await action()).state;
   } catch (error) {
-    if (/Task not found|Parent task not found|Project not found|task title|task notes|task update|task must|top-level task|Task completion|Task due date|Task start time|Task duration|Recurring tasks|start time requires/.test(error.message)) {
+    if (/Task not found|Parent task not found|Project not found|Task position target not found|task title|task notes|task update|task must|task cannot|top-level task|Task completion|Task priority|Task tags|Task due date|Task start time|Task duration|Recurring tasks|start time requires|no more than/.test(error.message)) {
       throw new ClientError(error.message);
     }
     throw error;

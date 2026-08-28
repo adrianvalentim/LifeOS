@@ -327,7 +327,7 @@ are derived. Do not persist them as parallel display fields.
 ### `tasks.items[]`
 
 Schema version 7 added one shared task collection; version 8 adds persisted task
-notes. Tasks are independent records,
+notes; version 9 adds priority and tags. Tasks are independent records,
 not embedded inside projects, so Inbox tasks and project tasks use the same
 operations and can be reassigned without copying data. Every task requires:
 
@@ -336,6 +336,9 @@ operations and can be reassigned without copying data. Every task requires:
 - `projectId`, either `null` for Inbox or one existing project ID;
 - `parentTaskId`, either `null` for a root or one existing task ID;
 - `status`, either `open` or `completed`;
+- `priority`, one of `none`, `low`, `medium`, or `high`;
+- a `tags` array of at most 12 free-form labels of at most 40 characters,
+  normalized and deduplicated case-insensitively like reading tags;
 - finite `sortOrder` among siblings;
 - valid `createdAt` and `updatedAt` timestamps;
 - `completedAt`, required for completed tasks and `null` for open tasks;
@@ -355,6 +358,19 @@ new subtask under completed work reopens its completed ancestors but preserves
 the status of existing completed siblings. Deleting a task deletes that exact
 task and all of its descendants; deleting a child leaves its parent and siblings
 intact. Project deletion detaches its task tree to Inbox instead of deleting it.
+
+`sortOrder` is the manual order among siblings. `reorderTask` renumbers one
+sibling set from 1 and can re-parent in the same call, which carries the whole
+subtree into the new parent's project; it rejects nesting a task under itself or
+under one of its own descendants. Manual order is deliberately independent of
+status: the display comparator sorts completed work last, so reopening a task
+must not shuffle it. `duplicateTask` copies a task and its subtree with fresh
+IDs directly after the original.
+
+Priority, tags, and due date are the labels the Tasks workspace groups, sorts,
+and filters on. They are stored on each task; grouping, sorting, smart-list
+membership, and tag counts are all derived in the browser from those fields plus
+`meta.today`. Never persist a group, a smart-list membership, or a tag index.
 
 `depth`, `childIds`, subtree counts/progress, global counts, Inbox counts, and
 per-project task summaries are all derived in `buildState`. Never persist those
@@ -466,8 +482,8 @@ derived state and displayed read-only in Almanac.
 Validation intentionally catches broken references and the most dangerous shape
 errors, but it is not a complete JSON Schema. It validates project, task, and
 reading statuses; task identifiers, hierarchy, project references, notes,
-schedule, and timestamps; and reading identifiers, ordering, tags, and any `finishedAt`
-timestamp. It still does not enforce every optional project/entry field, ISO
+priority, tags, schedule, and timestamps; and reading identifiers, ordering,
+tags, and any `finishedAt` timestamp. It still does not enforce every optional project/entry field, ISO
 date formatting for all older record types, positive time-entry durations in
 files edited by hand, or project progress bounds.
 `createTimeEntry` does enforce positive duration for supported write paths.
@@ -476,9 +492,11 @@ Reads migrate schema version 2 stores in memory by adding an empty Reading
 collection, migrate version 3 books by adding empty tag arrays, migrate legacy
 project statuses into the five-state workflow, migrate version 5 by adding the
 category registry and category reference arrays, migrate version 6 by adding
-`tasks: { items: [] }`, and migrate version 7 tasks by adding empty note strings
-before advancing to version 8. Existing user data therefore gains the task
-collection and notes without rewriting projects or reading records. The migrated
+`tasks: { items: [] }`, migrate version 7 tasks by adding empty note strings,
+and migrate version 8 tasks by adding `priority: 'none'` and empty tag arrays
+before advancing to version 9. Existing user data therefore gains the task
+collection, notes, priority, and tags without rewriting projects or reading
+records. The migrated
 shape is persisted on the next supported write. Any
 further schema evolution must likewise add
 validation and migration/compatibility behavior; incrementing `schemaVersion`
@@ -664,6 +682,11 @@ the entire result, and retain an out-of-repository backup first.
 | `POST /api/tasks/delete` | Permanently delete one exact task and its descendants |
 | `POST /api/tasks/completion` | Complete a task and its descendants, or reopen one task |
 | `POST /api/tasks/project` | Assign one root task tree to a project or Inbox |
+| `POST /api/tasks/priority` | Set one task's priority to none, low, medium, or high |
+| `POST /api/tasks/tags` | Replace one task's normalized, deduplicated tag set |
+| `POST /api/tasks/schedule` | Set or clear one task's due date, start time, or duration |
+| `POST /api/tasks/reorder` | Place one task among its siblings and optionally re-parent its subtree |
+| `POST /api/tasks/duplicate` | Copy one task and its subtree directly after the original |
 | `GET /api/books/search?q=...&page=...` | Perform one explicit, 20-result Open Library search page and return normalized temporary results plus pagination metadata |
 | `POST /api/reading/books/import` | Enrich and persist one selected catalog result |
 | `POST /api/reading/books/status` | Move one local book to another reading status |
@@ -734,7 +757,11 @@ Task resolution likewise prefers exact normalized ID/title matches and rejects
 ambiguous titles. `tasks add` creates a root unless `--parent` is supplied; a
 subtask inherits that parent's project. `--project inbox` explicitly detaches a
 root tree. `--due`, `--start`, and `--duration` map to the validated schedule
-envelope; recurrence remains unavailable.
+envelope; recurrence remains unavailable. `--priority` and a repeatable `--tag`
+set the same labels the browser uses; `tasks priority` and `tasks tag` change
+them afterwards, `tasks tag --clear` empties the set, and `tasks --tag` filters
+the list. The CLI has no reorder command; manual order is a browser gesture with
+keyboard and context-menu equivalents.
 
 The CLI currently supports focused project status changes, category assignment,
 and exact deletion with preserved category history. It still has no project
@@ -753,27 +780,57 @@ below the page on narrow screens.
 
 - First-class navigation sits between Today and Projects while Projects remains
   the default first screen.
-- A TickTick-inspired scope rail switches among All tasks, Inbox, and every
-  project. Non-default `taskScope` is URL state and supports browser history.
-- Quick add accepts a title, Inbox/project association, and optional due date.
-  Project scopes preselect that project without hiding the choice.
-- The task tree uses native checkboxes, selects, buttons, and forms. No task
-  action depends on drag or another gesture; completion, assignment, adding a
-  subtask, and scope navigation are keyboard-addressable controls.
-- Nested rows show due state and subtree completion (`completed/total` plus a
-  derived bar). Completing a parent cascades through descendants server-side.
+- A TickTick-inspired scope rail switches among All tasks, the Today and
+  Next 7 days smart lists, Inbox, every project, and every tag in use. Smart
+  lists and tag scopes are derived in the browser from task due dates, status,
+  and tags; they are never persisted. Non-default `taskScope` is URL state and
+  supports browser history.
+- Smart lists render one flat, dated list because a due-date horizon cuts across
+  the hierarchy. Every other scope keeps the nested tree.
+- Quick add accepts a title, Inbox/project association, optional due date, and
+  priority. The title also parses `#tag` and `!high|!medium|!low` tokens so a
+  labelled task can be captured in one keystroke run.
+- One task occupies one line. Title, tags, notes marker, subtree ratio, due
+  state, and list all sit on that line; the checkbox is tinted by priority and a
+  flag repeats it so priority is never carried by color alone. Compact and
+  Comfortable densities are a stored view preference, not schema.
+- Priority uses its own `--priority-high|medium|low` red/yellow/blue tokens
+  rather than the `--critical`/`--attention`/`--accent` health colors, so a
+  change to project-health semantics cannot silently restyle priority.
+- The **View** popover holds group-by (none, priority, due date, list, tag),
+  sort-by (custom order, priority, due date, title, date created), density, and
+  show-completed. Preferences persist in `localStorage` under
+  `lifeos.tasks.view`, not in the portable store.
+- Manual drag reordering is offered only under custom order with no grouping,
+  because any other arrangement would discard the drop position. The View
+  popover states which case is active.
+- Dragging moves a row among its siblings, nests it under the row above when
+  dragged right, or reassigns it when dropped on a sidebar list or tag. Depth is
+  projected from the pointer's horizontal travel and clamped between the
+  neighbours, exactly as the reading board projects its column drops.
+- Every gesture has a non-gesture equivalent. Right-click, the row's `⋯` button,
+  Shift+F10, and the Menu key all open the same context menu: due date, priority,
+  open details, add subtask, move to list, tags, duplicate, and delete. Manual
+  ordering is deliberately absent from that menu because dragging covers it;
+  a focused row still reorders and indents with Control or Option and the arrow
+  keys, which is the accessible path. Option is offered because macOS reserves
+  Control-Arrow.
 - Clicking a task row or its title opens a TickTick-inspired right detail sheet.
   Title and multiline notes are editable there; explicit Save, Command/Ctrl+Enter,
   and closing a dirty sheet all persist through the narrow task-update route.
+  List, due date, priority, and tags are separate immediate controls, each on its
+  own narrow route, so a metadata change never waits on a dirty text draft.
 - The detail footer exposes task deletion. A named Cancel-first confirmation
   states how many descendants will also be removed before deleting the subtree.
-- Root project selects reassign the whole subtree. Child project labels are
+- Root list selects reassign the whole subtree. Child list labels are
   inherited and intentionally not independently editable.
 - Each project card shows its task ratio when tasks exist. Project details show
   the same derived summary, a compact nested list, add/completion/subtask
-  controls, and an **Open Tasks** route into the filtered workspace.
-- Manual reordering, recurring-task behavior, and full scheduling details are
-  deliberately deferred from this focused release.
+  controls, and an **Open Tasks** route into the filtered workspace. The project
+  panel is intentionally not reorderable; ordering belongs to the Tasks
+  workspace.
+- Multi-select bulk editing, saved custom filters, recurring-task behavior, and
+  full scheduling details remain deliberately deferred.
 
 ### Projects
 
@@ -1093,7 +1150,7 @@ Recommended import sequence:
 3. Inventory real domains, projects, statuses, priorities, weekly plans,
    deadlines, historical-entry granularity, milestones, reading books, and
    timezone.
-4. Map them into schema version 8 without inventing unsupported certainty.
+4. Map them into schema version 9 without inventing unsupported certainty.
 5. Preserve original descriptions in `rawInput` and mark summarized imports
    with `aggregation` so they are not treated as timed sessions.
 6. Set `meta.demo` to `false` and remove demo-only metadata as appropriate.

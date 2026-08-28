@@ -16,9 +16,11 @@ import {
   requireTask,
   setProjectStatus,
   setTaskCompletion,
+  setTaskPriority,
   setTaskProject,
   startSession,
   stopSession,
+  updateTaskTags,
 } from '../src/lifeos-data.mjs';
 
 const args = process.argv.slice(2);
@@ -57,11 +59,14 @@ Usage:
   lifeos projects categorize --project "Portia" --category "Infinitamente"
   lifeos projects status --project "Vulcano" --status done
   lifeos projects delete --project "Infinitamente" --preserve-category "Infinitamente"
-  lifeos tasks [--project "Portia" | --inbox] [--json]
-  lifeos tasks add --title "Draft Act III" [--project "Portia"] [--parent "Outline film"] [--due YYYY-MM-DD]
+  lifeos tasks [--project "Portia" | --inbox | --tag "writing"] [--json]
+  lifeos tasks add --title "Draft Act III" [--project "Portia"] [--parent "Outline film"] [--due YYYY-MM-DD] [--priority high|medium|low|none] [--tag writing]
   lifeos tasks complete --task "Draft Act III"
   lifeos tasks reopen --task "Draft Act III"
   lifeos tasks assign --task "Draft Act III" --project "Portia"|inbox
+  lifeos tasks priority --task "Draft Act III" --priority high|medium|low|none
+  lifeos tasks tag --task "Draft Act III" --tag writing --tag "deep work"
+  lifeos tasks tag --task "Draft Act III" --clear
   lifeos stats [--project "Portia" | --category "Infinitamente"] [--range week|month|quarter|year] [--json]
   lifeos recommend [--json]
   lifeos log --project "Portia" --duration 90 --type creative --desc "Act III draft"
@@ -95,6 +100,8 @@ async function tasksCommand(flags) {
       dueDate: parsed.due,
       startTime: parsed.start,
       durationMinutes: parsed.duration,
+      priority: parsed.priority,
+      tags: parsed.tag,
     });
     const project = result.task.projectId
       ? result.state.projects.find((candidate) => candidate.id === result.task.projectId)?.name
@@ -103,7 +110,7 @@ async function tasksCommand(flags) {
     return;
   }
 
-  if (['complete', 'reopen', 'assign'].includes(action)) {
+  if (['complete', 'reopen', 'assign', 'priority', 'tag'].includes(action)) {
     if (!parsed.task) throw new Error(`tasks ${action} requires --task.`);
     const store = await readStore();
     const task = requireTask(store, parsed.task);
@@ -117,6 +124,20 @@ async function tasksCommand(flags) {
       console.log(`Assigned ${result.task.title} to ${project}.`);
       return;
     }
+    if (action === 'priority') {
+      if (!parsed.priority) throw new Error('tasks priority requires --priority (high, medium, low, or none).');
+      const result = await setTaskPriority({ taskId: task.id, priority: parsed.priority });
+      console.log(`${result.task.title} is ${result.task.priority} priority.`);
+      return;
+    }
+    if (action === 'tag') {
+      if (!parsed.clear && !parsed.tag?.length) {
+        throw new Error('tasks tag requires --tag (repeatable) or --clear.');
+      }
+      const result = await updateTaskTags({ taskId: task.id, tags: parsed.clear ? [] : parsed.tag });
+      console.log(`${result.task.title} is tagged ${result.task.tags.length ? result.task.tags.join(', ') : '(none)'}.`);
+      return;
+    }
     const result = await setTaskCompletion({ taskId: task.id, completed: action === 'complete' });
     console.log(`${result.task.title} is ${result.task.status}.${result.affectedCount > 1 ? ` Updated ${result.affectedCount} tasks including subtasks.` : ''}`);
     return;
@@ -126,6 +147,9 @@ async function tasksCommand(flags) {
   const state = await getState();
   const projectId = parsed.project ? resolveTaskProject(await readStore(), parsed.project) : null;
   const items = state.tasks.items.filter((task) => {
+    if (parsed.tag?.length && !task.tags.some((tag) => parsed.tag.some((needle) => (
+      tag.toLowerCase() === String(needle).toLowerCase()
+    )))) return false;
     if (parsed.inbox) return task.projectId == null;
     if (parsed.project) return task.projectId === projectId;
     return true;
@@ -145,7 +169,9 @@ async function tasksCommand(flags) {
       ? state.projects.find((candidate) => candidate.id === task.projectId)?.name
       : 'Inbox';
     const due = task.schedule.dueDate ? ` due ${task.schedule.dueDate}` : '';
-    console.log(`${indent}${mark} ${task.title} - ${project}${due}`);
+    const priority = task.priority === 'none' ? '' : ` !${task.priority}`;
+    const tags = task.tags.length ? ` ${task.tags.map((tag) => `#${tag}`).join(' ')}` : '';
+    console.log(`${indent}${mark} ${task.title} - ${project}${due}${priority}${tags}`);
   }
 }
 
@@ -360,8 +386,13 @@ function parseFlags(values) {
       continue;
     }
     const key = value.slice(2);
-    if (key === 'json' || key === 'health' || key === 'inbox') {
+    if (key === 'json' || key === 'health' || key === 'inbox' || key === 'clear') {
       parsed[key] = true;
+      continue;
+    }
+    if (key === 'tag') {
+      parsed.tag = [...(parsed.tag || []), values[i + 1]];
+      i += 1;
       continue;
     }
     parsed[key] = values[i + 1];

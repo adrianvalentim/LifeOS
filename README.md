@@ -35,10 +35,12 @@ the computer.
 - Projects list and focused Kanban with five persistent workflow states,
   reusable categories, deadlines, progress, health, streaks, weekly effort, and
   confirmed deletion that preserves historical analytics.
-- First-class Tasks workspace with Inbox/project scopes, project assignment,
-  nested subtasks, completion progress, optional due dates, click-through details
-  with editable notes/title and confirmed subtree deletion, and task controls in
-  project details.
+- First-class Tasks workspace with Inbox/project/tag scopes and Today and
+  Next 7 days smart lists, priorities, tags, nested subtasks, completion
+  progress, optional due dates, drag-and-drop ordering and nesting with keyboard
+  and context-menu equivalents, grouping/sorting/density view options,
+  click-through details with editable notes/title and confirmed subtree
+  deletion, and task controls in project details.
 - Today view with recommendations and a real start/stop timer.
 - Week, month, quarter, and year analytics derived from recorded work.
 - Reading Kanban and full library with tags, queue ordering, date read,

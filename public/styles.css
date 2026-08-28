@@ -13,6 +13,9 @@
   --healthy: #3f6b48;
   --attention: #9d7220;
   --critical: #a73525;
+  --priority-high: #c8382b;
+  --priority-medium: #c79200;
+  --priority-low: #2f6f9e;
   --serif: Newsreader, "Source Serif 4", Georgia, serif;
   --sans: "IBM Plex Sans", Inter, ui-sans-serif, system-ui, sans-serif;
   --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
@@ -33,6 +36,9 @@
   --healthy: #89b589;
   --attention: #d7ba7d;
   --critical: #f48771;
+  --priority-high: #f4776a;
+  --priority-medium: #e8bf3f;
+  --priority-low: #6fb2e0;
 }
 
 *,

@@ -47,14 +47,14 @@ const readingBooks = [
 ];
 
 const tasks = [
-  task('portia-act-three', 'Finish the Act III draft', 'portia', null, 'open', 1, 2, 'Carry the midpoint decision into the final confrontation.\n\nCheck the observatory motif before the last pass.'),
+  task('portia-act-three', 'Finish the Act III draft', 'portia', null, 'open', 1, 2, 'Carry the midpoint decision into the final confrontation.\n\nCheck the observatory motif before the last pass.', 'high', ['writing', 'deep work']),
   task('portia-midpoint', 'Resolve the midpoint turn', 'portia', 'portia-act-three', 'completed', 1),
-  task('portia-confrontation', 'Write the confrontation scene', 'portia', 'portia-act-three', 'open', 2, 2),
-  task('vulcano-observatory', 'Lock the observatory sequence', 'vulcano', null, 'open', 2, 6),
+  task('portia-confrontation', 'Write the confrontation scene', 'portia', 'portia-act-three', 'open', 2, 2, '', 'medium', ['writing']),
+  task('vulcano-observatory', 'Lock the observatory sequence', 'vulcano', null, 'open', 2, 6, '', 'high', ['editing']),
   task('vulcano-color-notes', 'Review the color notes', 'vulcano', 'vulcano-observatory', 'completed', 1),
-  task('vulcano-review-cut', 'Export the review cut', 'vulcano', 'vulcano-observatory', 'open', 2, 5),
-  task('substack-opening', 'Rewrite the essay opening', 'substack', null, 'open', 3, 3),
-  task('inbox-passport', 'Renew passport', null, null, 'open', 4, 18),
+  task('vulcano-review-cut', 'Export the review cut', 'vulcano', 'vulcano-observatory', 'open', 2, 5, '', 'low', ['editing']),
+  task('substack-opening', 'Rewrite the essay opening', 'substack', null, 'open', 3, 3, '', 'medium', ['writing']),
+  task('inbox-passport', 'Renew passport', null, null, 'open', 4, 18, '', 'low', ['errand']),
   task('inbox-backups', 'Review local backup recovery notes', null, null, 'completed', 5),
 ];
 
@@ -137,7 +137,7 @@ for (const [dayOffset, time, durationMinutes, projectId, activityType, descripti
 
 const store = {
   meta: {
-    schemaVersion: 8,
+    schemaVersion: 9,
     appName: 'LifeOS',
     tagline: 'A personal almanac',
     timezone: 'America/Sao_Paulo',
@@ -250,7 +250,7 @@ function readingBook(id, title, authors, isbn13, status, sortOrder, publishedYea
   return book;
 }
 
-function task(id, title, projectId, parentTaskId, status, sortOrder, dueOffset = null, notes = '') {
+function task(id, title, projectId, parentTaskId, status, sortOrder, dueOffset = null, notes = '', priority = 'none', tags = []) {
   const createdAt = `${addDays(demoDate, -14 + sortOrder)}T12:00:00-03:00`;
   const completedAt = status === 'completed'
     ? `${addDays(demoDate, -2)}T12:00:00-03:00`
@@ -262,6 +262,8 @@ function task(id, title, projectId, parentTaskId, status, sortOrder, dueOffset =
     projectId,
     parentTaskId: parentTaskId ? `demo-task-${parentTaskId}` : null,
     status,
+    priority,
+    tags,
     sortOrder,
     schedule: {
       dueDate: dueOffset == null ? null : addDays(demoDate, dueOffset),
