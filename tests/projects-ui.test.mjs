@@ -98,18 +98,27 @@ test('the List groups the complete portfolio and supports preset or custom statu
   assert.equal(projectStatusFilterPreset(ui.statusFilter), 'custom');
 });
 
-test('Organize mode exposes every status as a direct-manipulation target, including empty sections', () => {
+test('the List always carries every status as a drop target, with hidden ones held in latent lanes', () => {
   const ui = createProjectsUiState();
-  ui.organizing = true;
   const projects = dashboard().projects.filter((item) => item.status !== 'paused');
   const html = renderProjects(projects, domains, ui);
 
   for (const status of ['to_do', 'next_up', 'doing', 'paused', 'done', 'dropped']) {
     assert.match(html, new RegExp(`data-project-drop-status="${status}"`));
   }
-  assert.match(html, /class="project-list-drop-empty">Drop a project here/);
+  assert.doesNotMatch(html, /data-project-organize/);
+  assert.match(html, /class="project-list-section project-list-lane status-paused"[^>]*data-project-latent="true" aria-hidden="true"/);
+  assert.match(html, /data-hint="Drop a project here" data-hint-active="Release here"/);
   assert.match(html, /data-project-drag-id="todo"/);
   assert.match(html, /aria-roledescription="movable project"/);
+
+  // An occupied status kept out of the focus stays reachable as a lane, not as cards.
+  ui.statusFilter = normalizeProjectStatusFilter(['doing']);
+  const focused = renderProjects(dashboard().projects, domains, ui);
+  assert.match(focused, /class="project-list-section status-doing"/);
+  assert.match(focused, /class="project-list-section project-list-lane status-next_up"/);
+  assert.match(focused, /data-hint="1 hidden by focus \u00b7 drop here"/);
+  assert.doesNotMatch(focused, /data-project-drag-id="next"/);
 });
 
 test('the open project detail exposes all statuses and Codex context', () => {

@@ -205,11 +205,26 @@ button {
 }
 
 .masthead-name {
+  position: relative;
   text-align: center;
   font-family: var(--serif);
   font-size: clamp(36px, 4vw, 56px);
   font-style: italic;
   line-height: 0.92;
+}
+
+/* Hung outside the wordmark so the masthead stays optically centred. */
+.masthead-build {
+  position: absolute;
+  bottom: 0.34em;
+  left: 100%;
+  margin-left: 9px;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 8px;
+  font-style: normal;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
 }
 
 .theme-toggle {

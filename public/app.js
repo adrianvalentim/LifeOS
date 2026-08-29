@@ -39,6 +39,8 @@ let pageError = null;
 let stateRefreshTimer = null;
 let eventSource = null;
 let projectPointerDrag = null;
+let projectLanePeekUntil = 0;
+let projectLanePeekTimer = null;
 let readingPointerDrag = null;
 let taskPointerDrag = null;
 let taskViewDismiss = null;
@@ -74,6 +76,9 @@ const PROJECTS_STORAGE_KEY = 'lifeos.projects.preferences';
 const THEME_COOKIE = 'lifeosTheme';
 const TASK_VIEW_STORAGE_KEY = 'lifeos.tasks.view';
 const TASK_INDENT_STEP = 27;
+const APP_BUILD = document.querySelector('meta[name="lifeos-build"]')?.content || '';
+const PROJECT_DRAG_THRESHOLD = 11;
+const PROJECT_LANE_PEEK_MS = 1600;
 let codexRailCollapsed = localStorage.getItem(RAIL_STORAGE_KEY) === 'true';
 let activeTheme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
 
@@ -103,7 +108,14 @@ async function init() {
     app.innerHTML = `<div class="boot error-boot">${escapeHtml(error.message)}</div>`;
   }
 
+  window.addEventListener('keyup', (event) => {
+    if (event.key === 'Control' && projectLanePeekUntil && !projectPointerDrag) closeProjectLanes();
+  });
   window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && projectPointerDrag) {
+      abortProjectPointerDrag();
+      return;
+    }
     if (event.key === 'Escape' && taskPointerDrag) {
       cancelTaskPointerDrag();
       return;
@@ -171,7 +183,6 @@ async function init() {
       ? normalizeProjectStatusFilter(next.get('projectStatus'))
       : [...PROJECT_LIST_STATUSES];
     projectsUi.filtersOpen = false;
-    projectsUi.organizing = false;
     persistProjectPreferences();
     readingUi.view = next.get('view') === 'library' ? 'library' : 'kanban';
     tasksUi.filter = parseTaskFilter(next.get('taskScope'));
@@ -233,6 +244,7 @@ function render() {
   if (focusedTaskId) {
     document.querySelector(`.task-item[data-task-detail="${CSS.escape(focusedTaskId)}"]`)?.focus();
   }
+  restoreProjectLanePeek();
 }
 
 function renderChatRegion() {
@@ -364,7 +376,6 @@ function bindProjectEvents() {
       projectsUi.view = button.dataset.projectView;
       projectsUi.selectedProjectId = null;
       projectsUi.filtersOpen = false;
-      projectsUi.organizing = false;
       projectsUi.statusNotice = null;
       persistProjectPreferences();
       updateLocation();
@@ -395,13 +406,6 @@ function bindProjectEvents() {
       render();
       document.querySelector(`[data-project-filter-status="${CSS.escape(status)}"]`)?.focus();
     });
-  });
-  document.querySelector('[data-project-organize]')?.addEventListener('click', () => {
-    projectsUi.organizing = !projectsUi.organizing;
-    projectsUi.filtersOpen = false;
-    projectsUi.statusNotice = null;
-    render();
-    document.querySelector('[data-project-organize]')?.focus();
   });
   document.querySelector('[data-project-notice-show]')?.addEventListener('click', (event) => {
     const status = event.currentTarget.dataset.projectNoticeShow;
@@ -466,8 +470,7 @@ function bindProjectEvents() {
 }
 
 function bindProjectDragAndDrop() {
-  const movableView = projectsUi.view === 'kanban' || (projectsUi.view === 'list' && projectsUi.organizing);
-  if (!movableView || projectsUi.movingProjectId) return;
+  if (projectsUi.movingProjectId) return;
   document.querySelectorAll('[data-project-drag-id]').forEach((card) => {
     card.addEventListener('pointerdown', (event) => beginProjectPointerDrag(event, card));
     card.addEventListener('keydown', (event) => moveProjectCardWithKeyboard(event, card));
@@ -480,6 +483,75 @@ function bindProjectDragAndDrop() {
   });
 }
 
+function openProjectLanes(surface, originStatus) {
+  if (!surface) return;
+  surface.classList.add('is-arming');
+  surface.querySelectorAll('[data-project-drop-status]').forEach((zone) => {
+    zone.classList.add(zone.dataset.projectDropStatus === originStatus ? 'drop-current' : 'drop-available');
+  });
+  surface.querySelectorAll('[data-project-latent]').forEach((lane) => lane.removeAttribute('aria-hidden'));
+}
+
+function closeProjectLanes() {
+  clearTimeout(projectLanePeekTimer);
+  projectLanePeekUntil = 0;
+  const open = document.querySelectorAll('.project-move-surface.is-arming, .project-move-surface.is-dragging');
+  if (!open.length) return;
+  open.forEach((surface) => surface.classList.remove('is-arming', 'is-dragging'));
+  document.querySelectorAll('[data-project-drop-status]').forEach((zone) => {
+    zone.classList.remove('drop-current', 'drop-available', 'drag-over');
+  });
+  document.querySelectorAll('[data-project-latent]').forEach((lane) => lane.setAttribute('aria-hidden', 'true'));
+}
+
+// Opening or closing the lanes changes the page height above the grabbed card. The
+// scroller takes up the difference in the same frame, so the card never moves.
+function revealProjectLanes(card, originStatus) {
+  const anchor = card?.isConnected ? card.getBoundingClientRect().top : null;
+  openProjectLanes(card?.closest('.project-move-surface'), originStatus);
+  if (anchor !== null) absorbProjectLaneShift(card, anchor);
+}
+
+function hideProjectLanes(card) {
+  const anchor = card?.isConnected ? card.getBoundingClientRect().top : null;
+  closeProjectLanes();
+  if (anchor !== null) absorbProjectLaneShift(card, anchor);
+}
+
+function absorbProjectLaneShift(card, anchorTop) {
+  const scroller = scrollParentFor(card);
+  if (!scroller) return;
+  const drift = card.getBoundingClientRect().top - anchorTop;
+  if (Math.abs(drift) > 0.5) scroller.scrollTop += drift;
+}
+
+// Keyboard moves re-render, so the lanes are reopened around the refocused card
+// until the peek window closes.
+function peekProjectLanes(card) {
+  projectLanePeekUntil = Date.now() + PROJECT_LANE_PEEK_MS;
+  revealProjectLanes(card, card.dataset.projectDragStatus);
+  clearTimeout(projectLanePeekTimer);
+  projectLanePeekTimer = setTimeout(() => {
+    projectLanePeekUntil = 0;
+    if (!projectPointerDrag) closeProjectLanes();
+  }, PROJECT_LANE_PEEK_MS);
+}
+
+function restoreProjectLanePeek() {
+  if (Date.now() >= projectLanePeekUntil) return;
+  const card = document.activeElement?.closest?.('[data-project-drag-id]');
+  if (card) revealProjectLanes(card, card.dataset.projectDragStatus);
+}
+
+// A scroller that does not overflow yet still counts: the reveal is what makes it
+// overflow, and it is the element that has to absorb that growth.
+function scrollParentFor(node) {
+  for (let element = node?.parentElement; element; element = element.parentElement) {
+    if (/(auto|scroll)/.test(getComputedStyle(element).overflowY)) return element;
+  }
+  return document.scrollingElement;
+}
+
 function beginProjectPointerDrag(event, card) {
   if (event.isPrimary === false || (event.pointerType === 'mouse' && event.button !== 0)) return;
   cancelProjectPointerDrag();
@@ -487,6 +559,7 @@ function beginProjectPointerDrag(event, card) {
   const drag = {
     projectId: card.dataset.projectDragId,
     card,
+    surface: card.closest('.project-move-surface'),
     pointerId: event.pointerId,
     pointerType: event.pointerType,
     originStatus: card.dataset.projectDragStatus,
@@ -494,7 +567,13 @@ function beginProjectPointerDrag(event, card) {
     startY: event.clientY,
     started: false,
     preview: null,
+    targetTag: null,
     targetColumn: null,
+    pointerX: event.clientX,
+    pointerY: event.clientY,
+    grabX: 0,
+    grabY: 0,
+    frame: null,
   };
   drag.move = (moveEvent) => moveProjectPointerDrag(moveEvent, drag);
   drag.end = (endEvent) => endProjectPointerDrag(endEvent, drag, true);
@@ -509,44 +588,74 @@ function moveProjectPointerDrag(event, drag) {
   if (projectPointerDrag !== drag || event.pointerId !== drag.pointerId) return;
   const deltaX = event.clientX - drag.startX;
   const deltaY = event.clientY - drag.startY;
+  drag.pointerX = event.clientX;
+  drag.pointerY = event.clientY;
 
   if (!drag.started) {
     if (drag.pointerType !== 'mouse' && Math.abs(deltaY) > Math.abs(deltaX)) {
       cancelProjectPointerDrag();
       return;
     }
-    if (Math.hypot(deltaX, deltaY) < 7) return;
+    if (Math.hypot(deltaX, deltaY) < PROJECT_DRAG_THRESHOLD) return;
     startProjectPointerDrag(drag);
   }
 
   event.preventDefault();
-  drag.preview.style.transform = `translate3d(${event.clientX + 14}px, ${event.clientY + 14}px, 0)`;
-  updateProjectDropTarget(drag, event.clientX, event.clientY);
+  if (drag.frame === null) drag.frame = requestAnimationFrame(() => drawProjectPointerDrag(drag));
+}
+
+function drawProjectPointerDrag(drag) {
+  if (projectPointerDrag !== drag || !drag.started) return;
+  drag.frame = null;
+  positionProjectDragPreview(drag);
+  updateProjectDropTarget(drag, drag.pointerX, drag.pointerY);
+}
+
+function positionProjectDragPreview(drag) {
+  drag.preview.style.transform = `translate3d(${drag.pointerX - drag.grabX}px, ${drag.pointerY - drag.grabY}px, 0)`;
+}
+
+function contentInsets(element) {
+  const style = getComputedStyle(element);
+  return {
+    left: parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft),
+    right: parseFloat(style.borderRightWidth) + parseFloat(style.paddingRight),
+    top: parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop),
+  };
 }
 
 function startProjectPointerDrag(drag) {
   drag.started = true;
   drag.card.dataset.projectDragSuppressClick = 'true';
   drag.card.classList.add('dragging');
+  revealProjectLanes(drag.card, drag.originStatus);
   drag.card.setPointerCapture?.(drag.pointerId);
   document.body.classList.add('project-drag-active');
-
-  const surface = drag.card.closest('.project-move-surface');
-  surface?.classList.add('is-dragging');
-  surface?.querySelectorAll('[data-project-drop-status]').forEach((column) => {
-    column.classList.add(column.dataset.projectDropStatus === drag.originStatus ? 'drop-current' : 'drop-available');
-  });
+  drag.surface?.classList.add('is-dragging');
 
   const preview = drag.card.cloneNode(true);
   preview.removeAttribute('data-project-drag-id');
   preview.removeAttribute('data-project-detail');
   preview.removeAttribute('aria-busy');
-  preview.classList.remove('dragging', 'is-saving');
+  preview.classList.remove('dragging', 'is-saving', 'is-movable');
   preview.classList.add('project-drag-preview');
   preview.setAttribute('aria-hidden', 'true');
-  preview.style.width = `${drag.card.getBoundingClientRect().width}px`;
+  const targetTag = document.createElement('span');
+  targetTag.className = 'project-drag-target';
+  preview.append(targetTag);
   document.body.append(preview);
+
+  const cardBox = drag.card.getBoundingClientRect();
+  const cardInset = contentInsets(drag.card);
+  const previewInset = contentInsets(preview);
+  preview.style.width = `${cardBox.width - cardInset.left - cardInset.right + previewInset.left + previewInset.right}px`;
+  drag.grabX = drag.startX - (cardBox.left + cardInset.left - previewInset.left);
+  drag.grabY = drag.startY - (cardBox.top + cardInset.top - previewInset.top);
+
   drag.preview = preview;
+  drag.targetTag = targetTag;
+  positionProjectDragPreview(drag);
+  updateProjectDropTarget(drag, drag.pointerX, drag.pointerY);
 }
 
 function updateProjectDropTarget(drag, clientX, clientY) {
@@ -555,22 +664,43 @@ function updateProjectDropTarget(drag, clientX, clientY) {
   drag.targetColumn?.classList.remove('drag-over');
   drag.targetColumn = hovered;
   drag.targetColumn?.classList.add('drag-over');
+  if (!drag.targetTag) return;
+  const label = hovered?.dataset.projectDropLabel;
+  const staying = hovered?.dataset.projectDropStatus === drag.originStatus;
+  drag.targetTag.textContent = label ? (staying ? label : `\u2192 ${label}`) : '';
+  drag.targetTag.classList.toggle('is-visible', Boolean(label));
+  drag.targetTag.classList.toggle('is-current', Boolean(staying));
 }
 
 function endProjectPointerDrag(event, drag, shouldDrop) {
   if (projectPointerDrag !== drag || event.pointerId !== drag.pointerId) return;
   if (drag.started) event.preventDefault();
+  if (shouldDrop && drag.started) updateProjectDropTarget(drag, event.clientX, event.clientY);
   const status = shouldDrop ? drag.targetColumn?.dataset.projectDropStatus : null;
-  const { projectId, card } = drag;
+  const { started, projectId, card } = drag;
   cancelProjectPointerDrag();
 
-  if (drag.started) {
+  if (started) {
     card.dataset.projectDragSuppressClick = 'true';
     setTimeout(() => {
       if (card.isConnected) delete card.dataset.projectDragSuppressClick;
     }, 0);
   }
   if (status) void changeProjectStatus(projectId, status, { optimistic: true });
+}
+
+function abortProjectPointerDrag() {
+  const drag = projectPointerDrag;
+  if (!drag) return;
+  const { started, card } = drag;
+  cancelProjectPointerDrag();
+  if (!started) return;
+  card.dataset.projectDragSuppressClick = 'true';
+  window.addEventListener('pointerup', () => {
+    setTimeout(() => {
+      if (card.isConnected) delete card.dataset.projectDragSuppressClick;
+    }, 0);
+  }, { once: true });
 }
 
 function cancelProjectPointerDrag() {
@@ -580,15 +710,13 @@ function cancelProjectPointerDrag() {
   window.removeEventListener('pointermove', drag.move);
   window.removeEventListener('pointerup', drag.end);
   window.removeEventListener('pointercancel', drag.cancel);
-  drag.targetColumn?.classList.remove('drag-over');
+  if (!drag.started) return;
+  if (drag.frame !== null) cancelAnimationFrame(drag.frame);
   drag.card.classList.remove('dragging');
   if (drag.card.hasPointerCapture?.(drag.pointerId)) drag.card.releasePointerCapture(drag.pointerId);
   drag.preview?.remove();
   document.body.classList.remove('project-drag-active');
-  document.querySelector('.project-move-surface')?.classList.remove('is-dragging');
-  document.querySelectorAll('.project-column.drop-current, .project-column.drop-available').forEach((column) => {
-    column.classList.remove('drop-current', 'drop-available');
-  });
+  hideProjectLanes(drag.card);
 }
 
 function moveProjectCardWithKeyboard(event, card) {
@@ -601,6 +729,7 @@ function moveProjectCardWithKeyboard(event, card) {
   if (!nextStatus) return;
   event.preventDefault();
   event.stopPropagation();
+  peekProjectLanes(card);
   void changeProjectStatus(card.dataset.projectDragId, nextStatus, { optimistic: true, restoreFocus: true });
 }
 
@@ -620,7 +749,7 @@ async function changeProjectStatus(projectId, status, { optimistic = false, rest
   try {
     state = await apiJson('/api/projects/status', jsonRequest({ projectId, status }));
     projectsUi.movingProjectId = null;
-    if (showHiddenNotice && projectsUi.view === 'list' && !projectsUi.organizing && !projectsUi.statusFilter.includes(status)) {
+    if (showHiddenNotice && projectsUi.view === 'list' && !projectsUi.statusFilter.includes(status)) {
       projectsUi.statusNotice = { projectId, name: current.name, fromStatus, toStatus: status };
     }
     renderProjectMove(projectId, restoreFocus);
@@ -2072,6 +2201,7 @@ function renderMasthead() {
         </div>
       <div class="masthead-name">
         ${escapeHtml(state.meta.appName)}
+        ${APP_BUILD ? `<span class="masthead-build" title="Browser sources loaded at this time">${escapeHtml(APP_BUILD)}</span>` : ''}
       </div>
       <div class="masthead-side right">
         <span><b>${date.weekday}</b>, ${date.rest}</span>

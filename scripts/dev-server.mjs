@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { watch } from 'node:fs';
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { enrichOpenLibraryBook, searchOpenLibrary } from '../src/book-catalog.mjs';
@@ -339,12 +339,33 @@ async function serveStatic(requestPath, res) {
   }
 
   const ext = path.extname(filePath);
-  const content = await readFile(filePath);
+  const content = ext === '.html'
+    ? Buffer.from(await withBuildMarker(await readFile(filePath, 'utf8')))
+    : await readFile(filePath);
   res.writeHead(200, {
     'content-type': MIME[ext] || 'application/octet-stream',
     'cache-control': 'no-store',
   });
   res.end(content);
+}
+
+// The marker is derived from the browser sources actually on disk, so a stale page
+// and a current one cannot report the same build.
+async function withBuildMarker(html) {
+  const build = await assetBuildStamp();
+  return html.replace('</head>', `  <meta name="lifeos-build" content="${build}">\n</head>`);
+}
+
+async function assetBuildStamp() {
+  try {
+    const names = (await readdir(publicDir)).filter((name) => /\.(js|css|html)$/.test(name));
+    const times = await Promise.all(names.map(async (name) => (await stat(path.join(publicDir, name))).mtimeMs));
+    const newest = new Date(Math.max(...times, 0));
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${pad(newest.getMonth() + 1)}${pad(newest.getDate())}.${pad(newest.getHours())}${pad(newest.getMinutes())}`;
+  } catch {
+    return 'unknown';
+  }
 }
 
 function sendJson(res, payload, status = 200) {

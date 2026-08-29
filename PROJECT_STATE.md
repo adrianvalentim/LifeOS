@@ -842,8 +842,48 @@ below the page on narrow screens.
 - One-click focus presets show All, Doing, Next up plus Doing, or Done. A custom
   filter combines any of the six statuses. The view and focus persist locally and
   are URL-backed for navigation.
-- List **Organize** mode temporarily reveals all six drop lanes, including empty
-  ones, and supports pointer dragging plus Control + Left/Right keyboard movement.
+- The List has no organize toggle. Every entry is always draggable, and the
+  statuses missing from the resting page — empty groups plus groups filtered out
+  of the current focus — are rendered as collapsed lanes that expand into drop
+  targets once a drag actually begins, then collapse again when it ends. A latent
+  lane carrying filtered-out projects says how many it is hiding instead of listing
+  them, so the reveal is a fixed, predictable amount of movement. The grabbed card
+  is pinned through both the expand and the collapse: the scroller absorbs the
+  height change so the card stays under the pointer.
+- Pressing a card is deliberately inert. The reveal is bound to pointer movement
+  past a threshold that clears ordinary click drift — never to press duration —
+  and a press that never becomes a drag does no DOM work at all, so click-to-open
+  stays the plain, immediate behavior of a list entry. Escape cancels a drag in
+  flight, and a Control + Left/Right keyboard move reveals the same lanes briefly
+  so the destination is visible; that move now works without any mode.
+- Dragging deliberately animates nothing that costs layout. The lanes reach full
+  height in the frame the drag starts and the scroller absorbs that growth in the
+  same frame, so only opacity and transform animate afterwards. Pointer events are
+  coalesced into one `requestAnimationFrame` pass, because a pointer reports far
+  more often than the screen redraws and both the drag preview and the drop hit
+  test force layout. Drop targets must never move themselves under the cursor: a
+  hovered lane changes tint and ring only, since a transform would shift its own
+  hit box and make the highlight oscillate at boundaries. The release re-runs the
+  hit test synchronously so a drop lands where the pointer is, not where the last
+  frame drew it.
+- The drag preview is the card lifted off the page, not a label trailing the
+  cursor. It keeps the grab offset, so the point the pointer took hold of stays
+  under the pointer, and its content box is sized and placed against the original's
+  content box rather than its border box — the preview adds padding and a border
+  that the list entry does not have. Its width is therefore the card's real width
+  and never clamped, because a narrower preview rewraps the text and stops reading
+  as the same card. A drag preview must also cancel its transitions: it is a clone,
+  so it inherits the source card's `transform` transition, and its first transform
+  then animates it in from the fixed origin at the top-left of the viewport and lags
+  it behind the pointer for the rest of the drag.
+
+### Version marker
+
+- The masthead hangs a small build marker beside the wordmark, injected into
+  `index.html` by the server from the newest mtime among the browser sources
+  actually on disk. It exists so a stale window and a current one cannot report the
+  same build; the app does not hot-reload browser source, so **LifeOS Dev → Refresh
+  LifeOS** is what advances it.
 - The alternate Kanban shows exactly Next up, Doing, and Done; To-do and Dropped
   remain available in the list and project detail without cluttering the board;
   Paused is likewise deliberately absent.
@@ -1277,7 +1317,7 @@ At this handoff, the suite contains 65 tests covering:
 - reusable project categories, derived category totals, and history-preserving
   project deletion;
 - six-status project movement, active/recommendation derivation, Projects List
-  grouping/filtering/organizing, hidden-move recovery, and focused Kanban projection;
+  grouping/filtering/latent drop lanes, hidden-move recovery, and focused Kanban projection;
 - independent/project task creation, nested project inheritance, schedule
   validation, completion/reopen cascades, subtree/project progress, root
   reassignment, note/title updates, exact subtree deletion, cycle rejection, and

@@ -47,7 +47,6 @@
 }
 
 .project-focus-button,
-.project-organize-button,
 .project-status-filter,
 .project-status-notice button,
 .project-list-empty button {
@@ -77,20 +76,6 @@
 
 .project-focus-button.active {
   background: color-mix(in srgb, var(--ink) 6%, transparent);
-}
-
-.project-organize-button {
-  min-height: 27px;
-  border-color: var(--rule);
-  padding: 5px 9px;
-}
-
-.project-organize-button:hover,
-.project-organize-button:focus-visible,
-.project-organize-button.active {
-  outline: 0;
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 .project-status-filters {
@@ -201,14 +186,17 @@
 
 .projects-list {
   display: grid;
-  gap: 24px;
   margin-top: 20px;
 }
 
 .project-list-section {
   min-width: 0;
   border-top: 2px solid var(--status-color);
-  transition: background-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+  transition: background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.project-list-section-inner {
+  padding-bottom: 24px;
 }
 
 .project-list-section-head {
@@ -264,21 +252,69 @@
   padding-top: 13px;
 }
 
-.projects-list.is-organizing {
-  gap: 14px;
+.project-list-lane {
+  display: grid;
+  grid-template-rows: 0fr;
+  border-top-width: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease, background-color 130ms ease;
 }
 
-.projects-list.is-organizing .project-list-section {
-  min-height: 78px;
-  border: 1px solid var(--rule-soft);
-  border-top: 2px solid var(--status-color);
-  padding: 0 10px 10px;
+.project-list-lane > .project-list-section-inner {
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 14px;
+}
+
+.project-move-surface.is-arming .project-list-lane {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-list-lane .project-list-section-head {
+  min-height: 44px;
+  border: 1px dashed color-mix(in srgb, var(--status-color) 40%, var(--rule));
+  padding: 0 11px;
+  transform: translateY(-6px);
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), border-color 130ms ease, background-color 130ms ease;
+}
+
+/* The lane's box lands instantly; only its contents settle, which costs no layout. */
+.project-move-surface.is-arming .project-list-lane .project-list-section-head {
+  transform: none;
+}
+
+.project-list-lane.drag-over .project-list-section-head {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--status-color) 62%, transparent);
+}
+
+.project-list-lane h2 {
+  color: color-mix(in srgb, var(--status-color) 62%, var(--ink));
+}
+
+.project-list-drop-hint {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--status-color) 72%, var(--ink-faint));
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.project-list-drop-hint::after {
+  content: attr(data-hint);
+}
+
+.project-list-lane.drag-over .project-list-drop-hint::after {
+  content: attr(data-hint-active);
 }
 
 .project-list-section.drag-over {
   background: color-mix(in srgb, var(--status-color) 9%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-color) 34%, transparent);
-  transform: translateY(-2px);
 }
 
 .project-list-section.drop-current,
@@ -286,20 +322,7 @@
   background: color-mix(in srgb, var(--status-color) 3%, transparent);
 }
 
-.project-list-drop-empty {
-  display: grid;
-  min-height: 38px;
-  grid-column: 1 / -1;
-  place-items: center;
-  border: 1px dashed var(--rule);
-  color: var(--ink-faint);
-  font-family: var(--mono);
-  font-size: 8px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.project-organize-instructions {
+.project-move-instructions {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -313,10 +336,6 @@
   position: relative;
   cursor: grab;
   touch-action: pan-y;
-}
-
-.project-entry.is-movable .project-head {
-  padding-right: 18px;
 }
 
 .project-entry.dragging,
@@ -457,7 +476,6 @@
 .project-column.drag-over {
   background: color-mix(in srgb, var(--column-color) 10%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--column-color) 38%, transparent);
-  transform: translateY(-2px);
 }
 
 .project-column.drop-current,
@@ -605,7 +623,10 @@
   z-index: 1000;
   top: 0;
   left: 0;
-  max-width: min(360px, calc(100vw - 28px));
+  /* A clone inherits .project-openable's transform transition, which would animate
+     the preview in from this origin and then lag it behind the pointer. */
+  transition: none;
+  max-width: calc(100vw - 28px);
   margin: 0;
   pointer-events: none;
   opacity: 0.94;
@@ -614,17 +635,55 @@
 }
 
 .project-entry.project-drag-preview {
-  width: min(460px, calc(100vw - 28px));
+  position: fixed;
   min-height: 92px;
   border: 1px solid var(--rule);
   padding: 10px;
   background: var(--paper);
 }
 
-body.project-drag-active,
-body.project-drag-active * {
-  cursor: grabbing !important;
-  user-select: none !important;
+.project-drag-target {
+  position: absolute;
+  bottom: -10px;
+  left: 10px;
+  border: 1px solid var(--accent);
+  padding: 3px 7px;
+  background: var(--accent);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.11em;
+  line-height: 1;
+  opacity: 0;
+  text-transform: uppercase;
+  transition: opacity 120ms ease;
+  white-space: nowrap;
+}
+
+.project-drag-target.is-visible {
+  opacity: 1;
+}
+
+.project-drag-target.is-current {
+  border-color: var(--rule);
+  background: var(--paper);
+  color: var(--ink-dim);
+}
+
+body.project-drag-active {
+  cursor: grabbing;
+  user-select: none;
+}
+
+body.project-drag-active .project-openable,
+body.project-drag-active .project-entry,
+body.project-drag-active .project-board-card,
+body.project-drag-active a,
+body.project-drag-active button,
+body.project-drag-active select,
+body.project-drag-active input,
+body.project-drag-active textarea {
+  cursor: grabbing;
 }
 
 .project-detail-backdrop {
@@ -936,7 +995,7 @@ body.project-drag-active * {
 }
 
 @media (max-width: 520px) {
-  .project-list-section-head span:last-child {
+  .project-list-section-head > div > span:last-child {
     display: none;
   }
 
@@ -970,7 +1029,14 @@ body.project-drag-active * {
 
 @media (prefers-reduced-motion: reduce) {
   .project-openable,
-  .project-column {
+  .project-column,
+  .project-list-section,
+  .project-list-lane,
+  .project-list-lane .project-list-section-head {
     transition: none;
+  }
+
+  .project-list-lane .project-list-section-head {
+    transform: none;
   }
 }
