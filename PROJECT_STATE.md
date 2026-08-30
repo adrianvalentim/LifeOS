@@ -536,6 +536,10 @@ Each hydrated project also receives one `taskSummary` computed from all task
 records currently associated with that project. It contains total, open,
 completed, and progress values and is the source for project cards and details.
 
+State construction indexes project-entry metrics and per-project task counts in
+single passes. Keep that linear scaling when extending derived state; do not
+reintroduce a full entry or task scan for every project.
+
 ### Task hierarchy and progress
 
 `hydrateTasks` builds a parent-to-children index, orders open siblings before
@@ -1299,10 +1303,11 @@ It performs JavaScript syntax checks for the browser, server, data/storage
 modules, Codex bridge, CLI, and desktop launcher; runs Node's built-in test
 suite; then compile-checks the pinned Tauri shell.
 
-At this handoff, the suite contains 65 tests covering:
+At this handoff, the suite contains 76 tests covering:
 
 - duration parsing;
 - demo-derived totals and recommendation;
+- rhythm-heatmap hour boundaries and midnight clipping;
 - sensitivity of totals/composition to a new entry;
 - shared-source date ranges;
 - rejection of an explicit unknown project;

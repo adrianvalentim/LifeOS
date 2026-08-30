@@ -21,6 +21,7 @@ import {
   readStore,
   reorderReadingBook,
   reorderTask,
+  rhythmHeatmap,
   setProjectStatus,
   setReadingBookStatus,
   setTaskCompletion,
@@ -55,8 +56,44 @@ test('demo dashboard values are calculated from entries', async () => {
   assert.equal(state.summary.deepRatio, 0.85);
   assert.equal(state.analytics.productionConsumption.productionPct, 64);
   assert.equal(state.recommendation.projectId, 'portia');
-  assert.equal(state.projects.find((project) => project.id === 'vulcano').weekHours, 14.2);
+  const vulcano = state.projects.find((project) => project.id === 'vulcano');
+  assert.equal(vulcano.weekHours, 14.2);
+  assert.equal(vulcano.streak, 5);
+  assert.deepEqual(vulcano.weekHistory, [8.2, 9.1, 11.3, 10.8, 12.4, 13, 11.9, 14.2]);
+  assert.deepEqual(vulcano.taskSummary, { total: 3, open: 2, completed: 1, progress: 0.33 });
   assert.ok(state.rhythmHeatmap.values.flat().some((value) => value > 0));
+});
+
+test('rhythm heatmap distributes entries across hour boundaries and clips at midnight', async () => {
+  const store = await readStore(DEMO_STORE_PATH);
+  store.timeEntries = [
+    {
+      id: 'heatmap-across-hours',
+      projectId: null,
+      categoryIds: [],
+      date: '2026-08-22',
+      time: '10:45',
+      durationMinutes: 90,
+      activityType: 'deep_work',
+    },
+    {
+      id: 'heatmap-midnight-clip',
+      projectId: null,
+      categoryIds: [],
+      date: '2026-08-21',
+      time: '23:30',
+      durationMinutes: 90,
+      activityType: 'deep_work',
+    },
+  ];
+
+  const heatmap = rhythmHeatmap(store, '2026-08-22');
+  const today = heatmap.values.at(-1);
+  const yesterday = heatmap.values.at(-2);
+  assert.equal(today[10], 0.25);
+  assert.equal(today[11], 1);
+  assert.equal(today[12], 0.25);
+  assert.equal(yesterday[23], 0.5);
 });
 
 test('changing one entry changes dashboard totals and composition', async () => {

@@ -26,6 +26,9 @@ export const TASK_PRIORITIES = ['none', 'low', 'medium', 'high'];
 
 const HEALTH_ORDER = { critical: 0, attention: 1, healthy: 2 };
 const ACTIVE_PROJECT_STATUSES = new Set(['to_do', 'next_up', 'doing']);
+const DEEP_ACTIVITY_TYPES = new Set(['deep_work', 'research', 'creative']);
+const SHALLOW_ACTIVITY_TYPES = new Set(['shallow_work', 'communication']);
+const PRODUCTION_ACTIVITY_TYPES = new Set(['creative', 'deep_work', 'communication']);
 const READING_STATUS_ORDER = Object.fromEntries(READING_STATUSES.map((status, index) => [status, index]));
 const TASK_STATUS_ORDER = Object.fromEntries(TASK_STATUSES.map((status, index) => [status, index]));
 const MAX_TASK_TAGS = 12;
@@ -74,6 +77,7 @@ export async function writeStore(store, storePath = DEFAULT_STORE_PATH) {
   } finally {
     await unlink(tempPath).catch(() => undefined);
   }
+  return migrated;
 }
 
 export async function mutateStore(mutator, storePath = DEFAULT_STORE_PATH) {
@@ -84,7 +88,7 @@ export async function mutateStore(mutator, storePath = DEFAULT_STORE_PATH) {
   try {
     store = await readStore(storePath);
     result = await mutator(store);
-    await writeStore(store, storePath);
+    store = await writeStore(store, storePath);
   } finally {
     await release();
   }
@@ -574,7 +578,7 @@ export async function logTime(input, storePath = DEFAULT_STORE_PATH) {
     const next = createTimeEntry(current, input);
     return applyTimeEntry(current, next);
   }, storePath);
-  return { entry, state: buildState(store, { now: input.now, range: input.range }) };
+  return { entry, state: buildValidatedState(store, { now: input.now, range: input.range }) };
 }
 
 export async function startSession(input, storePath = DEFAULT_STORE_PATH) {
@@ -593,7 +597,7 @@ export async function startSession(input, storePath = DEFAULT_STORE_PATH) {
     };
     return current.activeSession;
   }, storePath);
-  return { session, state: buildState(store, { now: input.now }) };
+  return { session, state: buildValidatedState(store, { now: input.now }) };
 }
 
 export async function stopSession(input = {}, storePath = DEFAULT_STORE_PATH) {
@@ -621,7 +625,7 @@ export async function stopSession(input = {}, storePath = DEFAULT_STORE_PATH) {
     current.activeSession = null;
     return { session, entry };
   }, storePath);
-  return { ...result, state: buildState(store, { now: input.now || input.stoppedAt }) };
+  return { ...result, state: buildValidatedState(store, { now: input.now || input.stoppedAt }) };
 }
 
 export async function setProjectStatus(input, storePath = DEFAULT_STORE_PATH) {
@@ -635,7 +639,7 @@ export async function setProjectStatus(input, storePath = DEFAULT_STORE_PATH) {
     existing.statusChangedAt = now.toISOString();
     return existing;
   }, storePath);
-  return { project, state: buildState(store, { now }) };
+  return { project, state: buildValidatedState(store, { now }) };
 }
 
 export async function addProjectCategory(input, storePath = DEFAULT_STORE_PATH) {
@@ -647,7 +651,7 @@ export async function addProjectCategory(input, storePath = DEFAULT_STORE_PATH) 
     if (!project.categoryIds.includes(category.id)) project.categoryIds.push(category.id);
     return { project, category };
   }, storePath);
-  return { ...result, state: buildState(store, { now }) };
+  return { ...result, state: buildValidatedState(store, { now }) };
 }
 
 export async function deleteProject(input, storePath = DEFAULT_STORE_PATH) {
@@ -705,7 +709,7 @@ export async function deleteProject(input, storePath = DEFAULT_STORE_PATH) {
       detachedTaskCount: detachedTasks.length,
     };
   }, storePath);
-  return { ...result, state: buildState(store, { now }) };
+  return { ...result, state: buildValidatedState(store, { now }) };
 }
 
 export function buildCategoryStats(store, query, options = {}) {
@@ -717,8 +721,9 @@ export function buildCategoryStats(store, query, options = {}) {
   const today = dateOnly(now, copy.meta.timezone);
   const range = ['week', 'month', 'quarter', 'year'].includes(options.range) ? options.range : 'week';
   const bounds = rangeBounds(range, today);
+  const projectsById = new Map(copy.projects.map((project) => [project.id, project]));
   const entries = filterEntries(copy.timeEntries, bounds)
-    .filter((entry) => entryCategoryIds(copy, entry).includes(category.id));
+    .filter((entry) => entryCategoryIds(entry, projectsById.get(entry.projectId)).includes(category.id));
   const minutes = sumMinutes(entries);
   return {
     category,
@@ -786,7 +791,7 @@ export async function createTask(input, storePath = DEFAULT_STORE_PATH) {
     }
     return next;
   }, storePath);
-  return { task, state: buildState(store, { now }) };
+  return { task, state: buildValidatedState(store, { now }) };
 }
 
 export async function updateTask(input, storePath = DEFAULT_STORE_PATH) {
@@ -806,7 +811,7 @@ export async function updateTask(input, storePath = DEFAULT_STORE_PATH) {
     }
     return existing;
   }, storePath);
-  return { task, state: buildState(store, { now }) };
+  return { task, state: buildValidatedState(store, { now }) };
 }
 
 export async function deleteTask(input, storePath = DEFAULT_STORE_PATH) {
@@ -821,7 +826,7 @@ export async function deleteTask(input, storePath = DEFAULT_STORE_PATH) {
     current.tasks.items = current.tasks.items.filter((task) => !targets.has(task.id));
     return { task: existing, deletedCount: targets.size };
   }, storePath);
-  return { ...result, state: buildState(store, { now }) };
+  return { ...result, state: buildValidatedState(store, { now }) };
 }
 
 export async function setTaskCompletion(input, storePath = DEFAULT_STORE_PATH) {
@@ -845,7 +850,7 @@ export async function setTaskCompletion(input, storePath = DEFAULT_STORE_PATH) {
     }
     return { task: existing, affectedCount };
   }, storePath);
-  return { ...result, state: buildState(store, { now }) };
+  return { ...result, state: buildValidatedState(store, { now }) };
 }
 
 export async function setTaskProject(input, storePath = DEFAULT_STORE_PATH) {
@@ -866,7 +871,7 @@ export async function setTaskProject(input, storePath = DEFAULT_STORE_PATH) {
     }
     return { task: existing, affectedCount };
   }, storePath);
-  return { ...result, state: buildState(store, { now }) };
+  return { ...result, state: buildValidatedState(store, { now }) };
 }
 
 export async function setTaskPriority(input, storePath = DEFAULT_STORE_PATH) {
@@ -881,7 +886,7 @@ export async function setTaskPriority(input, storePath = DEFAULT_STORE_PATH) {
     }
     return existing;
   }, storePath);
-  return { task, state: buildState(store, { now }) };
+  return { task, state: buildValidatedState(store, { now }) };
 }
 
 export async function updateTaskTags(input, storePath = DEFAULT_STORE_PATH) {
@@ -897,7 +902,7 @@ export async function updateTaskTags(input, storePath = DEFAULT_STORE_PATH) {
     }
     return existing;
   }, storePath);
-  return { task, state: buildState(store, { now }) };
+  return { task, state: buildValidatedState(store, { now }) };
 }
 
 export async function setTaskSchedule(input, storePath = DEFAULT_STORE_PATH) {
@@ -918,7 +923,7 @@ export async function setTaskSchedule(input, storePath = DEFAULT_STORE_PATH) {
     }
     return existing;
   }, storePath);
-  return { task, state: buildState(store, { now }) };
+  return { task, state: buildValidatedState(store, { now }) };
 }
 
 export async function reorderTask(input, storePath = DEFAULT_STORE_PATH) {
@@ -975,7 +980,7 @@ export async function reorderTask(input, storePath = DEFAULT_STORE_PATH) {
     }
     return existing;
   }, storePath);
-  return { task, state: buildState(store, { now }) };
+  return { task, state: buildValidatedState(store, { now }) };
 }
 
 export async function duplicateTask(input, storePath = DEFAULT_STORE_PATH) {
@@ -984,6 +989,7 @@ export async function duplicateTask(input, storePath = DEFAULT_STORE_PATH) {
     const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
     if (!existing) throw new Error(`Task not found: ${input.taskId}`);
     const timestamp = now.toISOString();
+    const childrenByParent = indexTasksByParent(current.tasks.items);
     const copies = [];
     const copySubtree = (source, parentTaskId) => {
       const copy = {
@@ -994,7 +1000,7 @@ export async function duplicateTask(input, storePath = DEFAULT_STORE_PATH) {
         updatedAt: timestamp,
       };
       copies.push(copy);
-      for (const child of current.tasks.items.filter((candidate) => candidate.parentTaskId === source.id)) {
+      for (const child of childrenByParent.get(source.id) || []) {
         copySubtree(child, copy.id);
       }
       return copy;
@@ -1015,7 +1021,7 @@ export async function duplicateTask(input, storePath = DEFAULT_STORE_PATH) {
     }
     return { task: root, copiedCount: copies.length };
   }, storePath);
-  return { ...result, state: buildState(store, { now }) };
+  return { ...result, state: buildValidatedState(store, { now }) };
 }
 
 export async function addReadingBook(input, storePath = DEFAULT_STORE_PATH) {
@@ -1038,7 +1044,7 @@ export async function addReadingBook(input, storePath = DEFAULT_STORE_PATH) {
     current.reading.books.push(next);
     return next;
   }, storePath);
-  return { book, state: buildState(store, { now }) };
+  return { book, state: buildValidatedState(store, { now }) };
 }
 
 export async function setReadingBookStatus(input, storePath = DEFAULT_STORE_PATH) {
@@ -1055,7 +1061,7 @@ export async function setReadingBookStatus(input, storePath = DEFAULT_STORE_PATH
     applyReadingStatusDates(existing, status, now.toISOString());
     return existing;
   }, storePath);
-  return { book, state: buildState(store, { now }) };
+  return { book, state: buildValidatedState(store, { now }) };
 }
 
 export async function reorderReadingBook(input, storePath = DEFAULT_STORE_PATH) {
@@ -1112,7 +1118,7 @@ export async function reorderReadingBook(input, storePath = DEFAULT_STORE_PATH) 
     neighbor.updatedAt = now.toISOString();
     return existing;
   }, storePath);
-  return { book, state: buildState(store, { now }) };
+  return { book, state: buildValidatedState(store, { now }) };
 }
 
 export async function updateReadingBookTags(input, storePath = DEFAULT_STORE_PATH) {
@@ -1125,7 +1131,7 @@ export async function updateReadingBookTags(input, storePath = DEFAULT_STORE_PAT
     existing.updatedAt = now.toISOString();
     return existing;
   }, storePath);
-  return { book, state: buildState(store, { now }) };
+  return { book, state: buildValidatedState(store, { now }) };
 }
 
 export async function updateReadingBookFinishedDate(input, storePath = DEFAULT_STORE_PATH) {
@@ -1142,7 +1148,7 @@ export async function updateReadingBookFinishedDate(input, storePath = DEFAULT_S
     existing.updatedAt = now.toISOString();
     return existing;
   }, storePath);
-  return { book, state: buildState(store, { now }) };
+  return { book, state: buildValidatedState(store, { now }) };
 }
 
 export async function deleteReadingBook(input, storePath = DEFAULT_STORE_PATH) {
@@ -1152,7 +1158,7 @@ export async function deleteReadingBook(input, storePath = DEFAULT_STORE_PATH) {
     if (index === -1) throw new Error(`Reading book not found: ${input.bookId}`);
     return current.reading.books.splice(index, 1)[0];
   }, storePath);
-  return { book, state: buildState(store, { now }) };
+  return { book, state: buildValidatedState(store, { now }) };
 }
 
 export function cleanLogDescription(input) {
@@ -1212,10 +1218,14 @@ export function rhythmHeatmap(store, todayValue) {
     if (!Number.isInteger(hour) || !Number.isInteger(minute)) continue;
     const row = minutes[dateIndex.get(entry.date)];
     const startMinute = hour * 60 + minute;
-    for (let offset = 0; offset < Number(entry.durationMinutes || 0); offset += 1) {
-      const absoluteMinute = startMinute + offset;
-      if (absoluteMinute >= 24 * 60) break;
-      row[Math.floor(absoluteMinute / 60)] += 1;
+    const durationMinutes = Math.max(0, Math.ceil(Number(entry.durationMinutes || 0)));
+    const endMinute = Math.min(24 * 60, startMinute + durationMinutes);
+    let cursor = Math.max(0, startMinute);
+    while (cursor < endMinute) {
+      const bucket = Math.floor(cursor / 60);
+      const bucketEnd = Math.min(endMinute, (bucket + 1) * 60);
+      row[bucket] += bucketEnd - cursor;
+      cursor = bucketEnd;
     }
   }
 
@@ -1229,6 +1239,10 @@ export function rhythmHeatmap(store, todayValue) {
 export function buildState(store, options = {}) {
   const copy = migrateStore(store);
   validateStore(copy);
+  return buildValidatedState(copy, options);
+}
+
+function buildValidatedState(copy, options = {}) {
   const now = resolveNow(options.now);
   const today = dateOnly(now, copy.meta.timezone);
   const activeRange = ['week', 'month', 'quarter', 'year'].includes(options.range) ? options.range : 'week';
@@ -1247,16 +1261,19 @@ export function buildState(store, options = {}) {
   const actualByDomain = Object.fromEntries(Object.keys(copy.domains).map((key) => [key, 0]));
   const actualByCategory = Object.fromEntries(Object.keys(copy.categories).map((key) => [key, 0]));
   const projectsById = new Map(copy.projects.map((project) => [project.id, project]));
+  let rangeMinutes = 0;
 
   for (const entry of rangeEntries) {
+    const minutes = Number(entry.durationMinutes || 0);
+    rangeMinutes += minutes;
     const project = entry.projectId ? projectsById.get(entry.projectId) : null;
     const domainId = project?.domain || entry.domain;
     if (domainId && actualByDomain[domainId] !== undefined) {
-      actualByDomain[domainId] += Number(entry.durationMinutes || 0) / 60;
+      actualByDomain[domainId] += minutes / 60;
     }
-    for (const categoryId of entryCategoryIds(copy, entry)) {
+    for (const categoryId of entryCategoryIds(entry, project)) {
       if (actualByCategory[categoryId] !== undefined) {
-        actualByCategory[categoryId] += Number(entry.durationMinutes || 0) / 60;
+        actualByCategory[categoryId] += minutes / 60;
       }
     }
   }
@@ -1264,7 +1281,6 @@ export function buildState(store, options = {}) {
   for (const key of Object.keys(actualByCategory)) actualByCategory[key] = round1(actualByCategory[key]);
 
   const composition = composeEntries(rangeEntries);
-  const rangeMinutes = sumMinutes(rangeEntries);
   const todayMinutes = sumMinutes(todayEntries);
   const currentWeekMinutes = sumMinutes(currentWeekEntries);
   const weeklyPlanHours = Object.values(copy.settings.weeklyPlanByDomain).reduce((sum, hours) => sum + Number(hours || 0), 0);
@@ -1272,10 +1288,16 @@ export function buildState(store, options = {}) {
   const plannedRangeHours = round1(weeklyPlanHours * rangeDays / 7);
   const rangeHours = round1(rangeMinutes / 60);
   const deepRatio = rangeMinutes ? composition.deepMinutes / rangeMinutes : 0;
-  const activeCount = projects.filter((project) => ACTIVE_PROJECT_STATUSES.has(project.status)).length;
-  const criticalCount = projects.filter((project) => ACTIVE_PROJECT_STATUSES.has(project.status) && project.health === 'critical').length;
+  let activeCount = 0;
+  let criticalCount = 0;
+  for (const project of projects) {
+    if (!ACTIVE_PROJECT_STATUSES.has(project.status)) continue;
+    activeCount += 1;
+    if (project.health === 'critical') criticalCount += 1;
+  }
   const monthBounds = rangeBounds('month', today);
   const yearBounds = rangeBounds('year', today);
+  const labels = rangeLabels(today);
   const challenge = hydrateChallenge(copy.challenge, copy.timeEntries, today);
   const reading = hydrateReading(copy.reading);
 
@@ -1306,7 +1328,7 @@ export function buildState(store, options = {}) {
       currentWeekHours: round1(currentWeekMinutes / 60),
       currentWeekLabel: formatMinutes(currentWeekMinutes),
       range: activeRange,
-      rangeLabel: rangeLabels(today)[activeRange],
+      rangeLabel: labels[activeRange],
       totalRangeHours: rangeHours,
       totalRangeLabel: formatMinutes(rangeMinutes),
       plannedRangeHours,
@@ -1317,7 +1339,7 @@ export function buildState(store, options = {}) {
     analytics: {
       range: activeRange,
       bounds: selectedBounds,
-      labels: rangeLabels(today),
+      labels,
       actualByDomain,
       actualByCategory,
       composition: {
@@ -1336,7 +1358,7 @@ export function buildState(store, options = {}) {
 }
 
 export async function getState(storePath = DEFAULT_STORE_PATH, options = {}) {
-  return buildState(await readStore(storePath), options);
+  return buildValidatedState(await readStore(storePath), options);
 }
 
 function resolveNow(value) {
@@ -1347,11 +1369,21 @@ function resolveNow(value) {
 
 function hydrateTasks(tasks, projects) {
   const items = [...tasks.items];
-  const childrenByParent = new Map();
+  const childrenByParent = indexTasksByParent(items);
+  const totalCounts = { total: 0, completed: 0 };
+  const inboxCounts = { total: 0, completed: 0 };
+  const countsByProject = new Map(projects.map((project) => [
+    project.id,
+    { total: 0, completed: 0 },
+  ]));
   for (const task of items) {
-    const key = task.parentTaskId || null;
-    if (!childrenByParent.has(key)) childrenByParent.set(key, []);
-    childrenByParent.get(key).push(task);
+    const completed = task.status === 'completed' ? 1 : 0;
+    totalCounts.total += 1;
+    totalCounts.completed += completed;
+    const counts = task.projectId == null ? inboxCounts : countsByProject.get(task.projectId);
+    if (!counts) continue;
+    counts.total += 1;
+    counts.completed += completed;
   }
   for (const siblings of childrenByParent.values()) siblings.sort(compareTasks);
 
@@ -1381,23 +1413,24 @@ function hydrateTasks(tasks, projects) {
   };
   for (const root of roots) append(root);
 
-  const byProject = Object.fromEntries(projects.map((project) => [project.id, summarizeTasks(
-    items.filter((task) => task.projectId === project.id),
-  )]));
+  const byProject = Object.fromEntries(projects.map((project) => [
+    project.id,
+    summarizeTaskCounts(countsByProject.get(project.id)),
+  ]));
   return {
     ...tasks,
     items: ordered,
     summary: {
-      ...summarizeTasks(items),
-      inbox: summarizeTasks(items.filter((task) => task.projectId == null)),
+      ...summarizeTaskCounts(totalCounts),
+      inbox: summarizeTaskCounts(inboxCounts),
       byProject,
     },
   };
 }
 
-function summarizeTasks(items) {
-  const total = items.length;
-  const completed = items.filter((task) => task.status === 'completed').length;
+function summarizeTaskCounts(counts = {}) {
+  const total = Number(counts.total || 0);
+  const completed = Number(counts.completed || 0);
   return {
     total,
     open: total - completed,
@@ -1664,13 +1697,24 @@ function normalizeTaskProjectId(store, value) {
   return projectId;
 }
 
+function indexTasksByParent(items) {
+  const childrenByParent = new Map();
+  for (const task of items) {
+    const key = task.parentTaskId || null;
+    if (!childrenByParent.has(key)) childrenByParent.set(key, []);
+    childrenByParent.get(key).push(task);
+  }
+  return childrenByParent;
+}
+
 function taskDescendants(items, taskId) {
+  const childrenByParent = indexTasksByParent(items);
   const descendants = [];
-  const queue = items.filter((task) => task.parentTaskId === taskId);
-  while (queue.length) {
-    const task = queue.shift();
+  const queue = [...(childrenByParent.get(taskId) || [])];
+  for (let index = 0; index < queue.length; index += 1) {
+    const task = queue[index];
     descendants.push(task);
-    queue.push(...items.filter((candidate) => candidate.parentTaskId === task.id));
+    queue.push(...(childrenByParent.get(task.id) || []));
   }
   return descendants;
 }
@@ -1716,16 +1760,21 @@ function entryTimestamp(entry) {
 }
 
 function latestProjectTouch(projectId, entries) {
-  const relevant = entries.filter((entry) => entry.projectId === projectId);
-  if (!relevant.length) return null;
-  const latest = relevant.reduce((current, entry) => entryTimestamp(entry) > entryTimestamp(current) ? entry : current);
+  let latest = null;
+  let latestTimestamp = Number.NaN;
+  for (const entry of entries) {
+    if (entry.projectId !== projectId) continue;
+    const timestamp = entryTimestamp(entry);
+    if (!latest || timestamp > latestTimestamp) {
+      latest = entry;
+      latestTimestamp = timestamp;
+    }
+  }
+  if (!latest) return null;
   return latest.createdAt || `${latest.date}T${latest.time || '12:00'}:00Z`;
 }
 
-function entryCategoryIds(store, entry) {
-  const project = entry.projectId
-    ? store.projects.find((candidate) => candidate.id === entry.projectId)
-    : null;
+function entryCategoryIds(entry, project) {
   return [...new Set([...(entry.categoryIds || []), ...(project?.categoryIds || [])])];
 }
 
@@ -1733,9 +1782,13 @@ function hydrateProjects(store, options = {}) {
   const now = resolveNow(options.now);
   const today = dateOnly(now, store.meta.timezone);
   const currentWeekBounds = options.currentWeekBounds || rangeBounds('week', today);
+  const metricsByProject = indexProjectEntries(store.projects, store.timeEntries, today, currentWeekBounds);
   return store.projects.map((project) => {
-    const weekHours = projectHoursForRange(project.id, store.timeEntries, currentWeekBounds);
-    const lastTouched = latestProjectTouch(project.id, store.timeEntries);
+    const metrics = metricsByProject.get(project.id);
+    const weekHours = round1(metrics.currentWeekMinutes / 60);
+    const lastTouched = metrics.latestEntry
+      ? metrics.latestEntry.createdAt || `${metrics.latestEntry.date}T${metrics.latestEntry.time || '12:00'}:00Z`
+      : null;
     const daysSinceTouched = daysSince(lastTouched, now) ?? 99;
     const health = calculateProjectHealth(project, store, { now, weekHours, lastTouched });
     return {
@@ -1748,14 +1801,64 @@ function hydrateProjects(store, options = {}) {
       lastTouchedLabel: formatAgo(lastTouched, now),
       weekHours: round1(weekHours),
       weekHoursLabel: weekHours ? formatHours(weekHours) : '-',
-      streak: projectStreak(project.id, store.timeEntries, today),
-      weekHistory: projectWeekHistory(project.id, store.timeEntries, today),
-      taskSummary: options.taskSummaryByProject?.[project.id] || summarizeTasks([]),
+      streak: projectStreakFromDays(metrics.minutesByDay, today),
+      weekHistory: metrics.historyMinutes.map((minutes) => round1(minutes / 60)),
+      taskSummary: options.taskSummaryByProject?.[project.id] || summarizeTaskCounts(),
     };
   }).sort((a, b) => {
     const healthDelta = HEALTH_ORDER[a.health] - HEALTH_ORDER[b.health];
     return healthDelta || b.priority - a.priority || a.name.localeCompare(b.name);
   });
+}
+
+function indexProjectEntries(projects, entries, today, currentWeekBounds) {
+  const currentStart = startOfWeek(today);
+  const historyBounds = Array.from({ length: 8 }, (_, index) => {
+    const start = addDays(currentStart, (index - 7) * 7);
+    return { start, end: addDays(start, 6) };
+  });
+  const metricsByProject = new Map(projects.map((project) => [project.id, {
+    currentWeekMinutes: 0,
+    historyMinutes: Array(8).fill(0),
+    latestEntry: null,
+    latestTimestamp: Number.NaN,
+    minutesByDay: new Map(),
+  }]));
+
+  for (const entry of entries) {
+    const metrics = metricsByProject.get(entry.projectId);
+    if (!metrics) continue;
+    const minutes = Number(entry.durationMinutes || 0);
+    if (entry.date >= currentWeekBounds.start && entry.date <= currentWeekBounds.end) {
+      metrics.currentWeekMinutes += minutes;
+    }
+    for (let index = 0; index < historyBounds.length; index += 1) {
+      const bounds = historyBounds[index];
+      if (entry.date < bounds.start || entry.date > bounds.end) continue;
+      metrics.historyMinutes[index] += minutes;
+      break;
+    }
+    const timestamp = entryTimestamp(entry);
+    if (!metrics.latestEntry || timestamp > metrics.latestTimestamp) {
+      metrics.latestEntry = entry;
+      metrics.latestTimestamp = timestamp;
+    }
+    if (!entry.aggregation) {
+      metrics.minutesByDay.set(entry.date, (metrics.minutesByDay.get(entry.date) || 0) + minutes);
+    }
+  }
+  return metricsByProject;
+}
+
+function projectStreakFromDays(minutesByDay, today) {
+  let cursor = today;
+  if ((minutesByDay.get(cursor) || 0) < 30) cursor = addDays(cursor, -1);
+  let streak = 0;
+  while ((minutesByDay.get(cursor) || 0) >= 30) {
+    streak += 1;
+    cursor = addDays(cursor, -1);
+  }
+  return streak;
 }
 
 function buildRecommendations(projects) {
@@ -1764,7 +1867,7 @@ function buildRecommendations(projects) {
     .map((project) => ({ project, score: projectRiskScore(project) }))
     .sort((a, b) => b.score - a.score);
 
-  return ranked.map(({ project, score }, index) => {
+  const recommendations = ranked.map(({ project, score }, index) => {
     const durationMinutes = project.health === 'critical' && project.priority >= 5 ? 90 : project.health === 'healthy' ? 45 : 60;
     const dueText = project.dueInDays == null ? 'no hard deadline' : project.dueInDays < 0 ? `${Math.abs(project.dueInDays)}d overdue` : `due in ${project.dueInDays}d`;
     const action = project.nextAction || `Put ${durationMinutes} focused minutes into ${project.name}.`;
@@ -1779,15 +1882,22 @@ function buildRecommendations(projects) {
       reasonShort: `${project.lastTouchedLabel} - ${dueText}`,
       reasonLong: `${project.name} is currently the highest-value intervention at this rank: ${project.lastTouchedLabel}, ${dueText}, and ${formatHours(project.weekHours)} logged against a ${formatHours(project.plannedHours)} weekly plan.`,
     };
-  }).map((item, index, all) => ({
-    ...item,
-    alternatives: all.filter((_, candidateIndex) => candidateIndex !== index).slice(0, 2).map((candidate) => ({
-      projectId: candidate.projectId,
-      projectName: candidate.projectName,
-      durationMinutes: candidate.durationMinutes,
-      why: candidate.reasonShort,
-    })),
-  }));
+  });
+
+  return recommendations.map((item, index) => {
+    const alternatives = [];
+    for (let candidateIndex = 0; candidateIndex < recommendations.length && alternatives.length < 2; candidateIndex += 1) {
+      if (candidateIndex === index) continue;
+      const candidate = recommendations[candidateIndex];
+      alternatives.push({
+        projectId: candidate.projectId,
+        projectName: candidate.projectName,
+        durationMinutes: candidate.durationMinutes,
+        why: candidate.reasonShort,
+      });
+    }
+    return { ...item, alternatives };
+  });
 }
 
 function rangeBounds(range, today) {
@@ -1815,39 +1925,20 @@ function filterEntries(entries, bounds) {
 }
 
 function projectHoursForRange(projectId, entries, bounds) {
-  return round1(sumMinutes(filterEntries(entries, bounds).filter((entry) => entry.projectId === projectId)) / 60);
-}
-
-function projectWeekHistory(projectId, entries, today) {
-  const currentStart = startOfWeek(today);
-  return Array.from({ length: 8 }, (_, index) => {
-    const start = addDays(currentStart, (index - 7) * 7);
-    const end = addDays(start, 6);
-    return projectHoursForRange(projectId, entries, { start, end });
-  });
-}
-
-function projectStreak(projectId, entries, today) {
-  const minutesByDay = new Map();
+  let minutes = 0;
   for (const entry of entries) {
-    if (entry.projectId !== projectId || entry.aggregation) continue;
-    minutesByDay.set(entry.date, (minutesByDay.get(entry.date) || 0) + Number(entry.durationMinutes || 0));
+    if (entry.projectId === projectId && entry.date >= bounds.start && entry.date <= bounds.end) {
+      minutes += Number(entry.durationMinutes || 0);
+    }
   }
-  let cursor = today;
-  if ((minutesByDay.get(cursor) || 0) < 30) cursor = addDays(cursor, -1);
-  let streak = 0;
-  while ((minutesByDay.get(cursor) || 0) >= 30) {
-    streak += 1;
-    cursor = addDays(cursor, -1);
-  }
-  return streak;
+  return round1(minutes / 60);
 }
 
 function composeEntries(entries) {
   return entries.reduce((acc, entry) => {
     const minutes = Number(entry.durationMinutes || 0);
-    if (['deep_work', 'research', 'creative'].includes(entry.activityType)) acc.deepMinutes += minutes;
-    else if (['shallow_work', 'communication'].includes(entry.activityType)) acc.shallowMinutes += minutes;
+    if (DEEP_ACTIVITY_TYPES.has(entry.activityType)) acc.deepMinutes += minutes;
+    else if (SHALLOW_ACTIVITY_TYPES.has(entry.activityType)) acc.shallowMinutes += minutes;
     else acc.adminMinutes += minutes;
     return acc;
   }, { deepMinutes: 0, shallowMinutes: 0, adminMinutes: 0 });
@@ -1859,7 +1950,7 @@ function productionConsumption(entries) {
   let supportMinutes = 0;
   for (const entry of entries) {
     const minutes = Number(entry.durationMinutes || 0);
-    if (['creative', 'deep_work', 'communication'].includes(entry.activityType)) productionMinutes += minutes;
+    if (PRODUCTION_ACTIVITY_TYPES.has(entry.activityType)) productionMinutes += minutes;
     else if (entry.activityType === 'research') consumptionMinutes += minutes;
     else supportMinutes += minutes;
   }
@@ -1874,22 +1965,37 @@ function productionConsumption(entries) {
 }
 
 function deepWorkMinutes(entries) {
-  return entries
-    .filter((entry) => ['deep_work', 'research', 'creative'].includes(entry.activityType) && Number(entry.durationMinutes) >= 45)
-    .reduce((sum, entry) => sum + Number(entry.durationMinutes || 0), 0);
+  let minutes = 0;
+  for (const entry of entries) {
+    if (DEEP_ACTIVITY_TYPES.has(entry.activityType) && Number(entry.durationMinutes) >= 45) {
+      minutes += Number(entry.durationMinutes || 0);
+    }
+  }
+  return minutes;
 }
 
 function buildWeekByDay(entries, weekStartDate) {
   const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  return names.map((day, index) => {
-    const composition = composeEntries(entries.filter((entry) => entry.date === addDays(weekStartDate, index)));
-    return {
-      day,
-      deep: round1(composition.deepMinutes / 60),
-      shallow: round1(composition.shallowMinutes / 60),
-      admin: round1(composition.adminMinutes / 60),
-    };
-  });
+  const days = names.map((day, index) => ({
+    day,
+    date: addDays(weekStartDate, index),
+    composition: { deepMinutes: 0, shallowMinutes: 0, adminMinutes: 0 },
+  }));
+  const byDate = new Map(days.map((day) => [day.date, day.composition]));
+  for (const entry of entries) {
+    const composition = byDate.get(entry.date);
+    if (!composition) continue;
+    const minutes = Number(entry.durationMinutes || 0);
+    if (DEEP_ACTIVITY_TYPES.has(entry.activityType)) composition.deepMinutes += minutes;
+    else if (SHALLOW_ACTIVITY_TYPES.has(entry.activityType)) composition.shallowMinutes += minutes;
+    else composition.adminMinutes += minutes;
+  }
+  return days.map(({ day, composition }) => ({
+    day,
+    deep: round1(composition.deepMinutes / 60),
+    shallow: round1(composition.shallowMinutes / 60),
+    admin: round1(composition.adminMinutes / 60),
+  }));
 }
 
 function hydrateChallenge(challenge, entries, today) {
