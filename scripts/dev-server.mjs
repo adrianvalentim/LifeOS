@@ -17,6 +17,7 @@ import {
   duplicateTask,
   getState,
   logTime,
+  purgeExpiredTaskTrash,
   readStore,
   reorderReadingBook,
   reorderTask,
@@ -28,10 +29,12 @@ import {
   setTaskSchedule,
   startSession,
   stopSession,
+  trashTask,
   updateReadingBookFinishedDate,
   updateReadingBookTags,
   updateTask,
   updateTaskTags,
+  restoreTask,
 } from '../src/lifeos-data.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -52,6 +55,7 @@ const MIME = {
 
 const eventClients = new Set();
 let dataChangeTimer = null;
+let taskTrashCleanupTimer = null;
 
 const server = createServer(async (req, res) => {
   try {
@@ -104,6 +108,16 @@ const server = createServer(async (req, res) => {
       if (body.title !== undefined) requireString(body.title, 'title');
       if (body.notes !== undefined && typeof body.notes !== 'string') throw new ClientError('notes must be a string.');
       return sendJson(res, await taskStateAction(() => updateTask(body)));
+    }
+    if (url.pathname === '/api/tasks/trash' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.taskId, 'taskId');
+      return sendJson(res, await taskStateAction(() => trashTask(body)));
+    }
+    if (url.pathname === '/api/tasks/restore' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.taskId, 'taskId');
+      return sendJson(res, await taskStateAction(() => restoreTask(body)));
     }
     if (url.pathname === '/api/tasks/delete' && req.method === 'POST') {
       const body = await readJson(req);
@@ -265,6 +279,9 @@ const initialization = await initializeDefaultStore();
 if (initialization.created) {
   console.log(`LifeOS personal store initialized at ${initialization.storePath}`);
 }
+await cleanExpiredTaskTrash();
+taskTrashCleanupTimer = setInterval(() => void cleanExpiredTaskTrash(), 60 * 60 * 1000);
+taskTrashCleanupTimer.unref?.();
 const dataWatcher = watch(dataDir, (_eventType, filename) => {
   if (String(filename || '') !== 'lifeos.json') return;
   clearTimeout(dataChangeTimer);
@@ -451,10 +468,22 @@ async function taskStateAction(action) {
   try {
     return (await action()).state;
   } catch (error) {
-    if (/Task not found|Parent task not found|Project not found|Task position target not found|task title|task notes|task update|task must|task cannot|top-level task|Task completion|Task priority|Task tags|Task due date|Task start time|Task duration|Recurring tasks|start time requires|no more than/.test(error.message)) {
+    if (/Task not found|Parent task not found|Project not found|Task position target not found|task title|task notes|task update|task must|task cannot|top-level task|Task completion|Task priority|Task tags|Task due date|Task start time|Task duration|Recurring tasks|start time requires|no more than|in Trash|not in Trash|permanently deleted/.test(error.message)) {
       throw new ClientError(error.message);
     }
     throw error;
+  }
+}
+
+async function cleanExpiredTaskTrash() {
+  try {
+    const result = await purgeExpiredTaskTrash();
+    if (result.purgedCount) {
+      console.log(`LifeOS permanently deleted ${result.purgedCount} expired ${result.purgedCount === 1 ? 'task' : 'tasks'} from Trash.`);
+      broadcastEvent('lifeos', { type: 'stateChanged' });
+    }
+  } catch (error) {
+    console.warn(`LifeOS could not clean expired task Trash: ${error.message}`);
   }
 }
 
@@ -474,6 +503,7 @@ class ClientError extends Error {}
 async function shutdown() {
   dataWatcher.close();
   clearTimeout(dataChangeTimer);
+  clearInterval(taskTrashCleanupTimer);
   for (const client of eventClients) client.end();
   await codexAppServer.stop().catch(() => undefined);
   server.close(() => process.exit(0));

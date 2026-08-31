@@ -11,6 +11,10 @@ npm run lifeos -- projects --health
 npm run lifeos -- tasks --project "Portia"
 npm run lifeos -- tasks add --title "Draft Act III" --project "Portia" --priority high --tag writing
 npm run lifeos -- tasks complete --task "Draft Act III"
+npm run lifeos -- tasks --completed
+npm run lifeos -- tasks --trash
+npm run lifeos -- tasks trash --task "Draft Act III"
+npm run lifeos -- tasks restore --task "Draft Act III"
 npm run lifeos -- tasks priority --task "Draft Act III" --priority medium
 npm run lifeos -- tasks tag --task "Draft Act III" --tag writing --tag "deep work"
 npm run lifeos -- stats --range week
@@ -54,11 +58,11 @@ Use `--json` on read commands when structured output helps. Do not inspect the b
 - Visible statistics must be derived from source entries. Do not add display-only totals or hardcode dashboard numbers.
 - Project statuses are `to_do`, `next_up`, `doing`, `paused`, `done`, or `dropped`; the Projects Kanban intentionally shows only `next_up`, `doing`, and `done`, while the grouped, filterable list and project detail keep all six reachable. Paused work is excluded from active summaries and recommendations without becoming archived or dropped.
 - Project categories are reusable many-to-many labels referenced by stable category IDs. Category analytics includes current project membership plus category-only history preserved when a project is deleted.
-- Tasks live in one `tasks.items[]` collection. A task can be in Inbox or reference one project; subtasks inherit the project of their parent. Completing a parent completes its descendants, while adding a subtask reopens completed ancestors. Task notes are multiline text stored on the task. Deleting a task removes its subtree, while deleting a project moves its task tree to Inbox rather than deleting it.
+- Tasks live in one `tasks.items[]` collection. A task can be in Inbox or reference one project; subtasks inherit the project of their parent. Completing a parent completes its non-trashed descendants, while adding or restoring open work reopens completed ancestors. Completed tasks leave active lists, live in the separate Completed scope, and remain collapsed beneath Today and Next 7 days when their due dates match. Task notes are multiline text stored on the task. Deleting moves the task subtree to recoverable Trash via `trashedAt`; restoring retains identity and content, and Trash permanently prunes items after 30 days. Deleting a project moves its task tree to Inbox rather than deleting it.
 - Task priority is exactly `none`, `low`, `medium`, or `high`. Task tags are free-form labels normalized and deduplicated case-insensitively, at most 12 per task, following the reading-tag rules.
 - `sortOrder` is the manual sibling order and is deliberately independent of status, so reopening a task never reshuffles it. Re-parenting carries the whole subtree into the new parent's project and rejects nesting a task under its own descendant.
 - Task grouping, sorting, smart lists (Today, Next 7 days), tag scopes, and their counts are derived in the browser from priority, tags, due date, and status. Never persist a group, a smart-list membership, or a tag index. Tasks view preferences live in `localStorage`, never in the portable store.
-- Task progress is derived from task status across each subtree or project; never persist a second progress total. The schedule envelope reserves due date, optional start time, duration, and recurrence, but recurrence and calendar synchronization are not implemented.
+- Task progress is derived from non-trashed task status across each subtree or project; never persist a second progress total. The schedule envelope reserves due date, optional start time, duration, and recurrence, but recurrence and calendar synchronization are not implemented.
 - Keep the personal store outside Git. Cloud snapshots are secondary copies and must never become the live store.
 - Google Drive backup must be configured to one explicit folder; do not guess between accounts. Backup failure must not invalidate a successful local write.
 - Reading statuses are `to_read`, `next_up`, `reading`, `finished`, or `dropped`; Kanban intentionally includes only `next_up`, `reading`, and `finished`, with Finished projected to the configured current calendar year by `finishedAt`.

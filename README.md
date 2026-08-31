@@ -39,8 +39,9 @@ the computer.
   Next 7 days smart lists, priorities, tags, nested subtasks, completion
   progress, optional due dates, drag-and-drop ordering and nesting with keyboard
   and context-menu equivalents, grouping/sorting/density view options,
-  click-through details with editable notes/title and confirmed subtree
-  deletion, and task controls in project details.
+  click-through details with editable notes/title, a separate Completed scope,
+  collapsed completed work in dated smart lists, 30-day recoverable Trash, and
+  task controls in project details.
 - Today view with recommendations and a real start/stop timer.
 - Week, month, quarter, and year analytics derived from recorded work.
 - Reading Kanban and full library with tags, queue ordering, date read,

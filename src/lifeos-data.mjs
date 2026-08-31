@@ -10,7 +10,7 @@ import {
 } from './lifeos-storage.mjs';
 
 export { DEFAULT_STORE_PATH, DEMO_STORE_PATH, ROOT_DIR } from './lifeos-storage.mjs';
-export const CURRENT_SCHEMA_VERSION = 9;
+export const CURRENT_SCHEMA_VERSION = 10;
 export const ACTIVITY_TYPES = [
   'deep_work',
   'shallow_work',
@@ -23,6 +23,7 @@ export const PROJECT_STATUSES = ['to_do', 'next_up', 'doing', 'paused', 'done', 
 export const READING_STATUSES = ['to_read', 'next_up', 'reading', 'finished', 'dropped'];
 export const TASK_STATUSES = ['open', 'completed'];
 export const TASK_PRIORITIES = ['none', 'low', 'medium', 'high'];
+export const TASK_TRASH_RETENTION_DAYS = 30;
 
 const HEALTH_ORDER = { critical: 0, attention: 1, healthy: 2 };
 const ACTIVE_PROJECT_STATUSES = new Set(['to_do', 'next_up', 'doing']);
@@ -161,6 +162,11 @@ export function migrateStore(input) {
       if (!Array.isArray(task.tags)) task.tags = [];
     }
   }
+  if (version < 10) {
+    for (const task of store.tasks?.items || []) {
+      task.trashedAt = null;
+    }
+  }
   if (store.meta) store.meta.schemaVersion = CURRENT_SCHEMA_VERSION;
   return store;
 }
@@ -297,6 +303,12 @@ export function validateStore(store) {
       validateTaskTimestamp(task.completedAt, `Task ${task.id} completedAt`);
     } else if (task.completedAt != null) {
       throw new Error(`Open task ${task.id} cannot have completedAt.`);
+    }
+    if (!Object.hasOwn(task, 'trashedAt')) {
+      throw new Error(`Task ${task.id} requires trashedAt.`);
+    }
+    if (task.trashedAt != null) {
+      validateTaskTimestamp(task.trashedAt, `Task ${task.id} trashedAt`);
     }
     validateTaskSchedule(task.schedule, task.id);
     taskIds.add(task.id);
@@ -752,6 +764,7 @@ export async function createTask(input, storePath = DEFAULT_STORE_PATH) {
       ? current.tasks.items.find((candidate) => candidate.id === parentTaskId)
       : null;
     if (parentTaskId && !parent) throw new Error(`Parent task not found: ${parentTaskId}`);
+    if (parent?.trashedAt) throw new Error('A task in Trash cannot receive new subtasks.');
 
     let projectId = normalizeTaskProjectId(current, input.projectId);
     if (parent) {
@@ -776,6 +789,7 @@ export async function createTask(input, storePath = DEFAULT_STORE_PATH) {
       createdAt: input.createdAt || timestamp,
       updatedAt: timestamp,
       completedAt: null,
+      trashedAt: null,
     };
     current.tasks.items.push(next);
     let ancestor = parent;
@@ -802,6 +816,7 @@ export async function updateTask(input, storePath = DEFAULT_STORE_PATH) {
   const { result: task, store } = await mutateStore((current) => {
     const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
     if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    requireUntrashedTask(existing, 'edited');
     const title = Object.hasOwn(input, 'title') ? cleanTaskTitle(input.title) : existing.title;
     const notes = Object.hasOwn(input, 'notes') ? cleanTaskNotes(input.notes) : existing.notes;
     if (existing.title !== title || existing.notes !== notes) {
@@ -814,17 +829,96 @@ export async function updateTask(input, storePath = DEFAULT_STORE_PATH) {
   return { task, state: buildValidatedState(store, { now }) };
 }
 
+export async function trashTask(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const { result, store } = await mutateStore((current) => {
+    const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
+    if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    if (existing.trashedAt) throw new Error(`Task ${existing.title} is already in Trash.`);
+    const timestamp = now.toISOString();
+    const targets = [existing, ...taskDescendants(current.tasks.items, existing.id)];
+    for (const task of targets) {
+      task.trashedAt = timestamp;
+      task.updatedAt = timestamp;
+    }
+    return { task: existing, trashedCount: targets.length };
+  }, storePath);
+  return { ...result, state: buildValidatedState(store, { now }) };
+}
+
+export async function restoreTask(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const { result, store } = await mutateStore((current) => {
+    const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
+    if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    if (!existing.trashedAt) throw new Error(`Task ${existing.title} is not in Trash.`);
+
+    const targets = new Map([
+      [existing.id, existing],
+      ...taskDescendants(current.tasks.items, existing.id).map((task) => [task.id, task]),
+    ]);
+    let ancestor = existing.parentTaskId
+      ? current.tasks.items.find((candidate) => candidate.id === existing.parentTaskId)
+      : null;
+    while (ancestor?.trashedAt) {
+      targets.set(ancestor.id, ancestor);
+      ancestor = ancestor.parentTaskId
+        ? current.tasks.items.find((candidate) => candidate.id === ancestor.parentTaskId)
+        : null;
+    }
+
+    const timestamp = now.toISOString();
+    let restoredCount = 0;
+    for (const task of targets.values()) {
+      if (!task.trashedAt) continue;
+      task.trashedAt = null;
+      task.updatedAt = timestamp;
+      restoredCount += 1;
+    }
+    for (const task of targets.values()) {
+      if (task.status !== 'open') continue;
+      let parent = task.parentTaskId
+        ? current.tasks.items.find((candidate) => candidate.id === task.parentTaskId)
+        : null;
+      while (parent) {
+        if (parent.status === 'completed') {
+          parent.status = 'open';
+          parent.completedAt = null;
+          parent.updatedAt = timestamp;
+        }
+        parent = parent.parentTaskId
+          ? current.tasks.items.find((candidate) => candidate.id === parent.parentTaskId)
+          : null;
+      }
+    }
+    return { task: existing, restoredCount };
+  }, storePath);
+  return { ...result, state: buildValidatedState(store, { now }) };
+}
+
 export async function deleteTask(input, storePath = DEFAULT_STORE_PATH) {
   const now = resolveNow(input.now);
   const { result, store } = await mutateStore((current) => {
     const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
     if (!existing) throw new Error(`Task not found: ${input.taskId}`);
-    const targets = new Set([
-      existing.id,
-      ...taskDescendants(current.tasks.items, existing.id).map((task) => task.id),
-    ]);
+    if (!existing.trashedAt) throw new Error('A task must be in Trash before it can be permanently deleted.');
+    const targets = taskSubtreeIds(current.tasks.items, existing.id);
     current.tasks.items = current.tasks.items.filter((task) => !targets.has(task.id));
     return { task: existing, deletedCount: targets.size };
+  }, storePath);
+  return { ...result, state: buildValidatedState(store, { now }) };
+}
+
+export async function purgeExpiredTaskTrash(input = {}, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const snapshot = await readStore(storePath);
+  if (!expiredTaskTrashIds(snapshot.tasks.items, now).size) {
+    return { purgedCount: 0, state: buildValidatedState(snapshot, { now }) };
+  }
+  const { result, store } = await mutateStore((current) => {
+    const targets = expiredTaskTrashIds(current.tasks.items, now);
+    current.tasks.items = current.tasks.items.filter((task) => !targets.has(task.id));
+    return { purgedCount: targets.size };
   }, storePath);
   return { ...result, state: buildValidatedState(store, { now }) };
 }
@@ -835,9 +929,10 @@ export async function setTaskCompletion(input, storePath = DEFAULT_STORE_PATH) {
   const { result, store } = await mutateStore((current) => {
     const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
     if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    requireUntrashedTask(existing, 'completed or reopened');
     const timestamp = now.toISOString();
     const targets = input.completed
-      ? [existing, ...taskDescendants(current.tasks.items, existing.id)]
+      ? [existing, ...taskDescendants(current.tasks.items, existing.id).filter((task) => !task.trashedAt)]
       : [existing];
     let affectedCount = 0;
     for (const task of targets) {
@@ -858,6 +953,7 @@ export async function setTaskProject(input, storePath = DEFAULT_STORE_PATH) {
   const { result, store } = await mutateStore((current) => {
     const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
     if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    requireUntrashedTask(existing, 'assigned');
     if (existing.parentTaskId) throw new Error('Only a top-level task can be assigned to a project.');
     const projectId = normalizeTaskProjectId(current, input.projectId);
     const targets = [existing, ...taskDescendants(current.tasks.items, existing.id)];
@@ -880,6 +976,7 @@ export async function setTaskPriority(input, storePath = DEFAULT_STORE_PATH) {
   const { result: task, store } = await mutateStore((current) => {
     const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
     if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    requireUntrashedTask(existing, 'prioritized');
     if (existing.priority !== priority) {
       existing.priority = priority;
       existing.updatedAt = now.toISOString();
@@ -896,6 +993,7 @@ export async function updateTaskTags(input, storePath = DEFAULT_STORE_PATH) {
   const { result: task, store } = await mutateStore((current) => {
     const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
     if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    requireUntrashedTask(existing, 'tagged');
     if (existing.tags.join('\u0000') !== tags.join('\u0000')) {
       existing.tags = tags;
       existing.updatedAt = now.toISOString();
@@ -910,6 +1008,7 @@ export async function setTaskSchedule(input, storePath = DEFAULT_STORE_PATH) {
   const { result: task, store } = await mutateStore((current) => {
     const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
     if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    requireUntrashedTask(existing, 'scheduled');
     const schedule = normalizeTaskSchedule({
       dueDate: Object.hasOwn(input, 'dueDate') ? input.dueDate : existing.schedule.dueDate,
       startTime: Object.hasOwn(input, 'startTime') ? input.startTime : existing.schedule.startTime,
@@ -934,6 +1033,7 @@ export async function reorderTask(input, storePath = DEFAULT_STORE_PATH) {
   const { result: task, store } = await mutateStore((current) => {
     const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
     if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    requireUntrashedTask(existing, 'reordered');
 
     const keepParent = !Object.hasOwn(input, 'parentTaskId');
     const requestedParentId = keepParent
@@ -951,6 +1051,7 @@ export async function reorderTask(input, storePath = DEFAULT_STORE_PATH) {
       ? current.tasks.items.find((candidate) => candidate.id === requestedParentId)
       : null;
     if (requestedParentId && !parent) throw new Error(`Parent task not found: ${requestedParentId}`);
+    if (parent?.trashedAt) throw new Error('A task cannot be nested beneath a task in Trash.');
 
     const timestamp = now.toISOString();
     const projectId = parent ? parent.projectId || null : existing.projectId || null;
@@ -988,6 +1089,7 @@ export async function duplicateTask(input, storePath = DEFAULT_STORE_PATH) {
   const { result, store } = await mutateStore((current) => {
     const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
     if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    requireUntrashedTask(existing, 'duplicated');
     const timestamp = now.toISOString();
     const childrenByParent = indexTasksByParent(current.tasks.items);
     const copies = [];
@@ -1000,7 +1102,7 @@ export async function duplicateTask(input, storePath = DEFAULT_STORE_PATH) {
         updatedAt: timestamp,
       };
       copies.push(copy);
-      for (const child of childrenByParent.get(source.id) || []) {
+      for (const child of (childrenByParent.get(source.id) || []).filter((task) => !task.trashedAt)) {
         copySubtree(child, copy.id);
       }
       return copy;
@@ -1248,7 +1350,7 @@ function buildValidatedState(copy, options = {}) {
   const activeRange = ['week', 'month', 'quarter', 'year'].includes(options.range) ? options.range : 'week';
   const currentWeekBounds = rangeBounds('week', today);
   const selectedBounds = rangeBounds(activeRange, today);
-  const tasks = hydrateTasks(copy.tasks, copy.projects);
+  const tasks = hydrateTasks(copy.tasks, copy.projects, { now });
   const projects = hydrateProjects(copy, {
     now,
     currentWeekBounds,
@@ -1367,8 +1469,9 @@ function resolveNow(value) {
   return now;
 }
 
-function hydrateTasks(tasks, projects) {
-  const items = [...tasks.items];
+function hydrateTasks(tasks, projects, options = {}) {
+  const now = resolveNow(options.now);
+  const items = tasks.items.filter((task) => !taskTrashExpired(task, now));
   const childrenByParent = indexTasksByParent(items);
   const totalCounts = { total: 0, completed: 0 };
   const inboxCounts = { total: 0, completed: 0 };
@@ -1377,6 +1480,7 @@ function hydrateTasks(tasks, projects) {
     { total: 0, completed: 0 },
   ]));
   for (const task of items) {
+    if (task.trashedAt) continue;
     const completed = task.status === 'completed' ? 1 : 0;
     totalCounts.total += 1;
     totalCounts.completed += completed;
@@ -1390,17 +1494,24 @@ function hydrateTasks(tasks, projects) {
   const hydratedById = new Map();
   const hydrate = (task, depth) => {
     const children = (childrenByParent.get(task.id) || []).map((child) => hydrate(child, depth + 1));
-    const subtreeTotal = 1 + children.reduce((sum, child) => sum + child.subtreeTotal, 0);
-    const subtreeCompleted = (task.status === 'completed' ? 1 : 0)
+    const allSubtreeTotal = 1 + children.reduce((sum, child) => sum + child.allSubtreeTotal, 0);
+    const subtreeTotal = (task.trashedAt ? 0 : 1)
+      + children.reduce((sum, child) => sum + child.subtreeTotal, 0);
+    const subtreeCompleted = (!task.trashedAt && task.status === 'completed' ? 1 : 0)
       + children.reduce((sum, child) => sum + child.subtreeCompleted, 0);
+    const trashSubtreeTotal = (task.trashedAt ? 1 : 0)
+      + children.reduce((sum, child) => sum + child.trashSubtreeTotal, 0);
     const hydrated = {
       ...task,
       depth,
       childIds: children.map((child) => child.id),
-      directSubtaskCount: children.length,
+      directSubtaskCount: children.filter((child) => !child.trashedAt).length,
+      trashDirectSubtaskCount: children.filter((child) => child.trashedAt).length,
+      allSubtreeTotal,
       subtreeTotal,
       subtreeCompleted,
-      progress: round2(subtreeCompleted / subtreeTotal),
+      trashSubtreeTotal,
+      progress: subtreeTotal ? round2(subtreeCompleted / subtreeTotal) : 0,
     };
     hydratedById.set(task.id, hydrated);
     return hydrated;
@@ -1422,6 +1533,7 @@ function hydrateTasks(tasks, projects) {
     items: ordered,
     summary: {
       ...summarizeTaskCounts(totalCounts),
+      trashed: items.filter((task) => task.trashedAt).length,
       inbox: summarizeTaskCounts(inboxCounts),
       byProject,
     },
@@ -1707,6 +1819,10 @@ function indexTasksByParent(items) {
   return childrenByParent;
 }
 
+function requireUntrashedTask(task, action) {
+  if (task.trashedAt) throw new Error(`A task in Trash cannot be ${action}. Restore it first.`);
+}
+
 function taskDescendants(items, taskId) {
   const childrenByParent = indexTasksByParent(items);
   const descendants = [];
@@ -1717,6 +1833,27 @@ function taskDescendants(items, taskId) {
     queue.push(...(childrenByParent.get(task.id) || []));
   }
   return descendants;
+}
+
+function taskSubtreeIds(items, taskId) {
+  return new Set([
+    taskId,
+    ...taskDescendants(items, taskId).map((task) => task.id),
+  ]);
+}
+
+function taskTrashExpired(task, now) {
+  if (!task.trashedAt) return false;
+  return now.getTime() - new Date(task.trashedAt).getTime() >= TASK_TRASH_RETENTION_DAYS * DAY_MS;
+}
+
+function expiredTaskTrashIds(items, now) {
+  const targets = new Set();
+  for (const task of items) {
+    if (!taskTrashExpired(task, now)) continue;
+    for (const taskId of taskSubtreeIds(items, task.id)) targets.add(taskId);
+  }
+  return targets;
 }
 
 function nextTaskSortOrder(items, parentTaskId) {

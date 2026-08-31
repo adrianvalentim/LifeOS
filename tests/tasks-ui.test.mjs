@@ -37,11 +37,16 @@ function fixture() {
       tags: ['writing'],
       dueDate: TODAY,
     }),
-    task('child', 'Resolve the midpoint', 'portia', 'root', 'completed', 1, [], 1, 1),
+    task('child', 'Resolve the midpoint', 'portia', 'root', 'completed', 1, [], 1, 1, {
+      dueDate: TODAY,
+    }),
     task('inbox', 'Renew passport', null, null, 'open', 0, [], 1, 0, {
       priority: 'low',
       tags: ['errands'],
       dueDate: '2026-08-19',
+    }),
+    task('trashed', 'Discarded draft', 'portia', null, 'open', 0, [], 0, 0, {
+      trashedAt: '2026-08-21T12:00:00.000Z',
     }),
   ];
   return {
@@ -50,6 +55,7 @@ function fixture() {
       total: 3,
       open: 2,
       completed: 1,
+      trashed: 1,
       progress: 1 / 3,
       inbox: { total: 1, open: 1, completed: 0, progress: 0 },
       byProject: {
@@ -67,13 +73,16 @@ test('Tasks renders first-class scopes, nested subtasks, progress, and accessibl
   assert.match(html, /data-task-filter="all"/);
   assert.match(html, /data-task-filter="inbox"/);
   assert.match(html, /data-task-filter="project:portia"/);
-  assert.match(html, /data-task-node="root"[\s\S]*data-task-node="child"/);
+  assert.match(html, /data-task-node="root"/);
+  assert.doesNotMatch(html, /data-task-node="child"/);
+  assert.doesNotMatch(html, /data-task-node="trashed"/);
   assert.match(html, /data-task-completion="root"/);
   assert.match(html, /aria-label="Complete Draft Act III and its subtasks"/);
   assert.match(html, /data-task-menu="root"/);
   assert.match(html, /aria-label="Actions for Draft Act III"/);
   assert.match(html, /1\/2/);
-  assert.match(html, /data-task-subtask-open="child"/);
+  assert.match(html, /data-task-filter="completed"/);
+  assert.match(html, /data-task-filter="trash"/);
 });
 
 test('the sidebar adds Today and Next 7 days smart lists plus tag scopes with live counts', () => {
@@ -91,10 +100,31 @@ test('the sidebar adds Today and Next 7 days smart lists plus tag scopes with li
   assert.match(todayHtml, /data-task-node="root"/);
   assert.match(todayHtml, /data-task-node="inbox"/);
   assert.match(todayHtml, /3d late/);
-  assert.doesNotMatch(todayHtml, /data-task-node="child"/);
+  assert.match(todayHtml, /<details class="task-completed-disclosure">/);
+  assert.match(todayHtml, /data-task-node="child"/);
+  assert.doesNotMatch(todayHtml, /<details class="task-completed-disclosure" open>/);
 });
 
-test('tag scope lists every tagged task flat, including a tagged subtask under an untagged root', () => {
+test('Completed and Trash are separate lifecycle scopes with recovery controls', () => {
+  const completedUi = createTasksUiState();
+  completedUi.filter = 'completed';
+  const completed = renderTasks(fixture(), projects, domains, completedUi, { today: TODAY });
+  assert.match(completed, /<h1>Completed<\/h1>/);
+  assert.match(completed, /data-task-node="child"/);
+  assert.doesNotMatch(completed, /data-task-node="root"/);
+  assert.doesNotMatch(completed, /data-task-create/);
+
+  const trashUi = createTasksUiState();
+  trashUi.filter = 'trash';
+  const trash = renderTasks(fixture(), projects, domains, trashUi, { today: TODAY });
+  assert.match(trash, /<h1>Trash<\/h1>/);
+  assert.match(trash, /30 days/);
+  assert.match(trash, /data-task-node="trashed"/);
+  assert.doesNotMatch(trash, /data-task-completion="trashed"/);
+  assert.doesNotMatch(trash, /data-task-create/);
+});
+
+test('tag scope stays active-only even when a completed subtask shares the tag', () => {
   const tasks = fixture();
   tasks.items[1].tags = ['writing'];
   const ui = createTasksUiState();
@@ -103,7 +133,7 @@ test('tag scope lists every tagged task flat, including a tagged subtask under a
 
   assert.match(html, /<h1>#writing<\/h1>/);
   assert.match(html, /data-task-node="root"/);
-  assert.match(html, /data-task-node="child"/);
+  assert.doesNotMatch(html, /data-task-node="child"/);
   assert.doesNotMatch(html, /data-task-node="inbox"/);
   assert.match(html, /<h2 id="task-list-heading">1 open<\/h2>/);
   assert.match(html, /class="task-item .*priority-high"/);
@@ -111,7 +141,7 @@ test('tag scope lists every tagged task flat, including a tagged subtask under a
   assert.doesNotMatch(html, /data-task-drag-id=/);
 });
 
-test('view options drive grouping, sorting, completed visibility, and whether dragging is offered', () => {
+test('view options drive grouping, sorting, and whether dragging is offered', () => {
   const ui = createTasksUiState();
   ui.groupBy = 'priority';
   ui.viewOptionsOpen = true;
@@ -128,11 +158,7 @@ test('view options drive grouping, sorting, completed visibility, and whether dr
   assert.equal(canReorder(plain), true);
   assert.match(renderTasks(fixture(), projects, domains, plain, { today: TODAY }), /data-task-drag-id="root"/);
 
-  const hidden = createTasksUiState();
-  hidden.showCompleted = false;
-  const html = renderTasks(fixture(), projects, domains, hidden, { today: TODAY });
-  assert.doesNotMatch(html, /data-task-node="child"/);
-  assert.match(html, /data-task-node="root"/);
+  assert.doesNotMatch(grouped, /data-task-show-completed/);
 });
 
 test('due-date grouping separates overdue work from the rest of the horizon', () => {
@@ -182,15 +208,16 @@ test('clickable tasks open an editable detail with list, due, priority, tag, and
   assert.match(detail, /data-task-tag-remove="writing"/);
   assert.match(detail, /data-task-tag-create="root"/);
   assert.match(detail, /data-task-delete-request="root"/);
+  assert.match(detail, /Move to Trash/);
 
   ui.deleteTaskId = 'root';
   const confirmation = renderTaskOverlays(tasks, projects, ui, { today: TODAY });
   assert.match(confirmation, /role="alertdialog"/);
-  assert.match(confirmation, /This also removes 1 subtask beneath it\./);
-  assert.match(confirmation, /data-task-delete-confirm="root"/);
+  assert.match(confirmation, /This also moves 1 subtask beneath it\./);
+  assert.match(confirmation, /data-task-trash-confirm="root"/);
 });
 
-test('the context menu offers dates, priorities, moves, tags, duplication, and deletion', () => {
+test('the context menu offers dates, priorities, moves, tags, duplication, and Trash', () => {
   const tasks = fixture();
   const ui = createTasksUiState();
   ui.menu = { taskId: 'root', x: 220, y: 180, submenu: null };
@@ -205,6 +232,7 @@ test('the context menu offers dates, priorities, moves, tags, duplication, and d
   assert.match(menu, /data-task-duplicate="root"/);
   assert.doesNotMatch(menu, /data-task-move-step/);
   assert.match(menu, /data-task-delete-request="root"/);
+  assert.match(menu, /Move to Trash/);
 
   ui.menu.submenu = 'project';
   const moveMenu = renderTaskOverlays(tasks, projects, ui, { today: TODAY });
@@ -215,6 +243,24 @@ test('the context menu offers dates, priorities, moves, tags, duplication, and d
   const tagMenu = renderTaskOverlays(tasks, projects, ui, { today: TODAY });
   assert.match(tagMenu, /data-task-tag-toggle="root" data-task-tag="writing"/);
   assert.match(tagMenu, /data-task-tag-create="root"/);
+});
+
+test('a trashed task detail offers restore and guarded permanent deletion', () => {
+  const tasks = fixture();
+  const ui = createTasksUiState();
+  ui.selectedTaskId = 'trashed';
+  ui.detailDraft = { title: 'Discarded draft', notes: '' };
+  let overlay = renderTaskOverlays(tasks, projects, ui, { today: TODAY });
+  assert.match(overlay, /task-detail-status trashed">Trash/);
+  assert.match(overlay, /data-task-restore="trashed"/);
+  assert.match(overlay, /Delete forever/);
+  assert.doesNotMatch(overlay, /data-task-tag-create="trashed"/);
+
+  ui.deleteTaskId = 'trashed';
+  overlay = renderTaskOverlays(tasks, projects, ui, { today: TODAY });
+  assert.match(overlay, /Permanent deletion/);
+  assert.match(overlay, /data-task-delete-confirm="trashed"/);
+  assert.match(overlay, /This cannot be undone\./);
 });
 
 test('a subtask keeps its parent list instead of offering an independent move', () => {
@@ -243,7 +289,7 @@ function task(id, title, projectId, parentTaskId, status, depth, childIds, subtr
     directSubtaskCount: childIds.length,
     subtreeTotal,
     subtreeCompleted,
-    progress: subtreeCompleted / subtreeTotal,
+    progress: subtreeTotal ? subtreeCompleted / subtreeTotal : 0,
     schedule: {
       dueDate: extra.dueDate || null,
       startTime: null,
@@ -253,5 +299,8 @@ function task(id, title, projectId, parentTaskId, status, depth, childIds, subtr
     createdAt: '2026-08-01T12:00:00.000Z',
     updatedAt: '2026-08-01T12:00:00.000Z',
     completedAt: status === 'completed' ? '2026-08-02T12:00:00.000Z' : null,
+    trashedAt: extra.trashedAt || null,
+    allSubtreeTotal: extra.allSubtreeTotal || subtreeTotal || 1,
+    trashSubtreeTotal: extra.trashedAt ? (extra.trashSubtreeTotal || 1) : 0,
   };
 }

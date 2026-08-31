@@ -967,6 +967,14 @@ function bindTaskEvents() {
   document.querySelector('[data-task-delete-confirm]')?.addEventListener('click', (event) => {
     void permanentlyDeleteTask(event.currentTarget.dataset.taskDeleteConfirm);
   });
+  document.querySelector('[data-task-trash-confirm]')?.addEventListener('click', (event) => {
+    void moveTaskToTrash(event.currentTarget.dataset.taskTrashConfirm);
+  });
+  document.querySelectorAll('[data-task-restore]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      void restoreTrashedTask(event.currentTarget.dataset.taskRestore);
+    });
+  });
 }
 
 function applyTaskFilter(filter) {
@@ -998,12 +1006,6 @@ function bindTaskViewOptions() {
   });
   document.querySelector('[data-task-density]')?.addEventListener('change', (event) => {
     commit('density', event.currentTarget.value);
-  });
-  document.querySelector('[data-task-show-completed]')?.addEventListener('change', (event) => {
-    tasksUi.showCompleted = event.currentTarget.checked;
-    saveTaskViewPreferences();
-    render();
-    document.querySelector('[data-task-show-completed]')?.focus();
   });
   if (taskViewDismiss) {
     document.removeEventListener('pointerdown', taskViewDismiss, true);
@@ -1163,7 +1165,7 @@ function handleTaskRowKeydown(event, item) {
 async function moveTaskStep(taskId, direction) {
   if (tasksUi.savingTaskId) return;
   const task = state.tasks.items.find((candidate) => candidate.id === taskId);
-  if (!task) return;
+  if (!task || task.trashedAt || task.status !== 'open') return;
   if (!canReorder(tasksUi)) {
     pageError = 'Switch to custom order without grouping before moving tasks.';
     render();
@@ -1203,7 +1205,11 @@ async function moveTaskStep(taskId, direction) {
 
 function taskSiblings(task) {
   return state.tasks.items
-    .filter((candidate) => (candidate.parentTaskId || null) === (task.parentTaskId || null));
+    .filter((candidate) => (
+      !candidate.trashedAt
+      && candidate.status === 'open'
+      && (candidate.parentTaskId || null) === (task.parentTaskId || null)
+    ));
 }
 
 async function toggleTaskTag(taskId, tag, control, { add = false, keepMenu = false } = {}) {
@@ -1342,13 +1348,58 @@ async function permanentlyDeleteTask(taskId) {
     tasksUi.deletingTaskId = null;
     tasksUi.deleteError = null;
     render();
-    document.querySelector('[data-task-create] input[name="title"], [data-project-task-create] input[name="title"]')?.focus();
+    document.querySelector('[data-task-create] input[name="title"], [data-project-task-create] input[name="title"], [data-task-filter="trash"]')?.focus();
   } catch (error) {
     tasksUi.deletingTaskId = null;
     tasksUi.deleteError = error.message;
     render();
     document.querySelector('[data-task-delete-cancel]')?.focus();
   }
+}
+
+async function moveTaskToTrash(taskId) {
+  if (tasksUi.deletingTaskId) return;
+  tasksUi.deletingTaskId = taskId;
+  tasksUi.deleteError = null;
+  render();
+  try {
+    state = await apiJson('/api/tasks/trash', jsonRequest({ taskId }));
+    closeTaskLifecycleOverlays();
+    render();
+    document.querySelector('[data-task-create] input[name="title"], [data-project-task-create] input[name="title"], [data-task-filter="trash"]')?.focus();
+  } catch (error) {
+    tasksUi.deletingTaskId = null;
+    tasksUi.deleteError = error.message;
+    render();
+    document.querySelector('[data-task-delete-cancel]')?.focus();
+  }
+}
+
+async function restoreTrashedTask(taskId) {
+  if (tasksUi.savingTaskId) return;
+  tasksUi.savingTaskId = taskId;
+  pageError = null;
+  render();
+  try {
+    state = await apiJson('/api/tasks/restore', jsonRequest({ taskId }));
+    closeTaskLifecycleOverlays();
+  } catch (error) {
+    tasksUi.savingTaskId = null;
+    pageError = error.message;
+  }
+  render();
+  document.querySelector('[data-task-filter="trash"]')?.focus();
+}
+
+function closeTaskLifecycleOverlays() {
+  tasksUi.selectedTaskId = null;
+  tasksUi.detailDraft = null;
+  tasksUi.detailError = null;
+  tasksUi.deleteTaskId = null;
+  tasksUi.deletingTaskId = null;
+  tasksUi.deleteError = null;
+  tasksUi.savingTaskId = null;
+  tasksUi.menu = null;
 }
 
 async function createTaskFromForm(form, fixed = {}) {
@@ -3017,19 +3068,20 @@ function validTab(value) {
 
 function parseTaskFilter(value) {
   const filter = String(value || '');
-  if (['inbox', 'today', 'next7'].includes(filter)) return filter;
+  if (['inbox', 'today', 'next7', 'completed', 'trash'].includes(filter)) return filter;
   if (filter.startsWith('project:') || filter.startsWith('tag:')) return filter;
   return 'all';
 }
 
 function validTaskFilter(value) {
   const filter = String(value || '');
-  if (['inbox', 'today', 'next7'].includes(filter)) return filter;
+  if (['inbox', 'today', 'next7', 'completed', 'trash'].includes(filter)) return filter;
   if (filter.startsWith('project:') && state?.projects.some((project) => project.id === filter.slice(8))) {
     return filter;
   }
   if (filter.startsWith('tag:') && filter.length > 4) {
     const known = (state?.tasks.items || [])
+      .filter((task) => !task.trashedAt && task.status === 'open')
       .flatMap((task) => task.tags || [])
       .find((tag) => normalizeTagKey(tag) === normalizeTagKey(filter.slice(4)));
     return known ? `tag:${known}` : 'all';
@@ -3056,7 +3108,6 @@ function loadTaskViewPreferences() {
   if (TASK_GROUPINGS.includes(stored.groupBy)) tasksUi.groupBy = stored.groupBy;
   if (TASK_SORTS.includes(stored.sortBy)) tasksUi.sortBy = stored.sortBy;
   if (TASK_DENSITIES.includes(stored.density)) tasksUi.density = stored.density;
-  if (typeof stored.showCompleted === 'boolean') tasksUi.showCompleted = stored.showCompleted;
 }
 
 function saveTaskViewPreferences() {
@@ -3064,7 +3115,6 @@ function saveTaskViewPreferences() {
     groupBy: tasksUi.groupBy,
     sortBy: tasksUi.sortBy,
     density: tasksUi.density,
-    showCompleted: tasksUi.showCompleted,
   }));
 }
 

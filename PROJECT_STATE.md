@@ -3,7 +3,7 @@
 > Canonical implementation handoff for agents and maintainers. Read this after
 > [`AGENTS.md`](AGENTS.md) and before making a structural change.
 
-- Last updated: 2026-08-27
+- Last updated: 2026-08-31
 - Implementation baseline: `main`, including the storage, Projects, Reading, and
   source-backed Tauri work described here
 - Remote: `adrianvalentim/LifeOS`, public, default branch `main`
@@ -46,7 +46,7 @@ sidecar packaging, notarized distribution, and updates remain deferred.
 | Area | State | What is true now |
 | --- | --- | --- |
 | Project dashboard | Implemented | Status-grouped and filterable portfolio list plus a focused three-column drag Kanban, reusable category labels, six persistent workflow statuses, confirmed history-preserving deletion, computed health, last touch, weekly hours, deadline, progress, and streak |
-| Tasks | Focused first release implemented | First-class All/Inbox/project scopes, optional project association, nested subtasks, optional due dates, completion cascade, derived subtree/project progress, click-through details with editable notes/title and confirmed subtree deletion, project-detail creation and controls, and CLI operations |
+| Tasks | Focused first release implemented | Active All/Inbox/project/tag scopes, separate Completed and 30-day Trash scopes, dated smart lists with collapsed completed work, optional project association, nested subtasks, optional due dates, completion cascade, derived subtree/project progress, click-through details with editable notes/title and recoverable subtree deletion, project-detail creation and controls, and CLI operations |
 | Today | Implemented foundation | Computed daily entries and total, recommendation selection, real start/stop timer |
 | Analytics | Implemented foundation | Week/month/quarter/year totals, domain allocation, rhythm heatmap, trends, composition, production/consumption, deep-work counts |
 | Almanac | Read-only foundation | Computed streaks, current challenge, and configured milestones |
@@ -251,8 +251,8 @@ coalesced. The shell does not bundle Node or copy the browser application.
 
 ## 7. Persisted data model
 
-The active store is a single JSON object. `schemaVersion` is currently 9, with
-explicit compatibility migrations from versions 2 through 8; there is no
+The active store is a single JSON object. `schemaVersion` is currently 10, with
+explicit compatibility migrations from versions 2 through 9; there is no
 general migration framework yet.
 
 ### `meta`
@@ -328,7 +328,8 @@ are derived. Do not persist them as parallel display fields.
 ### `tasks.items[]`
 
 Schema version 7 added one shared task collection; version 8 adds persisted task
-notes; version 9 adds priority and tags. Tasks are independent records,
+notes; version 9 adds priority and tags; version 10 adds recoverable task Trash
+through `trashedAt`. Tasks are independent records,
 not embedded inside projects, so Inbox tasks and project tasks use the same
 operations and can be reassigned without copying data. Every task requires:
 
@@ -343,6 +344,7 @@ operations and can be reassigned without copying data. Every task requires:
 - finite `sortOrder` among siblings;
 - valid `createdAt` and `updatedAt` timestamps;
 - `completedAt`, required for completed tasks and `null` for open tasks;
+- `trashedAt`, either the timestamp at which its subtree entered Trash or `null`;
 - a `schedule` object with `dueDate`, `startTime`, `durationMinutes`, and
   `recurrence`.
 
@@ -354,11 +356,15 @@ The envelope avoids a disruptive task-shape rewrite when time-blocking is added.
 
 A subtask must share its parent's project. Project reassignment is therefore
 allowed only on a root and cascades to every descendant. Completing a parent
-completes all descendants; reopening affects only the selected task. Adding a
-new subtask under completed work reopens its completed ancestors but preserves
-the status of existing completed siblings. Deleting a task deletes that exact
-task and all of its descendants; deleting a child leaves its parent and siblings
-intact. Project deletion detaches its task tree to Inbox instead of deleting it.
+completes all non-trashed descendants; reopening affects only the selected task.
+Adding or restoring open work beneath completed work reopens its completed
+ancestors but preserves the status of existing completed siblings. Completing a
+task moves it out of all active scopes and into Completed without changing its
+identity or hierarchy. Deleting a task timestamps that task and all descendants
+into recoverable Trash; restoring clears those timestamps, while explicit
+permanent deletion and the 30-day cleanup remove the subtree. Deleting a child
+leaves its parent and siblings intact. Project deletion detaches its task tree to
+Inbox instead of deleting it.
 
 `sortOrder` is the manual order among siblings. `reorderTask` renumbers one
 sibling set from 1 and can re-parent in the same call, which carries the whole
@@ -495,9 +501,10 @@ project statuses into the original five-state workflow, migrate version 5 by add
 category registry and category reference arrays, migrate version 6 by adding
 `tasks: { items: [] }`, migrate version 7 tasks by adding empty note strings,
 and migrate version 8 tasks by adding `priority: 'none'` and empty tag arrays.
-Schema version 9 safely expands the accepted project workflow with `paused`
+Schema version 9 safely expands the accepted project workflow with `paused`,
+and version 10 adds `trashedAt: null` to every existing task
 without rewriting any existing status. Existing user data therefore gains the
-task collection, notes, priority, and tags without rewriting projects or
+task collection, notes, priority, tags, and recoverable Trash without rewriting projects or
 reading records. The migrated
 shape is persisted on the next supported write. Any
 further schema evolution must likewise add
@@ -532,8 +539,8 @@ Health is currently rule-based:
 A project with no entries is treated as highly inactive. Health sorting is
 critical, then attention, then healthy; ties use priority and name.
 
-Each hydrated project also receives one `taskSummary` computed from all task
-records currently associated with that project. It contains total, open,
+Each hydrated project also receives one `taskSummary` computed from all non-trashed
+task records currently associated with that project. It contains total, open,
 completed, and progress values and is the source for project cards and details.
 
 State construction indexes project-entry metrics and per-project task counts in
@@ -544,12 +551,15 @@ reintroduce a full entry or task scan for every project.
 
 `hydrateTasks` builds a parent-to-children index, orders open siblings before
 completed siblings and then by `sortOrder`, and returns a pre-order flat list for
-compact transport. Each task receives its depth, direct child IDs/count, subtree
-total, subtree completed count, and progress fraction. A subtree includes its
-root task: two completed subtasks beneath an open parent are 2/3 complete until
-the parent itself is completed. Global, Inbox, and project summaries count the
-same underlying records; the browser never recalculates a competing persisted
-total.
+compact transport. Each task receives its depth, direct child IDs/count, active
+and all-record subtree totals, trash-subtree total, completed count, and progress
+fraction. A progress subtree excludes trashed records: two completed subtasks
+beneath an open parent are 2/3 complete until the parent itself is completed,
+while moving one of those subtasks to Trash makes the remaining active subtree
+1/2 complete. Global, Inbox, and project summaries likewise exclude Trash; the
+browser never recalculates a competing persisted total. Expired Trash is hidden
+from derived state and physically pruned at server startup, hourly while the app
+runs, or on the explicit cleanup operation.
 
 ### Recommendations
 
@@ -685,7 +695,9 @@ the entire result, and retain an out-of-repository backup first.
 | `POST /api/projects/delete` | Permanently remove one exact project while preserving its tracked-time history |
 | `POST /api/tasks/create` | Create an Inbox/project root task or inherited-project subtask |
 | `POST /api/tasks/update` | Update one task's title and multiline notes |
-| `POST /api/tasks/delete` | Permanently delete one exact task and its descendants |
+| `POST /api/tasks/trash` | Move one exact task and its descendants to recoverable Trash |
+| `POST /api/tasks/restore` | Restore one trashed subtree and any trashed ancestors needed to make it reachable |
+| `POST /api/tasks/delete` | Permanently delete one exact trashed task and its descendants |
 | `POST /api/tasks/completion` | Complete a task and its descendants, or reopen one task |
 | `POST /api/tasks/project` | Assign one root task tree to a project or Inbox |
 | `POST /api/tasks/priority` | Set one task's priority to none, low, medium, or high |
@@ -732,6 +744,11 @@ npm run lifeos -- tasks add --title "Draft Act III" --project "Portia" --due 202
 npm run lifeos -- tasks add --title "Resolve midpoint" --parent "Draft Act III"
 npm run lifeos -- tasks complete --task "Resolve midpoint"
 npm run lifeos -- tasks reopen --task "Resolve midpoint"
+npm run lifeos -- tasks --completed
+npm run lifeos -- tasks --trash
+npm run lifeos -- tasks trash --task "Draft Act III"
+npm run lifeos -- tasks restore --task "Draft Act III"
+npm run lifeos -- tasks delete --task "Draft Act III"
 npm run lifeos -- tasks assign --task "Draft Act III" --project inbox
 npm run lifeos -- stats --range week
 npm run lifeos -- stats --project "Portia"
@@ -766,8 +783,11 @@ root tree. `--due`, `--start`, and `--duration` map to the validated schedule
 envelope; recurrence remains unavailable. `--priority` and a repeatable `--tag`
 set the same labels the browser uses; `tasks priority` and `tasks tag` change
 them afterwards, `tasks tag --clear` empties the set, and `tasks --tag` filters
-the list. The CLI has no reorder command; manual order is a browser gesture with
-keyboard and context-menu equivalents.
+the active list. Plain `tasks` lists only open, non-trashed work; `--completed`
+and `--trash` expose the separate lifecycle scopes. `tasks trash` is recoverable,
+`tasks restore` brings a subtree back, and `tasks delete` permanently removes a
+task already in Trash. The CLI has no reorder command; manual order is a browser
+gesture with keyboard and context-menu equivalents.
 
 The CLI currently supports focused project status changes, category assignment,
 and exact deletion with preserved category history. It still has no project
@@ -787,12 +807,16 @@ below the page on narrow screens.
 - First-class navigation sits between Today and Projects while Projects remains
   the default first screen.
 - A TickTick-inspired scope rail switches among All tasks, the Today and
-  Next 7 days smart lists, Inbox, every project, and every tag in use. Smart
+  Next 7 days smart lists, Inbox, every project, every active tag in use,
+  Completed, and Trash. Active scopes show only open, non-trashed work. Smart
   lists and tag scopes are derived in the browser from task due dates, status,
   and tags; they are never persisted. Non-default `taskScope` is URL state and
   supports browser history.
 - Smart lists render one flat, dated list because a due-date horizon cuts across
-  the hierarchy. Every other scope keeps the nested tree.
+  the hierarchy. Matching completed tasks remain available in a deliberately
+  quiet native disclosure that is collapsed on every render. Completed and Trash
+  keep a nested projection, treating a matching child as a local root whenever
+  its parent belongs to another lifecycle scope.
 - Quick add accepts a title, Inbox/project association, optional due date, and
   priority. The title also parses `#tag` and `!high|!medium|!low` tokens so a
   labelled task can be captured in one keystroke run.
@@ -804,8 +828,8 @@ below the page on narrow screens.
   rather than the `--critical`/`--attention`/`--accent` health colors, so a
   change to project-health semantics cannot silently restyle priority.
 - The **View** popover holds group-by (none, priority, due date, list, tag),
-  sort-by (custom order, priority, due date, title, date created), density, and
-  show-completed. Preferences persist in `localStorage` under
+  sort-by (custom order, priority, due date, title, date created), and density.
+  Preferences persist in `localStorage` under
   `lifeos.tasks.view`, not in the portable store.
 - Manual drag reordering is offered only under custom order with no grouping,
   because any other arrangement would discard the drop position. The View
@@ -816,7 +840,8 @@ below the page on narrow screens.
   neighbours, exactly as the reading board projects its column drops.
 - Every gesture has a non-gesture equivalent. Right-click, the row's `⋯` button,
   Shift+F10, and the Menu key all open the same context menu: due date, priority,
-  open details, add subtask, move to list, tags, duplicate, and delete. Manual
+  open details, add subtask, move to list, tags, duplicate, and Move to Trash.
+  Trashed work instead offers details, Restore, and Delete forever. Manual
   ordering is deliberately absent from that menu because dragging covers it;
   a focused row still reorders and indents with Control or Option and the arrow
   keys, which is the accessible path. Option is offered because macOS reserves
@@ -826,8 +851,10 @@ below the page on narrow screens.
   and closing a dirty sheet all persist through the narrow task-update route.
   List, due date, priority, and tags are separate immediate controls, each on its
   own narrow route, so a metadata change never waits on a dirty text draft.
-- The detail footer exposes task deletion. A named Cancel-first confirmation
-  states how many descendants will also be removed before deleting the subtree.
+- The detail footer exposes recoverable Move to Trash. A named Cancel-first
+  confirmation states how many descendants will move and explains 30-day
+  retention. Trash details are read-only apart from Restore and a second,
+  explicitly permanent Delete forever confirmation.
 - Root list selects reassign the whole subtree. Child list labels are
   inherited and intentionally not independently editable.
 - Each project card shows its task ratio when tasks exist. Project details show
@@ -1204,7 +1231,7 @@ Recommended import sequence:
 3. Inventory real domains, projects, statuses, priorities, weekly plans,
    deadlines, historical-entry granularity, milestones, reading books, and
    timezone.
-4. Map them into schema version 9 without inventing unsupported certainty.
+4. Map them into schema version 10 without inventing unsupported certainty.
 5. Preserve original descriptions in `rawInput` and mark summarized imports
    with `aggregation` so they are not treated as timed sessions.
 6. Set `meta.demo` to `false` and remove demo-only metadata as appropriate.
@@ -1262,7 +1289,8 @@ Recommended import sequence:
 3. Route task writes through `mutateStore`; update `updatedAt` and completion
    timestamps together, and preserve multiline task notes within their limit.
 4. Decide and test cascade behavior explicitly for completion, reopening,
-   reassignment, project deletion, and task-subtree deletion.
+   reassignment, project deletion, Trash/restore, 30-day cleanup, and permanent
+   task-subtree deletion.
 5. Keep browser routes narrow and return the full newly derived state so Tasks
    and Projects stay synchronized.
 6. Extend both data tests and `tests/tasks-ui.test.mjs`, then exercise the live
@@ -1303,7 +1331,7 @@ It performs JavaScript syntax checks for the browser, server, data/storage
 modules, Codex bridge, CLI, and desktop launcher; runs Node's built-in test
 suite; then compile-checks the pinned Tauri shell.
 
-At this handoff, the suite contains 76 tests covering:
+At this handoff, the suite contains 79 tests covering:
 
 - duration parsing;
 - demo-derived totals and recommendation;
@@ -1317,7 +1345,7 @@ At this handoff, the suite contains 76 tests covering:
 - validated latest/daily/monthly snapshot creation and configured-timezone dates;
 - timer-to-entry behavior;
 - configured-timezone calendar boundaries;
-- version-2-through-8-to-9 reading/project/category/task/notes/status compatibility
+- version-2-through-9-to-10 reading/project/category/task/notes/status/Trash compatibility
   and invalid-reference rejection;
 - reusable project categories, derived category totals, and history-preserving
   project deletion;
@@ -1325,8 +1353,8 @@ At this handoff, the suite contains 76 tests covering:
   grouping/filtering/latent drop lanes, hidden-move recovery, and focused Kanban projection;
 - independent/project task creation, nested project inheritance, schedule
   validation, completion/reopen cascades, subtree/project progress, root
-  reassignment, note/title updates, exact subtree deletion, cycle rejection, and
-  project-deletion detachment;
+  reassignment, note/title updates, subtree Trash/restore/permanent deletion,
+  30-day pruning, cycle rejection, and project-deletion detachment;
 - Tasks workspace scopes, nested/progress rendering, native non-gesture
   controls, editable detail/deletion rendering, and project-detail task integration;
 - reading add/deduplication, status movement, derived counts, queue order,
@@ -1369,15 +1397,15 @@ standard check to catch repository drift.
 - Browse, correct, or recoverably delete individual time entries.
 - Manually edit imported reading metadata beyond tags and Date read.
 - Create/edit domains, settings, challenges, or milestones in the UI.
-- Edit task titles, delete/reorder tasks, expose start time/duration, define
-  recurrence, or synchronize tasks with an external calendar.
+- Expose task start time/duration, define recurrence, add bulk task editing, or
+  synchronize tasks with an external calendar.
 - Import/export UI and validation report.
 - Searchable or filterable Almanac.
 - Goals and richer deadline management.
 
 ### Technical limitations
 
-- Validation is partial; only the focused version-2-through-8 compatibility steps
+- Validation is partial; only the focused version-2-through-9 compatibility steps
   are implemented, not a general migration framework.
 - Daily/monthly JSON snapshots provide history but not cross-device merge or
   immutable disaster recovery.

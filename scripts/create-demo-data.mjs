@@ -137,7 +137,7 @@ for (const [dayOffset, time, durationMinutes, projectId, activityType, descripti
 
 const store = {
   meta: {
-    schemaVersion: 9,
+    schemaVersion: 10,
     appName: 'LifeOS',
     tagline: 'A personal almanac',
     timezone: 'America/Sao_Paulo',
@@ -274,6 +274,7 @@ function task(id, title, projectId, parentTaskId, status, sortOrder, dueOffset =
     createdAt,
     updatedAt: completedAt || createdAt,
     completedAt,
+    trashedAt: null,
   };
 }
 

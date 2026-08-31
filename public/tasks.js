@@ -35,7 +35,6 @@ export function createTasksUiState() {
     deleteError: null,
     groupBy: 'none',
     sortBy: 'manual',
-    showCompleted: true,
     density: 'compact',
     viewOptionsOpen: false,
     menu: null,
@@ -47,10 +46,22 @@ export function renderTasks(tasks, projects, domains, ui, options = {}) {
   const scope = taskScope(filter, tasks, projects, options.today);
   const projectById = new Map(projects.map((project) => [project.id, project]));
   const tree = taskTree(tasks.items);
-  const visible = scope.items.filter((task) => ui.showCompleted || task.status !== 'completed');
-  const groups = groupTasks(visible, ui, projects, options.today);
-  const view = { ...options, projectById, tree, flat: scope.flat, scopeFilter: filter };
-  const reorderable = canReorder(ui) && !scope.flat;
+  const groups = groupTasks(scope.items, ui, projects, options.today);
+  const view = {
+    ...options,
+    projectById,
+    tree,
+    flat: scope.flat,
+    lifecycle: scope.lifecycle,
+    scopeFilter: filter,
+  };
+  const reorderable = scope.lifecycle === 'active' && canReorder(ui) && !scope.flat;
+  const showCreate = !['completed', 'trash'].includes(scope.lifecycle);
+  const listHeading = scope.lifecycle === 'completed'
+    ? `${scope.summary.completed} completed`
+    : scope.lifecycle === 'trash'
+      ? `${scope.summary.total} in trash`
+      : `${scope.summary.open} open`;
   return `
     <div class="tasks-workspace ${ui.density === 'comfortable' ? 'is-comfortable' : 'is-compact'}">
       ${renderTaskSidebar(tasks, projects, domains, filter, options.today)}
@@ -61,20 +72,29 @@ export function renderTasks(tasks, projects, domains, ui, options = {}) {
             <h1>${escapeHtml(scope.label)}</h1>
             <p>${escapeHtml(scope.copy)}</p>
           </div>
-          ${renderTaskSummary(scope.summary)}
+          ${scope.lifecycle === 'trash'
+            ? '<div class="task-retention-note"><b>30 days</b><span>automatic cleanup</span></div>'
+            : renderTaskSummary(scope.summary)}
         </header>
-        ${renderTaskCreateForm(projects, filter, ui.creating)}
+        ${showCreate ? renderTaskCreateForm(projects, filter, ui.creating) : ''}
         <section class="task-list-section" aria-labelledby="task-list-heading">
           <div class="task-list-heading">
-            <h2 id="task-list-heading">${scope.summary.open} open</h2>
+            <h2 id="task-list-heading">${listHeading}</h2>
             <div class="task-list-tools">
-              <span>${scope.summary.completed} completed</span>
+              ${scope.lifecycle === 'trash'
+                ? '<span>Oldest items leave automatically</span>'
+                : scope.lifecycle === 'completed'
+                  ? '<span>Finished work archive</span>'
+                  : `<span>${scope.summary.completed} completed</span>`}
               ${renderViewOptions(ui, reorderable)}
             </div>
           </div>
-          ${visible.length
+          ${scope.items.length
             ? groups.map((group) => renderTaskGroup(group, domains, ui, view, reorderable)).join('')
-            : renderTaskEmpty(scope.label)}
+            : renderTaskEmpty(scope.label, scope.emptyCopy)}
+          ${scope.completedItems?.length
+            ? renderSmartCompleted(scope.completedItems, domains, ui, { ...view, lifecycle: 'completed', flat: true })
+            : ''}
         </section>
       </main>
     </div>
@@ -84,11 +104,11 @@ export function renderTasks(tasks, projects, domains, ui, options = {}) {
 export function renderProjectTaskPanel(tasks, project, domains, ui, options = {}) {
   if (!tasks) return '';
   const projectTasks = tasks.items.filter((task) => task.projectId === project.id);
-  const roots = projectTasks.filter((task) => task.parentTaskId == null);
-  const tree = taskTree(projectTasks);
+  const roots = taskSubsetRoots(projectTasks, isOpenTask);
+  const tree = taskTree(tasks.items);
   const projectById = new Map([[project.id, project]]);
-  const summary = project.taskSummary || summarize(projectTasks);
-  const view = { ...options, projectById, tree, compact: true };
+  const summary = project.taskSummary || summarize(projectTasks.filter((task) => !task.trashedAt));
+  const view = { ...options, projectById, tree, compact: true, lifecycle: 'active' };
   return `
     <section class="project-task-panel" aria-labelledby="project-task-heading">
       <div class="project-task-panel-head">
@@ -124,7 +144,7 @@ export function renderTaskOverlays(tasks, projects, ui, options = {}) {
 
 function renderTaskSidebar(tasks, projects, domains, activeFilter, today) {
   const counts = smartListCounts(tasks.items, today);
-  const tags = collectTags(tasks.items);
+  const tags = collectTags(tasks.items).filter((tag) => tag.open > 0);
   return `
     <aside class="task-sidebar" aria-label="Task scopes">
       <div class="task-sidebar-title">Lists</div>
@@ -159,6 +179,10 @@ function renderTaskSidebar(tasks, projects, domains, activeFilter, today) {
              )).join('')}
            </div>`
         : ''}
+      <div class="task-sidebar-lifecycle">
+        ${taskFilterButton('completed', 'Completed', tasks.summary.completed, activeFilter, 'completed')}
+        ${taskFilterButton('trash', 'Trash', tasks.summary.trashed || 0, activeFilter, 'trash')}
+      </div>
     </aside>
   `;
 }
@@ -171,7 +195,7 @@ function taskFilterButton(filter, label, count, activeFilter, kind = 'all', colo
     && normalizeText(filter.slice(4)) === normalizeText(activeFilter.slice(4))
   );
   return `
-    <button class="task-filter ${active ? 'active' : ''}" data-task-filter="${escapeAttribute(filter)}" data-task-drop-filter="${escapeAttribute(filter)}" type="button" ${active ? 'aria-current="page"' : ''} style="${color ? `--task-project:${escapeAttribute(color)}` : ''}">
+    <button class="task-filter ${active ? 'active' : ''}" data-task-filter="${escapeAttribute(filter)}" ${taskDropEnabled(filter) ? `data-task-drop-filter="${escapeAttribute(filter)}"` : ''} type="button" ${active ? 'aria-current="page"' : ''} style="${color ? `--task-project:${escapeAttribute(color)}` : ''}">
       <span class="task-filter-icon ${kind}" aria-hidden="true"></span>
       <span>${escapeHtml(label)}</span>
       <b>${count}</b>
@@ -205,10 +229,6 @@ function renderViewOptions(ui, reorderable) {
                 ${TASK_DENSITIES.map((value) => `<option value="${value}" ${value === ui.density ? 'selected' : ''}>${value === 'compact' ? 'Compact' : 'Comfortable'}</option>`).join('')}
               </select>
             </label>
-            <label class="task-view-toggle">
-              <input type="checkbox" data-task-show-completed ${ui.showCompleted ? 'checked' : ''}>
-              <span>Show completed</span>
-            </label>
             <p class="task-view-hint">${reorderable
               ? 'Drag a task to reorder it, or drag right to nest it under the task above. A focused row also moves with Option and the arrow keys.'
               : 'Switch to custom order without grouping to drag tasks into place.'}</p>
@@ -233,27 +253,46 @@ function renderTaskGroup(group, domains, ui, view, reorderable) {
   `;
 }
 
+function renderSmartCompleted(tasks, domains, ui, view) {
+  return `
+    <details class="task-completed-disclosure">
+      <summary><span>Completed</span><b>${tasks.length}</b></summary>
+      <ul class="task-tree task-root-list">
+        ${sortTasks(tasks, 'created').map((task) => renderTaskNode(task, domains, ui, view, false)).join('')}
+      </ul>
+    </details>
+  `;
+}
+
 function renderTaskNode(task, domains, ui, view, reorderable) {
   const children = view.flat ? [] : (view.tree.get(task.id) || []).filter((child) => (
-    ui.showCompleted || child.status !== 'completed'
+    taskMatchesLifecycle(child, view.lifecycle)
   ));
   const project = task.projectId ? view.projectById.get(task.projectId) : null;
   const domain = project ? domains[project.domain] : null;
   const saving = ui.savingTaskId === task.id;
   const completed = task.status === 'completed';
+  const trashed = Boolean(task.trashedAt);
   const priority = normalizePriority(task.priority);
   const checkboxLabel = completed ? `Reopen ${task.title}` : task.subtreeTotal > 1
     ? `Complete ${task.title} and its subtasks`
     : `Complete ${task.title}`;
-  const showProject = !view.compact && (view.flat || view.scopeFilter === 'all' || String(view.scopeFilter || '').startsWith('tag:'));
+  const showProject = !view.compact && (
+    view.flat
+    || ['all', 'completed', 'trash'].includes(view.scopeFilter)
+    || String(view.scopeFilter || '').startsWith('tag:')
+  );
+  const subtreeTotal = trashed ? task.trashSubtreeTotal : task.subtreeTotal;
   return `
-    <li class="task-node ${completed ? 'is-completed' : ''} ${ui.menu?.taskId === task.id ? 'is-menu-open' : ''}" data-task-node="${escapeAttribute(task.id)}" style="--task-domain:${escapeAttribute(domain?.color || 'var(--ink-faint)')}">
+    <li class="task-node ${completed ? 'is-completed' : ''} ${trashed ? 'is-trashed' : ''} ${ui.menu?.taskId === task.id ? 'is-menu-open' : ''}" data-task-node="${escapeAttribute(task.id)}" style="--task-domain:${escapeAttribute(domain?.color || 'var(--ink-faint)')}">
       <article class="task-item ${saving ? 'is-saving' : ''} priority-${priority}" data-task-detail="${escapeAttribute(task.id)}" ${reorderable ? `data-task-drag-id="${escapeAttribute(task.id)}"` : ''} tabindex="0" ${saving ? 'aria-busy="true"' : ''}>
         ${reorderable ? '<span class="task-drag-handle" aria-hidden="true">⠿</span>' : ''}
-        <label class="task-checkbox">
-          <input type="checkbox" data-task-completion="${escapeAttribute(task.id)}" aria-label="${escapeAttribute(checkboxLabel)}" ${completed ? 'checked' : ''} ${saving ? 'disabled' : ''}>
-          <span aria-hidden="true"></span>
-        </label>
+        ${trashed
+          ? '<span class="task-trash-marker" aria-hidden="true"></span>'
+          : `<label class="task-checkbox">
+              <input type="checkbox" data-task-completion="${escapeAttribute(task.id)}" aria-label="${escapeAttribute(checkboxLabel)}" ${completed ? 'checked' : ''} ${saving ? 'disabled' : ''}>
+              <span aria-hidden="true"></span>
+            </label>`}
         <div class="task-copy">
           <div class="task-title-line">
             ${priority === 'none' ? '' : `<span class="task-priority-flag ${priority}" title="${PRIORITY_LABELS[priority]} priority"><span class="visually-hidden">${PRIORITY_LABELS[priority]} priority</span><span aria-hidden="true">⚑</span></span>`}
@@ -263,16 +302,17 @@ function renderTaskNode(task, domains, ui, view, reorderable) {
         </div>
         <div class="task-meta">
           ${task.notes ? '<span class="task-note-indicator" title="Has notes"><span class="visually-hidden">Has notes</span><span aria-hidden="true">≡</span></span>' : ''}
-          ${task.subtreeTotal > 1 ? `<span class="task-progress-copy">${task.subtreeCompleted}/${task.subtreeTotal}</span>` : ''}
-          ${renderDueDate(task.schedule?.dueDate, view.today)}
+          ${subtreeTotal > 1 && !trashed ? `<span class="task-progress-copy">${task.subtreeCompleted}/${task.subtreeTotal}</span>` : ''}
+          ${renderLifecycleDate(task, view.lifecycle)}
+          ${renderDueDate(task.schedule?.dueDate, view.today, completed)}
           ${showProject || view.compact ? `<span class="task-project-label">${escapeHtml(project?.name || 'Inbox')}</span>` : ''}
         </div>
         <div class="task-row-actions">
-          <button class="task-icon-button" data-task-subtask-open="${escapeAttribute(task.id)}" type="button" aria-expanded="${ui.addingSubtaskToId === task.id ? 'true' : 'false'}" aria-label="Add a subtask to ${escapeAttribute(task.title)}" ${saving ? 'disabled' : ''}><span aria-hidden="true">+</span></button>
+          ${trashed ? '' : `<button class="task-icon-button" data-task-subtask-open="${escapeAttribute(task.id)}" type="button" aria-expanded="${ui.addingSubtaskToId === task.id ? 'true' : 'false'}" aria-label="Add a subtask to ${escapeAttribute(task.title)}" ${saving ? 'disabled' : ''}><span aria-hidden="true">+</span></button>`}
           <button class="task-icon-button" data-task-menu="${escapeAttribute(task.id)}" type="button" aria-haspopup="menu" aria-expanded="${ui.menu?.taskId === task.id ? 'true' : 'false'}" aria-label="Actions for ${escapeAttribute(task.title)}" ${saving ? 'disabled' : ''}><span aria-hidden="true">⋯</span></button>
         </div>
       </article>
-      ${ui.addingSubtaskToId === task.id ? renderSubtaskForm(task, ui.creating) : ''}
+      ${!trashed && ui.addingSubtaskToId === task.id ? renderSubtaskForm(task, ui.creating) : ''}
       ${children.length ? `<ul class="task-tree task-children">${children.map((child) => renderTaskNode(child, domains, ui, view, reorderable)).join('')}</ul>` : ''}
     </li>
   `;
@@ -286,6 +326,21 @@ function renderTaskTags(task) {
 
 function renderTaskContextMenu(task, tasks, projects, ui, options) {
   const menu = ui.menu;
+  if (task.trashedAt) {
+    return `
+      <div class="task-menu-backdrop" data-task-menu-close>
+        <div class="task-menu" role="menu" aria-label="Actions for ${escapeAttribute(task.title)}" style="--task-menu-x:${Math.round(menu.x)}px;--task-menu-y:${Math.round(menu.y)}px">
+          <div class="task-menu-title">${escapeHtml(task.title)}</div>
+          <div class="task-menu-items">
+            <button class="task-menu-item" data-task-menu-detail="${escapeAttribute(task.id)}" role="menuitem" type="button"><span aria-hidden="true">✎</span>Open details</button>
+            <button class="task-menu-item" data-task-restore="${escapeAttribute(task.id)}" role="menuitem" type="button"><span aria-hidden="true">↶</span>Restore</button>
+            <div class="task-menu-separator" role="separator"></div>
+            <button class="task-menu-item danger" data-task-delete-request="${escapeAttribute(task.id)}" role="menuitem" type="button"><span aria-hidden="true">✕</span>Delete forever</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
   const priority = normalizePriority(task.priority);
   const today = options.today || null;
   const knownTags = collectTags(tasks.items).map((entry) => entry.label);
@@ -329,7 +384,7 @@ function renderTaskContextMenu(task, tasks, projects, ui, options) {
           ${menu.submenu === 'tag' ? renderTagSubmenu(task, knownTags, taskTags) : ''}
           <div class="task-menu-separator" role="separator"></div>
           <button class="task-menu-item" data-task-duplicate="${escapeAttribute(task.id)}" role="menuitem" type="button"><span aria-hidden="true">⧉</span>Duplicate</button>
-          <button class="task-menu-item danger" data-task-delete-request="${escapeAttribute(task.id)}" role="menuitem" type="button"><span aria-hidden="true">✕</span>Delete</button>
+          <button class="task-menu-item danger" data-task-delete-request="${escapeAttribute(task.id)}" role="menuitem" type="button"><span aria-hidden="true">⌫</span>Move to Trash</button>
         </div>
       </div>
     </div>
@@ -402,11 +457,13 @@ function renderTaskCreateForm(projects, filter, creating) {
 function renderTaskDetail(task, tasks, projects, ui, options) {
   const project = task.projectId ? projects.find((candidate) => candidate.id === task.projectId) : null;
   const parent = task.parentTaskId ? tasks.items.find((candidate) => candidate.id === task.parentTaskId) : null;
+  const trashed = Boolean(task.trashedAt);
   const draft = ui.detailDraft && ui.selectedTaskId === task.id
     ? ui.detailDraft
     : { title: task.title, notes: task.notes || '' };
-  const dirty = draft.title !== task.title || draft.notes !== (task.notes || '');
+  const dirty = !trashed && (draft.title !== task.title || draft.notes !== (task.notes || ''));
   const updating = ui.updatingTaskId === task.id;
+  const disabled = updating || trashed;
   const priority = normalizePriority(task.priority);
   return `
     <div class="task-detail-backdrop" data-task-detail-close>
@@ -414,30 +471,30 @@ function renderTaskDetail(task, tasks, projects, ui, options) {
         <button class="task-detail-close" data-task-detail-close type="button" aria-label="Close task details">×</button>
         <header class="task-detail-heading">
           <span class="tasks-eyebrow" id="task-detail-dialog-title">Task details</span>
-          <span class="task-detail-status ${task.status}">${task.status === 'completed' ? 'Completed' : 'Open'}</span>
+          <span class="task-detail-status ${trashed ? 'trashed' : task.status}">${trashed ? 'Trash' : task.status === 'completed' ? 'Completed' : 'Open'}</span>
         </header>
         <form class="task-detail-form" data-task-update="${escapeAttribute(task.id)}">
           <label class="task-detail-title-field" for="task-detail-title">
             <span class="visually-hidden">Task title</span>
-            <input id="task-detail-title" name="title" maxlength="300" value="${escapeAttribute(draft.title)}" ${updating ? 'disabled' : ''} required>
+            <input id="task-detail-title" name="title" maxlength="300" value="${escapeAttribute(draft.title)}" ${disabled ? 'disabled' : ''} required>
           </label>
           <div class="task-detail-controls">
             <label class="task-detail-control">
               <span>List</span>
               ${parent
                 ? `<em>${escapeHtml(project?.name || 'Inbox')}</em>`
-                : `<select data-task-project="${escapeAttribute(task.id)}" aria-label="List for ${escapeAttribute(task.title)}" ${updating ? 'disabled' : ''}>
+                : `<select data-task-project="${escapeAttribute(task.id)}" aria-label="List for ${escapeAttribute(task.title)}" ${disabled ? 'disabled' : ''}>
                     <option value="" ${task.projectId == null ? 'selected' : ''}>Inbox</option>
                     ${projectOptions(projects, task.projectId)}
                   </select>`}
             </label>
             <label class="task-detail-control">
               <span>Due</span>
-              <input type="date" data-task-due="${escapeAttribute(task.id)}" value="${escapeAttribute(task.schedule?.dueDate || '')}" aria-label="Due date for ${escapeAttribute(task.title)}" ${updating ? 'disabled' : ''}>
+              <input type="date" data-task-due="${escapeAttribute(task.id)}" value="${escapeAttribute(task.schedule?.dueDate || '')}" aria-label="Due date for ${escapeAttribute(task.title)}" ${disabled ? 'disabled' : ''}>
             </label>
             <label class="task-detail-control">
               <span>Priority</span>
-              <select data-task-priority="${escapeAttribute(task.id)}" aria-label="Priority for ${escapeAttribute(task.title)}" ${updating ? 'disabled' : ''}>
+              <select data-task-priority="${escapeAttribute(task.id)}" aria-label="Priority for ${escapeAttribute(task.title)}" ${disabled ? 'disabled' : ''}>
                 ${['none', 'low', 'medium', 'high'].map((value) => `<option value="${value}" ${value === priority ? 'selected' : ''}>${PRIORITY_LABELS[value]}</option>`).join('')}
               </select>
             </label>
@@ -450,28 +507,34 @@ function renderTaskDetail(task, tasks, projects, ui, options) {
             <span class="task-detail-label">Tags</span>
             <div class="task-tag-editor">
               ${(task.tags || []).length
-                ? (task.tags || []).map((tag) => `<span class="task-tag-chip">${escapeHtml(tag)}<button data-task-tag-remove="${escapeAttribute(tag)}" data-task-id="${escapeAttribute(task.id)}" type="button" aria-label="Remove tag ${escapeAttribute(tag)}">×</button></span>`).join('')
+                ? (task.tags || []).map((tag) => `<span class="task-tag-chip">${escapeHtml(tag)}${trashed ? '' : `<button data-task-tag-remove="${escapeAttribute(tag)}" data-task-id="${escapeAttribute(task.id)}" type="button" aria-label="Remove tag ${escapeAttribute(tag)}">×</button>`}</span>`).join('')
                 : '<em>No tags yet.</em>'}
             </div>
           </section>
           <label class="task-detail-notes" for="task-detail-notes">
             <span>Notes</span>
-            <textarea id="task-detail-notes" name="notes" maxlength="20000" placeholder="Add context, links, or the next thought…" ${updating ? 'disabled' : ''}>${escapeHtml(draft.notes)}</textarea>
+            <textarea id="task-detail-notes" name="notes" maxlength="20000" placeholder="Add context, links, or the next thought…" ${disabled ? 'disabled' : ''}>${escapeHtml(draft.notes)}</textarea>
           </label>
           ${ui.detailError ? `<p class="task-detail-error" role="alert">${escapeHtml(ui.detailError)}</p>` : ''}
           <footer class="task-detail-footer">
-            <button class="task-detail-delete" data-task-delete-request="${escapeAttribute(task.id)}" type="button" ${updating ? 'disabled' : ''}>Delete task</button>
-            <div class="task-detail-save">
-              <span data-task-save-state aria-live="polite">${updating ? 'Saving…' : dirty ? 'Unsaved changes' : 'Saved'}</span>
-              <button type="submit" ${updating || !dirty ? 'disabled' : ''}>${updating ? 'Saving…' : 'Save changes'}</button>
-            </div>
+            ${trashed
+              ? `<div class="task-detail-trash-actions">
+                  <button class="task-detail-restore" data-task-restore="${escapeAttribute(task.id)}" type="button">Restore</button>
+                  <button class="task-detail-delete" data-task-delete-request="${escapeAttribute(task.id)}" type="button">Delete forever</button>
+                </div>
+                <span class="task-detail-retention">Automatically deleted 30 days after ${escapeHtml(formatTimestampDate(task.trashedAt))}</span>`
+              : `<button class="task-detail-delete" data-task-delete-request="${escapeAttribute(task.id)}" type="button" ${updating ? 'disabled' : ''}>Move to Trash</button>
+                <div class="task-detail-save">
+                  <span data-task-save-state aria-live="polite">${updating ? 'Saving…' : dirty ? 'Unsaved changes' : 'Saved'}</span>
+                  <button type="submit" ${updating || !dirty ? 'disabled' : ''}>${updating ? 'Saving…' : 'Save changes'}</button>
+                </div>`}
           </footer>
         </form>
-        <form class="task-detail-tag-form" data-task-tag-create="${escapeAttribute(task.id)}">
-          <label class="visually-hidden" for="task-detail-tag">Add a tag to ${escapeHtml(task.title)}</label>
-          <input id="task-detail-tag" name="tag" maxlength="40" autocomplete="off" placeholder="Add a tag…" required>
-          <button type="submit">Add tag</button>
-        </form>
+        ${trashed ? '' : `<form class="task-detail-tag-form" data-task-tag-create="${escapeAttribute(task.id)}">
+            <label class="visually-hidden" for="task-detail-tag">Add a tag to ${escapeHtml(task.title)}</label>
+            <input id="task-detail-tag" name="tag" maxlength="40" autocomplete="off" placeholder="Add a tag…" required>
+            <button type="submit">Add tag</button>
+          </form>`}
       </article>
     </div>
   `;
@@ -479,20 +542,21 @@ function renderTaskDetail(task, tasks, projects, ui, options) {
 
 function renderTaskDeleteConfirmation(task, ui) {
   const deleting = ui.deletingTaskId === task.id;
-  const descendantCount = Math.max(0, Number(task.subtreeTotal || 1) - 1);
+  const permanent = Boolean(task.trashedAt);
+  const descendantCount = Math.max(0, Number(task.allSubtreeTotal || task.subtreeTotal || 1) - 1);
   const consequence = descendantCount
-    ? `This also removes ${descendantCount} ${descendantCount === 1 ? 'subtask' : 'subtasks'} beneath it.`
-    : 'This removes the task from LifeOS.';
+    ? `This also ${permanent ? 'deletes' : 'moves'} ${descendantCount} ${descendantCount === 1 ? 'subtask' : 'subtasks'} beneath it.`
+    : permanent ? 'This permanently removes the task from LifeOS.' : 'This moves the task out of your active lists.';
   return `
     <div class="task-delete-backdrop">
       <section class="task-delete-confirm" role="alertdialog" aria-modal="true" aria-labelledby="delete-task-title" aria-describedby="delete-task-description" ${deleting ? 'aria-busy="true"' : ''}>
-        <span class="smallcaps">Permanent deletion</span>
-        <h2 id="delete-task-title">Delete “${escapeHtml(task.title)}”?</h2>
-        <p id="delete-task-description">${consequence} This cannot be undone inside the app.</p>
+        <span class="smallcaps">${permanent ? 'Permanent deletion' : 'Recoverable deletion'}</span>
+        <h2 id="delete-task-title">${permanent ? 'Delete' : 'Move'} “${escapeHtml(task.title)}” ${permanent ? 'forever' : 'to Trash'}?</h2>
+        <p id="delete-task-description">${consequence} ${permanent ? 'This cannot be undone.' : 'Trash is cleaned automatically after 30 days; until then, you can restore it.'}</p>
         ${ui.deleteError ? `<p class="task-delete-error" role="alert">${escapeHtml(ui.deleteError)}</p>` : ''}
         <div class="task-delete-actions">
           <button data-task-delete-cancel type="button" ${deleting ? 'disabled' : ''}>Cancel</button>
-          <button class="danger" data-task-delete-confirm="${escapeAttribute(task.id)}" type="button" ${deleting ? 'disabled' : ''}>${deleting ? 'Deleting…' : 'Delete task'}</button>
+          <button class="danger" ${permanent ? `data-task-delete-confirm="${escapeAttribute(task.id)}"` : `data-task-trash-confirm="${escapeAttribute(task.id)}"`} type="button" ${deleting ? 'disabled' : ''}>${deleting ? (permanent ? 'Deleting…' : 'Moving…') : (permanent ? 'Delete forever' : 'Move to Trash')}</button>
         </div>
       </section>
     </div>
@@ -528,11 +592,11 @@ function renderCompactProgress(summary) {
   return `<div class="project-task-progress" aria-label="${summary.completed} of ${summary.total} tasks complete"><i><b style="width:${Math.round(summary.progress * 100)}%"></b></i><span>${Math.round(summary.progress * 100)}%</span></div>`;
 }
 
-function renderDueDate(dueDate, today) {
+function renderDueDate(dueDate, today, completed = false) {
   if (!dueDate) return '';
   let label = formatShortDate(dueDate);
   let className = '';
-  if (today) {
+  if (today && !completed) {
     const delta = dayDelta(dueDate, today);
     if (delta < 0) {
       label = `${Math.abs(delta)}d late`;
@@ -548,8 +612,18 @@ function renderDueDate(dueDate, today) {
   return `<time class="task-due ${className}" datetime="${escapeAttribute(dueDate)}">${escapeHtml(label)}</time>`;
 }
 
-function renderTaskEmpty(label) {
-  return `<div class="task-empty"><span aria-hidden="true">✓</span><h3>${escapeHtml(label)} is clear.</h3><p>Add a task above or choose another scope.</p></div>`;
+function renderLifecycleDate(task, lifecycle) {
+  if (lifecycle === 'trash' && task.trashedAt) {
+    return `<time class="task-lifecycle-date" datetime="${escapeAttribute(task.trashedAt)}">Trashed ${escapeHtml(formatTimestampDate(task.trashedAt))}</time>`;
+  }
+  if (lifecycle === 'completed' && task.completedAt) {
+    return `<time class="task-lifecycle-date" datetime="${escapeAttribute(task.completedAt)}">Done ${escapeHtml(formatTimestampDate(task.completedAt))}</time>`;
+  }
+  return '';
+}
+
+function renderTaskEmpty(label, copy = null) {
+  return `<div class="task-empty"><span aria-hidden="true">✓</span><h3>${escapeHtml(label)} is clear.</h3><p>${escapeHtml(copy || 'Add a task above or choose another scope.')}</p></div>`;
 }
 
 function groupTasks(tasks, ui, projects, today) {
@@ -655,26 +729,53 @@ function taskTree(items) {
   return tree;
 }
 
-function scopedTaskRoots(items, filter) {
-  return items.filter((task) => task.parentTaskId == null && (
-    filter === 'all'
-    || (filter === 'inbox' && task.projectId == null)
-    || (filter.startsWith('project:') && task.projectId === filter.slice(8))
-  ));
+function taskSubsetRoots(items, predicate) {
+  const matching = items.filter(predicate);
+  const matchingIds = new Set(matching.map((task) => task.id));
+  return matching.filter((task) => !task.parentTaskId || !matchingIds.has(task.parentTaskId));
 }
 
 function taskScope(filter, tasks, projects, today) {
   if (filter === 'today' || filter === 'next7') {
     const horizon = filter === 'today' ? 0 : 7;
-    const items = tasks.items.filter((task) => dueWithin(task, today, horizon));
+    const scheduled = tasks.items.filter((task) => !task.trashedAt && dueWithin(task, today, horizon));
+    const items = scheduled.filter(isOpenTask);
+    const completedItems = scheduled.filter(isCompletedTask);
     return {
       label: filter === 'today' ? 'Today' : 'Next 7 days',
       copy: filter === 'today'
         ? 'Everything overdue or due before the day ends.'
         : 'Every dated commitment landing inside the coming week.',
-      summary: summarize(items),
+      summary: summarize(scheduled),
       items,
+      completedItems,
       flat: true,
+      lifecycle: 'active',
+      emptyCopy: completedItems.length ? 'Open tasks are clear; completed work is folded below.' : null,
+    };
+  }
+  if (filter === 'completed') {
+    const completed = tasks.items.filter(isCompletedTask);
+    return {
+      label: 'Completed',
+      copy: 'Finished work, kept apart from active commitments.',
+      summary: summarize(completed),
+      items: taskSubsetRoots(tasks.items, isCompletedTask),
+      flat: false,
+      lifecycle: 'completed',
+      emptyCopy: 'Completed tasks will collect here.',
+    };
+  }
+  if (filter === 'trash') {
+    const trashed = tasks.items.filter(isTrashedTask);
+    return {
+      label: 'Trash',
+      copy: 'Recover tasks here before automatic deletion after 30 days.',
+      summary: summarize(trashed),
+      items: taskSubsetRoots(tasks.items, isTrashedTask),
+      flat: false,
+      lifecycle: 'trash',
+      emptyCopy: 'Deleted tasks will remain here for 30 days.',
     };
   }
   if (filter === 'inbox') {
@@ -682,8 +783,9 @@ function taskScope(filter, tasks, projects, today) {
       label: 'Inbox',
       copy: 'Independent commitments without a project.',
       summary: tasks.summary.inbox,
-      items: scopedTaskRoots(tasks.items, filter),
+      items: taskSubsetRoots(tasks.items, (task) => isOpenTask(task) && task.projectId == null),
       flat: false,
+      lifecycle: 'active',
     };
   }
   if (filter.startsWith('project:')) {
@@ -692,48 +794,52 @@ function taskScope(filter, tasks, projects, today) {
       label: project?.name || 'Project tasks',
       copy: 'Project work and its next concrete steps.',
       summary: tasks.summary.byProject[project?.id] || summarize([]),
-      items: scopedTaskRoots(tasks.items, filter),
+      items: taskSubsetRoots(tasks.items, (task) => isOpenTask(task) && task.projectId === project?.id),
       flat: false,
+      lifecycle: 'active',
     };
   }
   if (filter.startsWith('tag:')) {
     const label = filter.slice(4);
-    const tagged = tasks.items.filter((task) => (task.tags || [])
+    const tagged = tasks.items.filter((task) => !task.trashedAt && (task.tags || [])
       .some((tag) => normalizeText(tag) === normalizeText(label)));
     return {
       label: `#${label}`,
       copy: 'Every task carrying this tag, across lists.',
       summary: summarize(tagged),
-      items: tagged,
+      items: tagged.filter(isOpenTask),
       flat: true,
+      lifecycle: 'active',
     };
   }
   return {
     label: 'All tasks',
     copy: 'Independent and project work in one place.',
     summary: tasks.summary,
-    items: scopedTaskRoots(tasks.items, 'all'),
+    items: taskSubsetRoots(tasks.items, isOpenTask),
     flat: false,
+    lifecycle: 'active',
   };
 }
 
 function dueWithin(task, today, horizon) {
   const dueDate = task.schedule?.dueDate;
-  if (!dueDate || !today || task.status === 'completed') return false;
+  if (!dueDate || !today) return false;
   const delta = dayDelta(dueDate, today);
   return delta <= horizon;
 }
 
 function smartListCounts(items, today) {
   return {
-    today: items.filter((task) => dueWithin(task, today, 0)).length,
-    next7: items.filter((task) => dueWithin(task, today, 7)).length,
+    today: items.filter((task) => isOpenTask(task) && dueWithin(task, today, 0)).length,
+    next7: items.filter((task) => isOpenTask(task) && dueWithin(task, today, 7)).length,
   };
 }
 
 function collectTags(items) {
   const byKey = new Map();
   for (const task of items) {
+    if (task.trashedAt) continue;
     for (const tag of task.tags || []) {
       const key = normalizeText(tag);
       if (!key) continue;
@@ -747,12 +853,12 @@ function collectTags(items) {
 }
 
 export function normalizeTaskFilter(filter, projects, tasks = null) {
-  if (['inbox', 'today', 'next7'].includes(filter)) return filter;
+  if (['inbox', 'today', 'next7', 'completed', 'trash'].includes(filter)) return filter;
   if (filter?.startsWith('project:') && projects.some((project) => project.id === filter.slice(8))) return filter;
   if (filter?.startsWith('tag:') && filter.length > 4) {
     if (!tasks) return filter;
     const known = collectTags(tasks.items)
-      .find((tag) => normalizeText(tag.label) === normalizeText(filter.slice(4)));
+      .find((tag) => tag.open > 0 && normalizeText(tag.label) === normalizeText(filter.slice(4)));
     return known ? `tag:${known.label}` : 'all';
   }
   return 'all';
@@ -760,6 +866,28 @@ export function normalizeTaskFilter(filter, projects, tasks = null) {
 
 export function canReorder(ui) {
   return ui.sortBy === 'manual' && ui.groupBy === 'none';
+}
+
+function isTrashedTask(task) {
+  return Boolean(task.trashedAt);
+}
+
+function isOpenTask(task) {
+  return !task.trashedAt && task.status === 'open';
+}
+
+function isCompletedTask(task) {
+  return !task.trashedAt && task.status === 'completed';
+}
+
+function taskMatchesLifecycle(task, lifecycle) {
+  if (lifecycle === 'trash') return isTrashedTask(task);
+  if (lifecycle === 'completed') return isCompletedTask(task);
+  return isOpenTask(task);
+}
+
+function taskDropEnabled(filter) {
+  return filter === 'inbox' || filter.startsWith('project:') || filter.startsWith('tag:');
 }
 
 function projectName(projects, projectId) {
@@ -801,6 +929,13 @@ export function shiftDate(date, days) {
 function formatShortDate(date) {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
     .format(new Date(`${date}T12:00:00Z`));
+}
+
+function formatTimestampDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
 }
 
 function normalizeText(value) {

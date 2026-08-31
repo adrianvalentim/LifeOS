@@ -1,6 +1,6 @@
 {
   "meta": {
-    "schemaVersion": 9,
+    "schemaVersion": 10,
     "appName": "LifeOS",
     "tagline": "A personal almanac",
     "timezone": "America/Sao_Paulo",
@@ -208,7 +208,8 @@
         },
         "createdAt": "2026-08-09T12:00:00-03:00",
         "updatedAt": "2026-08-09T12:00:00-03:00",
-        "completedAt": null
+        "completedAt": null,
+        "trashedAt": null
       },
       {
         "id": "demo-task-portia-midpoint",
@@ -228,7 +229,8 @@
         },
         "createdAt": "2026-08-09T12:00:00-03:00",
         "updatedAt": "2026-08-20T12:00:00-03:00",
-        "completedAt": "2026-08-20T12:00:00-03:00"
+        "completedAt": "2026-08-20T12:00:00-03:00",
+        "trashedAt": null
       },
       {
         "id": "demo-task-portia-confrontation",
@@ -250,7 +252,8 @@
         },
         "createdAt": "2026-08-10T12:00:00-03:00",
         "updatedAt": "2026-08-10T12:00:00-03:00",
-        "completedAt": null
+        "completedAt": null,
+        "trashedAt": null
       },
       {
         "id": "demo-task-vulcano-observatory",
@@ -272,7 +275,8 @@
         },
         "createdAt": "2026-08-10T12:00:00-03:00",
         "updatedAt": "2026-08-10T12:00:00-03:00",
-        "completedAt": null
+        "completedAt": null,
+        "trashedAt": null
       },
       {
         "id": "demo-task-vulcano-color-notes",
@@ -292,7 +296,8 @@
         },
         "createdAt": "2026-08-09T12:00:00-03:00",
         "updatedAt": "2026-08-20T12:00:00-03:00",
-        "completedAt": "2026-08-20T12:00:00-03:00"
+        "completedAt": "2026-08-20T12:00:00-03:00",
+        "trashedAt": null
       },
       {
         "id": "demo-task-vulcano-review-cut",
@@ -314,7 +319,8 @@
         },
         "createdAt": "2026-08-10T12:00:00-03:00",
         "updatedAt": "2026-08-10T12:00:00-03:00",
-        "completedAt": null
+        "completedAt": null,
+        "trashedAt": null
       },
       {
         "id": "demo-task-substack-opening",
@@ -336,7 +342,8 @@
         },
         "createdAt": "2026-08-11T12:00:00-03:00",
         "updatedAt": "2026-08-11T12:00:00-03:00",
-        "completedAt": null
+        "completedAt": null,
+        "trashedAt": null
       },
       {
         "id": "demo-task-inbox-passport",
@@ -358,7 +365,8 @@
         },
         "createdAt": "2026-08-12T12:00:00-03:00",
         "updatedAt": "2026-08-12T12:00:00-03:00",
-        "completedAt": null
+        "completedAt": null,
+        "trashedAt": null
       },
       {
         "id": "demo-task-inbox-backups",
@@ -378,7 +386,8 @@
         },
         "createdAt": "2026-08-13T12:00:00-03:00",
         "updatedAt": "2026-08-20T12:00:00-03:00",
-        "completedAt": "2026-08-20T12:00:00-03:00"
+        "completedAt": "2026-08-20T12:00:00-03:00",
+        "trashedAt": null
       }
     ]
   },
