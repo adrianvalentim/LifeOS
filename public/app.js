@@ -24,8 +24,10 @@ import {
   createTasksUiState,
   renderTaskOverlays,
   renderTasks,
+  shiftDate,
   TASK_DENSITIES,
   TASK_GROUPINGS,
+  TASK_PRIORITIES,
   TASK_SORTS,
 } from './tasks.js';
 
@@ -76,6 +78,12 @@ const PROJECTS_STORAGE_KEY = 'lifeos.projects.preferences';
 const THEME_COOKIE = 'lifeosTheme';
 const TASK_VIEW_STORAGE_KEY = 'lifeos.tasks.view';
 const TASK_INDENT_STEP = 27;
+const TASK_DRAG_THRESHOLD = 6;
+const TASK_DRAG_PREVIEW_MAX_WIDTH = 420;
+const TASK_EDGE_SCROLL_ZONE = 72;
+const TASK_EDGE_SCROLL_MAX = 18;
+const TASK_TOUCH_HOLD_MS = 320;
+const TASK_TOUCH_SLOP = 10;
 const APP_BUILD = document.querySelector('meta[name="lifeos-build"]')?.content || '';
 const PROJECT_DRAG_THRESHOLD = 11;
 const PROJECT_LANE_PEEK_MS = 1600;
@@ -1525,21 +1533,39 @@ function beginTaskPointerDrag(event, item) {
     item,
     pointerId: event.pointerId,
     pointerType: event.pointerType,
+    // Reordering and nesting need the custom-order view; assigning by drop does not.
+    reorderable: item.dataset.taskReorderable === 'true',
     startX: event.clientX,
     startY: event.clientY,
+    pointerX: event.clientX,
+    pointerY: event.clientY,
+    grabX: 0,
+    grabY: 0,
     started: false,
+    frame: null,
+    scrollFrame: null,
+    scroller: null,
+    holdTimer: null,
     originDepth: currentTaskDepth(item.dataset.taskDragId),
     preview: null,
+    targetTag: null,
     line: null,
     slotElements: [],
     target: null,
-    dropFilter: null,
-    dropFilterButton: null,
+    dropZone: null,
   };
   drag.move = (moveEvent) => moveTaskPointerDrag(moveEvent, drag);
   drag.end = (endEvent) => endTaskPointerDrag(endEvent, drag, true);
   drag.cancel = (cancelEvent) => endTaskPointerDrag(cancelEvent, drag, false);
   taskPointerDrag = drag;
+  // Touch has no spare gesture: a finger that simply moves is scrolling the list, so the
+  // drag has to be claimed by holding still first.
+  if (event.pointerType !== 'mouse') {
+    drag.holdTimer = setTimeout(() => {
+      drag.holdTimer = null;
+      if (taskPointerDrag === drag && !drag.started) startTaskPointerDrag(drag);
+    }, TASK_TOUCH_HOLD_MS);
+  }
   window.addEventListener('pointermove', drag.move, { passive: false });
   window.addEventListener('pointerup', drag.end);
   window.addEventListener('pointercancel', drag.cancel);
@@ -1549,40 +1575,141 @@ function moveTaskPointerDrag(event, drag) {
   if (taskPointerDrag !== drag || event.pointerId !== drag.pointerId) return;
   const deltaX = event.clientX - drag.startX;
   const deltaY = event.clientY - drag.startY;
+  drag.pointerX = event.clientX;
+  drag.pointerY = event.clientY;
 
   if (!drag.started) {
-    if (Math.hypot(deltaX, deltaY) < 6) return;
+    if (drag.pointerType !== 'mouse') {
+      // Moving before the hold completes is a scroll, not a drag.
+      if (Math.hypot(deltaX, deltaY) > TASK_TOUCH_SLOP) cancelTaskPointerDrag();
+      return;
+    }
+    if (Math.hypot(deltaX, deltaY) < TASK_DRAG_THRESHOLD) return;
     startTaskPointerDrag(drag);
   }
   event.preventDefault();
-  drag.preview.style.transform = `translate3d(${event.clientX + 12}px, ${event.clientY + 10}px, 0)`;
-  updateTaskDropTarget(drag, event.clientX, event.clientY);
+  if (drag.frame === null) drag.frame = requestAnimationFrame(() => drawTaskPointerDrag(drag));
+}
+
+function drawTaskPointerDrag(drag) {
+  if (taskPointerDrag !== drag || !drag.started) return;
+  drag.frame = null;
+  positionTaskDragPreview(drag);
+  updateTaskDropTarget(drag, drag.pointerX, drag.pointerY);
+  updateTaskAutoScroll(drag);
+}
+
+// The sidebar scrolls away with the list, so a task grabbed at the bottom of a long list
+// has to be able to walk the view back up to reach a project. The edge that matters is the
+// scroller's own box, which sits below the masthead, not the window's.
+function taskEdgeScrollStep(drag) {
+  const scroller = drag.scroller;
+  if (!scroller) return 0;
+  const box = scroller === document.scrollingElement
+    ? { top: 0, bottom: window.innerHeight }
+    : scroller.getBoundingClientRect();
+  const top = box.top + TASK_EDGE_SCROLL_ZONE;
+  const bottom = box.bottom - TASK_EDGE_SCROLL_ZONE;
+  if (drag.pointerY < top) return -edgeScrollRate(top - drag.pointerY);
+  if (drag.pointerY > bottom) return edgeScrollRate(drag.pointerY - bottom);
+  return 0;
+}
+
+function edgeScrollRate(depth) {
+  return Math.min(TASK_EDGE_SCROLL_MAX, Math.max(1, Math.ceil(depth / 4)));
+}
+
+function updateTaskAutoScroll(drag) {
+  if (drag.scrollFrame !== null || !taskEdgeScrollStep(drag)) return;
+  const step = () => {
+    drag.scrollFrame = null;
+    if (taskPointerDrag !== drag || !drag.started) return;
+    const delta = taskEdgeScrollStep(drag);
+    if (!delta) return;
+    const before = drag.scroller.scrollTop;
+    drag.scroller.scrollTop += delta;
+    // Nothing moved, so the view is already at that end and the loop would spin.
+    if (drag.scroller.scrollTop === before) return;
+    updateTaskDropTarget(drag, drag.pointerX, drag.pointerY);
+    drag.scrollFrame = requestAnimationFrame(step);
+  };
+  drag.scrollFrame = requestAnimationFrame(step);
+}
+
+// Holding the card exactly where it was grabbed keeps the pointer on the same word of the
+// title for the whole drag, so the cursor never drifts off the thing it is carrying.
+function positionTaskDragPreview(drag) {
+  drag.preview.style.transform = `translate3d(${drag.pointerX - drag.grabX}px, ${drag.pointerY - drag.grabY}px, 0)`;
 }
 
 function startTaskPointerDrag(drag) {
+  clearTimeout(drag.holdTimer);
+  drag.holdTimer = null;
   drag.started = true;
   drag.item.dataset.taskDragSuppressClick = 'true';
   drag.item.classList.add('dragging');
-  drag.item.setPointerCapture?.(drag.pointerId);
+  // A pointer released in the same frame the threshold is crossed is already gone, and
+  // capturing it then throws; the drag is still valid without the capture.
+  try {
+    drag.item.setPointerCapture?.(drag.pointerId);
+  } catch { /* pointer already released */ }
   document.body.classList.add('task-drag-active');
-  drag.slotElements = collectTaskDropSlots(drag.taskId);
+  revealTaskDropZones(drag.item);
+  drag.scroller = scrollParentFor(drag.item);
+  drag.slotElements = drag.reorderable ? collectTaskDropSlots(drag.taskId) : [];
 
+  const box = drag.item.getBoundingClientRect();
   const preview = drag.item.cloneNode(true);
   preview.removeAttribute('data-task-drag-id');
   preview.removeAttribute('data-task-detail');
+  preview.removeAttribute('data-task-reorderable');
   preview.removeAttribute('tabindex');
-  preview.className = 'task-item task-drag-preview';
+  preview.removeAttribute('aria-busy');
+  preview.classList.remove('dragging', 'is-saving');
+  preview.classList.add('task-drag-preview');
   preview.setAttribute('aria-hidden', 'true');
-  preview.style.width = `${drag.item.getBoundingClientRect().width}px`;
+  // A full-width row makes an unwieldy thing to carry and blankets whatever it passes
+  // over, so the card in hand is trimmed to the width that still reads as the task.
+  const width = Math.min(box.width, TASK_DRAG_PREVIEW_MAX_WIDTH);
+  preview.style.width = `${width}px`;
   preview.querySelectorAll('button, select, input, a').forEach((control) => control.setAttribute('tabindex', '-1'));
+
+  const targetTag = document.createElement('span');
+  targetTag.className = 'task-drag-target';
+  preview.append(targetTag);
   document.body.append(preview);
   drag.preview = preview;
+  drag.targetTag = targetTag;
+  // Keep the pointer on the card even when the grab landed past the trimmed width.
+  drag.grabX = Math.min(drag.startX - box.left, width - 28);
+  drag.grabY = drag.startY - box.top;
 
   const line = document.createElement('div');
   line.className = 'task-drop-line';
   line.hidden = true;
   document.body.append(line);
   drag.line = line;
+
+  positionTaskDragPreview(drag);
+  updateTaskDropTarget(drag, drag.pointerX, drag.pointerY);
+}
+
+// Revealing the empty group lanes grows the page above the grabbed row. The scroller takes
+// up the difference in the same frame so the row stays under the pointer.
+function revealTaskDropZones(item) {
+  const anchor = item?.isConnected ? item.getBoundingClientRect().top : null;
+  document.querySelector('.tasks-workspace')?.classList.add('is-dropping');
+  document.querySelectorAll('[data-task-group-latent]').forEach((lane) => lane.removeAttribute('aria-hidden'));
+  if (anchor === null) return;
+  const scroller = scrollParentFor(item);
+  if (!scroller) return;
+  const drift = item.getBoundingClientRect().top - anchor;
+  if (Math.abs(drift) > 0.5) scroller.scrollTop += drift;
+}
+
+function hideTaskDropZones() {
+  document.querySelector('.tasks-workspace')?.classList.remove('is-dropping');
+  document.querySelectorAll('[data-task-group-latent]').forEach((lane) => lane.setAttribute('aria-hidden', 'true'));
 }
 
 function collectTaskDropSlots(taskId) {
@@ -1605,19 +1732,27 @@ function collectTaskDropSlots(taskId) {
 }
 
 function updateTaskDropTarget(drag, clientX, clientY) {
-  const dropFilterButton = document.elementFromPoint(clientX, clientY)?.closest('[data-task-drop-filter]') || null;
-  if (drag.dropFilterButton !== dropFilterButton) {
-    drag.dropFilterButton?.classList.remove('drop-target');
-    drag.dropFilterButton = dropFilterButton;
-    dropFilterButton?.classList.add('drop-target');
+  const under = document.elementFromPoint(clientX, clientY);
+  const zone = under?.closest('[data-task-drop-filter], [data-task-drop-group]') || null;
+  if (drag.dropZone !== zone) {
+    drag.dropZone?.classList.remove('drop-target');
+    drag.dropZone = zone;
+    zone?.classList.add('drop-target');
   }
-  if (dropFilterButton) {
-    drag.dropFilter = dropFilterButton.dataset.taskDropFilter;
+  if (zone) {
+    drag.target = null;
+    drag.line.hidden = true;
+    // A drop that would not change anything says so instead of promising a move.
+    const redundant = taskDropIsRedundant(drag.taskId, zone);
+    showTaskDragTarget(drag, zone.dataset.taskDropLabel || '', redundant);
+    return;
+  }
+  showTaskDragTarget(drag, '', false);
+  if (!drag.reorderable) {
     drag.target = null;
     drag.line.hidden = true;
     return;
   }
-  drag.dropFilter = null;
 
   const slots = drag.slotElements.map((slot) => ({ ...slot, bounds: slot.item.getBoundingClientRect() }));
   if (!slots.length) {
@@ -1661,6 +1796,43 @@ function updateTaskDropTarget(drag, clientX, clientY) {
   drag.line.style.width = `${Math.max(60, reference.width - indent)}px`;
 }
 
+function showTaskDragTarget(drag, label, redundant) {
+  const tag = drag.targetTag;
+  if (!tag) return;
+  tag.textContent = label ? (redundant ? label : `→ ${label}`) : '';
+  tag.classList.toggle('is-visible', Boolean(label));
+  tag.classList.toggle('is-current', Boolean(label) && redundant);
+  tag.classList.toggle('is-danger', Boolean(label) && !redundant && drag.dropZone?.dataset.taskDropFilter === 'trash');
+}
+
+// Whether releasing here would leave the task exactly as it is.
+function taskDropIsRedundant(taskId, zone) {
+  const task = state.tasks.items.find((candidate) => candidate.id === taskId);
+  if (!task) return false;
+  const { taskDropFilter: filter, taskDropGroup: kind, taskDropValue: value } = zone.dataset;
+  if (filter) {
+    if (filter === 'inbox') return (task.projectId || null) === null && !task.parentTaskId;
+    if (filter.startsWith('project:')) return task.projectId === filter.slice(8) && !task.parentTaskId;
+    if (filter.startsWith('tag:')) return taskHasTag(task, filter.slice(4));
+    if (filter === 'today') return task.schedule?.dueDate === state.meta?.today;
+    if (filter === 'completed') return task.status === 'completed';
+    return false;
+  }
+  if (kind === 'priority') return normalizeTaskPriority(task.priority) === value;
+  if (kind === 'project') return (task.projectId || '') === value && !task.parentTaskId;
+  if (kind === 'tag') return taskHasTag(task, value);
+  if (kind === 'due') return (task.schedule?.dueDate || '') === value;
+  return false;
+}
+
+function taskHasTag(task, tag) {
+  return (task.tags || []).some((candidate) => normalizeTagKey(candidate) === normalizeTagKey(tag));
+}
+
+function normalizeTaskPriority(value) {
+  return TASK_PRIORITIES.includes(value) ? value : 'none';
+}
+
 function currentTaskDepth(taskId) {
   return state.tasks.items.find((task) => task.id === taskId)?.depth || 0;
 }
@@ -1668,8 +1840,10 @@ function currentTaskDepth(taskId) {
 function endTaskPointerDrag(event, drag, shouldDrop) {
   if (taskPointerDrag !== drag || event.pointerId !== drag.pointerId) return;
   if (drag.started) event.preventDefault();
-  const { taskId, item, target, dropFilter } = drag;
+  if (shouldDrop && drag.started) updateTaskDropTarget(drag, event.clientX, event.clientY);
+  const { taskId, item, target, dropZone } = drag;
   const started = drag.started;
+  const drop = dropZone ? { ...dropZone.dataset } : null;
   cancelTaskPointerDrag();
 
   if (started) {
@@ -1679,8 +1853,12 @@ function endTaskPointerDrag(event, drag, shouldDrop) {
     }, 0);
   }
   if (!shouldDrop || !started) return;
-  if (dropFilter) {
-    void dropTaskOnFilter(taskId, dropFilter);
+  if (drop?.taskDropFilter) {
+    void dropTaskOnFilter(taskId, drop.taskDropFilter);
+    return;
+  }
+  if (drop?.taskDropGroup) {
+    void dropTaskOnGroup(taskId, drop.taskDropGroup, drop.taskDropValue || '');
     return;
   }
   if (target) void runTaskAction('/api/tasks/reorder', { taskId, ...target }, null, { focusTaskId: taskId });
@@ -1690,31 +1868,83 @@ async function dropTaskOnFilter(taskId, filter) {
   const task = state.tasks.items.find((candidate) => candidate.id === taskId);
   if (!task) return;
   if (filter === 'inbox' || filter.startsWith('project:')) {
-    const projectId = filter === 'inbox' ? null : filter.slice(8);
-    if ((task.projectId || null) === projectId && !task.parentTaskId) return;
-    if (task.parentTaskId) {
-      await runTaskAction('/api/tasks/reorder', { taskId, parentTaskId: null, beforeTaskId: null }, null, { focusTaskId: taskId });
-    }
-    await runTaskAction('/api/tasks/project', { taskId, projectId }, null, { focusTaskId: taskId });
+    await moveTaskToProject(taskId, filter === 'inbox' ? null : filter.slice(8));
     return;
   }
   if (filter.startsWith('tag:')) {
+    if (taskHasTag(task, filter.slice(4))) return;
     await toggleTaskTag(taskId, filter.slice(4), null, { add: true });
+    return;
   }
+  if (filter === 'today' || filter === 'next7') {
+    const today = state.meta?.today;
+    if (!today) return;
+    const dueDate = filter === 'today' ? today : shiftDate(today, 7);
+    if (task.schedule?.dueDate === dueDate) return;
+    await runTaskAction('/api/tasks/schedule', { taskId, dueDate }, null, { focusTaskId: taskId });
+    return;
+  }
+  if (filter === 'completed') {
+    if (task.status === 'completed') return;
+    await runTaskAction('/api/tasks/completion', { taskId, completed: true }, null, { focusTaskId: taskId });
+    return;
+  }
+  // Trash is a reversible holding area with its own list and a Restore control, so a
+  // deliberate drop onto it does not need a second confirmation.
+  if (filter === 'trash') await runTaskAction('/api/tasks/trash', { taskId }, null, { focusTaskId: taskId });
+}
+
+async function dropTaskOnGroup(taskId, kind, value) {
+  const task = state.tasks.items.find((candidate) => candidate.id === taskId);
+  if (!task) return;
+  if (kind === 'priority') {
+    if (normalizeTaskPriority(task.priority) === value) return;
+    await runTaskAction('/api/tasks/priority', { taskId, priority: value }, null, { focusTaskId: taskId });
+    return;
+  }
+  if (kind === 'project') {
+    await moveTaskToProject(taskId, value || null);
+    return;
+  }
+  if (kind === 'due') {
+    if ((task.schedule?.dueDate || '') === value) return;
+    await runTaskAction('/api/tasks/schedule', { taskId, dueDate: value || null }, null, { focusTaskId: taskId });
+    return;
+  }
+  if (kind === 'tag') {
+    if (taskHasTag(task, value)) return;
+    await toggleTaskTag(taskId, value, null, { add: true });
+  }
+}
+
+// A subtask follows its parent's list, so moving one to another project has to lift it out
+// of the parent first.
+async function moveTaskToProject(taskId, projectId) {
+  const task = state.tasks.items.find((candidate) => candidate.id === taskId);
+  if (!task) return;
+  if ((task.projectId || null) === projectId && !task.parentTaskId) return;
+  if (task.parentTaskId) {
+    await runTaskAction('/api/tasks/reorder', { taskId, parentTaskId: null, beforeTaskId: null }, null, { focusTaskId: taskId });
+  }
+  await runTaskAction('/api/tasks/project', { taskId, projectId }, null, { focusTaskId: taskId });
 }
 
 function cancelTaskPointerDrag() {
   const drag = taskPointerDrag;
   if (!drag) return;
   taskPointerDrag = null;
+  clearTimeout(drag.holdTimer);
+  if (drag.frame !== null) cancelAnimationFrame(drag.frame);
+  if (drag.scrollFrame !== null) cancelAnimationFrame(drag.scrollFrame);
   window.removeEventListener('pointermove', drag.move);
   window.removeEventListener('pointerup', drag.end);
   window.removeEventListener('pointercancel', drag.cancel);
   drag.item.classList.remove('dragging');
   if (drag.item.hasPointerCapture?.(drag.pointerId)) drag.item.releasePointerCapture(drag.pointerId);
-  drag.dropFilterButton?.classList.remove('drop-target');
+  drag.dropZone?.classList.remove('drop-target');
   drag.preview?.remove();
   drag.line?.remove();
+  hideTaskDropZones();
   document.body.classList.remove('task-drag-active');
 }
 

@@ -149,8 +149,8 @@ function renderTaskSidebar(tasks, projects, domains, activeFilter, today) {
     <aside class="task-sidebar" aria-label="Task scopes">
       <div class="task-sidebar-title">Lists</div>
       ${taskFilterButton('all', 'All tasks', tasks.summary.open, activeFilter)}
-      ${taskFilterButton('today', 'Today', counts.today, activeFilter, 'today')}
-      ${taskFilterButton('next7', 'Next 7 days', counts.next7, activeFilter, 'upcoming')}
+      ${taskFilterButton('today', 'Today', counts.today, activeFilter, 'today', null, today)}
+      ${taskFilterButton('next7', 'Next 7 days', counts.next7, activeFilter, 'upcoming', null, today)}
       ${taskFilterButton('inbox', 'Inbox', tasks.summary.inbox.open, activeFilter, 'inbox')}
       <div class="task-sidebar-title projects">Projects</div>
       <div class="task-project-filters">
@@ -187,20 +187,34 @@ function renderTaskSidebar(tasks, projects, domains, activeFilter, today) {
   `;
 }
 
-function taskFilterButton(filter, label, count, activeFilter, kind = 'all', color = null) {
+function taskFilterButton(filter, label, count, activeFilter, kind = 'all', color = null, today = null) {
   // Tag scopes compare on the normalized label so a differently-cased scope still highlights.
   const active = filter === activeFilter || (
     filter.startsWith('tag:')
     && String(activeFilter || '').startsWith('tag:')
     && normalizeText(filter.slice(4)) === normalizeText(activeFilter.slice(4))
   );
+  const drop = taskDropEnabled(filter)
+    ? `data-task-drop-filter="${escapeAttribute(filter)}" data-task-drop-label="${escapeAttribute(filterDropLabel(filter, label, today))}"`
+    : '';
   return `
-    <button class="task-filter ${active ? 'active' : ''}" data-task-filter="${escapeAttribute(filter)}" ${taskDropEnabled(filter) ? `data-task-drop-filter="${escapeAttribute(filter)}"` : ''} type="button" ${active ? 'aria-current="page"' : ''} style="${color ? `--task-project:${escapeAttribute(color)}` : ''}">
+    <button class="task-filter ${active ? 'active' : ''}" data-task-filter="${escapeAttribute(filter)}" ${drop} type="button" ${active ? 'aria-current="page"' : ''} style="${color ? `--task-project:${escapeAttribute(color)}` : ''}">
       <span class="task-filter-icon ${kind}" aria-hidden="true"></span>
       <span>${escapeHtml(label)}</span>
       <b>${count}</b>
     </button>
   `;
+}
+
+// The dragged card announces the effect of the drop, not the name of the list, so a
+// date scope reads as the date it will actually set.
+function filterDropLabel(filter, label, today) {
+  if (filter === 'today') return 'Due today';
+  if (filter === 'next7') return today ? `Due ${formatShortDate(shiftDate(today, 7))}` : 'Next 7 days';
+  if (filter === 'completed') return 'Complete';
+  if (filter === 'trash') return 'Trash';
+  if (filter.startsWith('tag:')) return `#${filter.slice(4)}`;
+  return label;
 }
 
 function renderViewOptions(ui, reorderable) {
@@ -230,8 +244,8 @@ function renderViewOptions(ui, reorderable) {
               </select>
             </label>
             <p class="task-view-hint">${reorderable
-              ? 'Drag a task to reorder it, or drag right to nest it under the task above. A focused row also moves with Option and the arrow keys.'
-              : 'Switch to custom order without grouping to drag tasks into place.'}</p>
+              ? 'Drag a task to reorder it, or drag right to nest it under the task above. Drop it on a list or project to move it. A focused row also moves with Option and the arrow keys.'
+              : 'Drag a task onto a group heading, list, or project to move it. Switch to custom order without grouping to also reorder and nest by hand.'}</p>
           </div>`
         : ''}
     </div>
@@ -239,12 +253,21 @@ function renderViewOptions(ui, reorderable) {
 }
 
 function renderTaskGroup(group, domains, ui, view, reorderable) {
+  const drop = group.drop
+    ? `data-task-drop-group="${escapeAttribute(group.drop.kind)}" data-task-drop-value="${escapeAttribute(group.drop.value)}" data-task-drop-label="${escapeAttribute(group.drop.label)}"`
+    : '';
+  const latent = group.latent
+    ? 'data-task-group-latent="true" aria-hidden="true"'
+    : '';
   return `
-    <section class="task-group ${group.id === 'all' ? 'is-single' : ''}" data-task-group="${escapeAttribute(group.id)}">
+    <section class="task-group ${group.id === 'all' ? 'is-single' : ''} ${group.latent ? 'is-latent' : ''}" data-task-group="${escapeAttribute(group.id)}" ${drop} ${latent}>
       ${group.id === 'all'
         ? ''
         : `<h3 class="task-group-heading" style="--task-group-color:${escapeAttribute(group.color || 'var(--ink-faint)')}">
-            <span>${escapeHtml(group.label)}</span><b>${group.tasks.length}</b>
+            <span>${escapeHtml(group.label)}</span>
+            ${group.latent
+              ? '<span class="task-group-drop-hint" data-hint="Drop here" data-hint-active="Release here"></span>'
+              : `<b>${group.tasks.length}</b>`}
           </h3>`}
       <ul class="task-tree task-root-list">
         ${group.tasks.map((task) => renderTaskNode(task, domains, ui, view, reorderable)).join('')}
@@ -283,10 +306,13 @@ function renderTaskNode(task, domains, ui, view, reorderable) {
     || String(view.scopeFilter || '').startsWith('tag:')
   );
   const subtreeTotal = trashed ? task.trashSubtreeTotal : task.subtreeTotal;
+  // Dragging assigns a task to a list, project, or group in every active view. Only
+  // reordering and nesting need the custom-order view, so the two are tracked apart.
+  const draggable = view.lifecycle === 'active' && !view.compact;
   return `
     <li class="task-node ${completed ? 'is-completed' : ''} ${trashed ? 'is-trashed' : ''} ${ui.menu?.taskId === task.id ? 'is-menu-open' : ''}" data-task-node="${escapeAttribute(task.id)}" style="--task-domain:${escapeAttribute(domain?.color || 'var(--ink-faint)')}">
-      <article class="task-item ${saving ? 'is-saving' : ''} priority-${priority}" data-task-detail="${escapeAttribute(task.id)}" ${reorderable ? `data-task-drag-id="${escapeAttribute(task.id)}"` : ''} tabindex="0" ${saving ? 'aria-busy="true"' : ''}>
-        ${reorderable ? '<span class="task-drag-handle" aria-hidden="true">⠿</span>' : ''}
+      <article class="task-item ${saving ? 'is-saving' : ''} priority-${priority}" data-task-detail="${escapeAttribute(task.id)}" ${draggable ? `data-task-drag-id="${escapeAttribute(task.id)}"` : ''} ${reorderable ? 'data-task-reorderable="true"' : ''} tabindex="0" ${saving ? 'aria-busy="true"' : ''}>
+        ${draggable ? '<span class="task-drag-handle" aria-hidden="true">⠿</span>' : ''}
         ${trashed
           ? '<span class="task-trash-marker" aria-hidden="true"></span>'
           : `<label class="task-checkbox">
@@ -632,15 +658,18 @@ function groupTasks(tasks, ui, projects, today) {
     return [{ id: 'all', label: '', tasks: sorted }];
   }
   const buckets = new Map();
-  const push = (id, label, color, task) => {
-    if (!buckets.has(id)) buckets.set(id, { id, label, color, tasks: [] });
-    buckets.get(id).tasks.push(task);
+  const push = (bucket, task) => {
+    if (!buckets.has(bucket.id)) buckets.set(bucket.id, { ...bucket, tasks: [] });
+    buckets.get(bucket.id).tasks.push(task);
   };
   const order = groupOrder(ui.groupBy, projects);
   for (const task of sorted) {
-    for (const bucket of taskBuckets(task, ui.groupBy, projects, today)) {
-      push(bucket.id, bucket.label, bucket.color, task);
-    }
+    for (const bucket of taskBuckets(task, ui.groupBy, projects, today)) push(bucket, task);
+  }
+  // An empty group still has to be reachable by a drag, so every droppable lane stays in
+  // the document and is revealed only while a task is in hand.
+  for (const bucket of latentDropBuckets(ui.groupBy, projects, today)) {
+    if (!buckets.has(bucket.id)) buckets.set(bucket.id, { ...bucket, tasks: [], latent: true });
   }
   const indexOf = (id) => {
     const index = order.indexOf(id);
@@ -650,30 +679,66 @@ function groupTasks(tasks, ui, projects, today) {
 }
 
 function taskBuckets(task, groupBy, projects, today) {
-  if (groupBy === 'priority') {
-    const priority = normalizePriority(task.priority);
-    return [{ id: `priority:${priority}`, label: priority === 'none' ? 'No priority' : `${PRIORITY_LABELS[priority]} priority`, color: priorityColor(priority) }];
-  }
-  if (groupBy === 'project') {
-    const project = projects.find((candidate) => candidate.id === task.projectId);
-    return [{ id: `project:${task.projectId || 'inbox'}`, label: project?.name || 'Inbox', color: null }];
-  }
+  if (groupBy === 'priority') return [priorityBucket(normalizePriority(task.priority))];
+  if (groupBy === 'project') return [projectBucket(task.projectId || null, projects)];
   if (groupBy === 'tag') {
     const tags = task.tags || [];
+    // "No tag" is a residue, not a destination: dropping there could only mean stripping
+    // every tag, so it stays a plain heading.
     if (!tags.length) return [{ id: 'tag:', label: 'No tag', color: null }];
-    return tags.map((tag) => ({ id: `tag:${normalizeText(tag)}`, label: tag, color: null }));
+    return tags.map((tag) => tagBucket(tag));
   }
   return [dueBucket(task.schedule?.dueDate, today)];
 }
 
+// The lanes a drop can express for each grouping, whether or not a task sits in them.
+function latentDropBuckets(groupBy, projects, today) {
+  if (groupBy === 'priority') return TASK_PRIORITIES.map((priority) => priorityBucket(priority));
+  if (groupBy === 'project') return [projectBucket(null, projects), ...projects.map((project) => projectBucket(project.id, projects))];
+  if (groupBy === 'due') return ['due:today', 'due:tomorrow', 'due:week', 'due:none'].map((id) => dueLaneBucket(id, today)).filter(Boolean);
+  return [];
+}
+
+function priorityBucket(priority) {
+  const label = priority === 'none' ? 'No priority' : `${PRIORITY_LABELS[priority]} priority`;
+  return { id: `priority:${priority}`, label, color: priorityColor(priority), drop: { kind: 'priority', value: priority, label } };
+}
+
+function projectBucket(projectId, projects) {
+  const name = projects.find((candidate) => candidate.id === projectId)?.name || 'Inbox';
+  return { id: `project:${projectId || 'inbox'}`, label: name, color: null, drop: { kind: 'project', value: projectId || '', label: name } };
+}
+
+function tagBucket(tag) {
+  return { id: `tag:${normalizeText(tag)}`, label: tag, color: null, drop: { kind: 'tag', value: tag, label: `#${tag}` } };
+}
+
+const DUE_LANE_LABELS = { 'due:today': 'Today', 'due:tomorrow': 'Tomorrow', 'due:week': 'Next 7 days', 'due:none': 'No date' };
+
+// Only the forward-looking date lanes name a single date a drop can set. "Overdue",
+// "Later", and "Scheduled" describe a span, so they stay read-only.
+function dueLaneBucket(id, today) {
+  if (id === 'due:none') return { id, label: 'No date', color: null, drop: { kind: 'due', value: '', label: 'No date' } };
+  if (!today) return null;
+  const offset = { 'due:today': 0, 'due:tomorrow': 1, 'due:week': 7 }[id];
+  if (offset === undefined) return null;
+  const date = shiftDate(today, offset);
+  return {
+    id,
+    label: DUE_LANE_LABELS[id],
+    color: id === 'due:today' ? 'var(--attention)' : null,
+    drop: { kind: 'due', value: date, label: offset === 0 ? 'Due today' : `Due ${formatShortDate(date)}` },
+  };
+}
+
 function dueBucket(dueDate, today) {
-  if (!dueDate) return { id: 'due:none', label: 'No date', color: null };
+  if (!dueDate) return dueLaneBucket('due:none', today);
   if (!today) return { id: 'due:dated', label: 'Scheduled', color: null };
   const delta = dayDelta(dueDate, today);
   if (delta < 0) return { id: 'due:overdue', label: 'Overdue', color: 'var(--critical)' };
-  if (delta === 0) return { id: 'due:today', label: 'Today', color: 'var(--attention)' };
-  if (delta === 1) return { id: 'due:tomorrow', label: 'Tomorrow', color: null };
-  if (delta <= 7) return { id: 'due:week', label: 'Next 7 days', color: null };
+  if (delta === 0) return dueLaneBucket('due:today', today);
+  if (delta === 1) return dueLaneBucket('due:tomorrow', today);
+  if (delta <= 7) return dueLaneBucket('due:week', today);
   return { id: 'due:later', label: 'Later', color: null };
 }
 
@@ -886,8 +951,11 @@ function taskMatchesLifecycle(task, lifecycle) {
   return isOpenTask(task);
 }
 
+// "All tasks" is the only scope a drop cannot express, because every task is already in it.
 function taskDropEnabled(filter) {
-  return filter === 'inbox' || filter.startsWith('project:') || filter.startsWith('tag:');
+  return ['inbox', 'today', 'next7', 'completed', 'trash'].includes(filter)
+    || filter.startsWith('project:')
+    || filter.startsWith('tag:');
 }
 
 function projectName(projects, projectId) {

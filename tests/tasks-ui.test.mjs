@@ -138,10 +138,13 @@ test('tag scope stays active-only even when a completed subtask shares the tag',
   assert.match(html, /<h2 id="task-list-heading">1 open<\/h2>/);
   assert.match(html, /class="task-item .*priority-high"/);
   assert.match(html, /data-task-tag-filter="writing"/);
-  assert.doesNotMatch(html, /data-task-drag-id=/);
+  // A flat scope still hands out drags so the task can be reassigned; it just cannot be
+  // reordered, because the rows are not in their manual sibling order here.
+  assert.match(html, /data-task-drag-id="root"/);
+  assert.doesNotMatch(html, /data-task-reorderable/);
 });
 
-test('view options drive grouping, sorting, and whether dragging is offered', () => {
+test('view options drive grouping, sorting, and what a drag is allowed to do', () => {
   const ui = createTasksUiState();
   ui.groupBy = 'priority';
   ui.viewOptionsOpen = true;
@@ -151,14 +154,62 @@ test('view options drive grouping, sorting, and whether dragging is offered', ()
   assert.match(grouped, /High priority/);
   assert.match(grouped, /<option value="priority" selected>Priority<\/option>/);
   assert.equal(canReorder(ui), false);
-  assert.doesNotMatch(grouped, /data-task-drag-id="root"/);
-  assert.match(grouped, /Switch to custom order without grouping/);
+  assert.match(grouped, /data-task-drag-id="root"/);
+  assert.doesNotMatch(grouped, /data-task-reorderable/);
+  assert.match(grouped, /Switch to custom order without grouping to also reorder/);
 
   const plain = createTasksUiState();
   assert.equal(canReorder(plain), true);
-  assert.match(renderTasks(fixture(), projects, domains, plain, { today: TODAY }), /data-task-drag-id="root"/);
+  const ungrouped = renderTasks(fixture(), projects, domains, plain, { today: TODAY });
+  assert.match(ungrouped, /data-task-drag-id="root"/);
+  assert.match(ungrouped, /data-task-reorderable="true"/);
 
   assert.doesNotMatch(grouped, /data-task-show-completed/);
+});
+
+test('every scope and group a drop can express is marked with the change it makes', () => {
+  const ui = createTasksUiState();
+  ui.groupBy = 'priority';
+  const html = renderTasks(fixture(), projects, domains, ui, { today: TODAY });
+
+  assert.match(html, /data-task-drop-filter="today" data-task-drop-label="Due today"/);
+  assert.match(html, /data-task-drop-filter="next7" data-task-drop-label="Due Aug 29"/);
+  assert.match(html, /data-task-drop-filter="inbox" data-task-drop-label="Inbox"/);
+  assert.match(html, /data-task-drop-filter="project:portia" data-task-drop-label="Portia"/);
+  assert.match(html, /data-task-drop-filter="tag:writing" data-task-drop-label="#writing"/);
+  assert.match(html, /data-task-drop-filter="completed" data-task-drop-label="Complete"/);
+  assert.match(html, /data-task-drop-filter="trash" data-task-drop-label="Trash"/);
+  // Every task is already in "All tasks", so it is the one scope a drop cannot express.
+  assert.doesNotMatch(html, /data-task-filter="all" data-task-drop-filter/);
+
+  // A priority with nothing in it is still a destination, so its lane stays in the
+  // document and is revealed only while a task is in hand.
+  assert.match(html, /data-task-group="priority:high" data-task-drop-group="priority" data-task-drop-value="high"/);
+  assert.match(html, /data-task-group="priority:medium"[^>]*data-task-group-latent="true"/);
+  assert.match(html, /data-task-group="priority:none"[^>]*data-task-drop-value="none"/);
+});
+
+test('due-date grouping offers a drop only on the lanes that name a single date', () => {
+  const ui = createTasksUiState();
+  ui.groupBy = 'due';
+  const html = renderTasks(fixture(), projects, domains, ui, { today: TODAY });
+
+  assert.match(html, /data-task-group="due:today" data-task-drop-group="due" data-task-drop-value="2026-08-22"/);
+  assert.match(html, /data-task-group="due:tomorrow"[^>]*data-task-drop-value="2026-08-23"/);
+  assert.match(html, /data-task-group="due:week"[^>]*data-task-drop-value="2026-08-29"/);
+  assert.match(html, /data-task-group="due:none"[^>]*data-task-drop-value=""/);
+  // "Overdue" spans many dates, so releasing on it could not mean one thing.
+  assert.match(html, /data-task-group="due:overdue"(?![^>]*data-task-drop-group)/);
+});
+
+test('completed and trashed scopes stay out of reach of a drag', () => {
+  const completedUi = createTasksUiState();
+  completedUi.filter = 'completed';
+  assert.doesNotMatch(renderTasks(fixture(), projects, domains, completedUi, { today: TODAY }), /data-task-drag-id=/);
+
+  const trashUi = createTasksUiState();
+  trashUi.filter = 'trash';
+  assert.doesNotMatch(renderTasks(fixture(), projects, domains, trashUi, { today: TODAY }), /data-task-drag-id=/);
 });
 
 test('due-date grouping separates overdue work from the rest of the horizon', () => {
