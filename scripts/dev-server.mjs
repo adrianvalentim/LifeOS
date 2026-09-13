@@ -8,6 +8,7 @@ import { enrichOpenLibraryBook, searchOpenLibrary } from '../src/book-catalog.mj
 import { deleteCachedReadingBookCover, getOrCacheReadingBookCover } from '../src/book-cover-cache.mjs';
 import { CODEX_VOICE_CAPABILITY, codexAppServer } from '../src/codex-app-server.mjs';
 import { DEFAULT_STORE_PATH, initializeDefaultStore } from '../src/lifeos-storage.mjs';
+import { openSavedTaskLink } from '../src/task-web-links.mjs';
 import {
   addReadingBook,
   createTask,
@@ -101,6 +102,17 @@ const server = createServer(async (req, res) => {
       if (body.priority !== undefined) requireString(body.priority, 'priority');
       if (body.tags !== undefined && !Array.isArray(body.tags)) throw new ClientError('tags must be an array.');
       return sendJson(res, await taskStateAction(() => createTask(body)));
+    }
+    if (url.pathname === '/api/tasks/open-link' && req.method === 'POST') {
+      const port = server.address().port;
+      if (![ `http://127.0.0.1:${port}`, `http://localhost:${port}` ].includes(req.headers.origin)) {
+        res.writeHead(403);
+        return res.end('Open links from LifeOS itself.');
+      }
+      const body = await readJson(req);
+      requireString(body.taskId, 'taskId');
+      requireString(body.url, 'url');
+      return sendJson(res, await openSavedTaskLink({ taskId: body.taskId, url: body.url }));
     }
     if (url.pathname === '/api/tasks/update' && req.method === 'POST') {
       const body = await readJson(req);

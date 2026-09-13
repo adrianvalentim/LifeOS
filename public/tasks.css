@@ -2052,3 +2052,6 @@ body.task-drag-active button {
     animation: none;
   }
 }
+.task-detail-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.task-detail-links a { display: inline-flex; gap: 12px; align-items: center; padding: 9px 12px; border: 1px solid var(--rule); border-radius: 4px; color: var(--ink); font-size: 12px; text-decoration: none; overflow-wrap: anywhere; }
+.task-detail-links a:hover, .task-detail-links a:focus-visible { border-color: var(--accent); color: var(--accent); }

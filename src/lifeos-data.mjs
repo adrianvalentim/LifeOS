@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { extractWebLinks } from '../public/web-links.js';
 import {
   DEFAULT_STORE_PATH,
   DEMO_STORE_PATH,
@@ -81,7 +82,7 @@ export async function writeStore(store, storePath = DEFAULT_STORE_PATH) {
   return migrated;
 }
 
-export async function mutateStore(mutator, storePath = DEFAULT_STORE_PATH) {
+export async function mutateStore(mutator, storePath = DEFAULT_STORE_PATH, { backupTimeoutMs = 0 } = {}) {
   if (isDefaultStorePath(storePath)) await initializeDefaultStore();
   const release = await acquireStoreLock(storePath);
   let result;
@@ -95,7 +96,9 @@ export async function mutateStore(mutator, storePath = DEFAULT_STORE_PATH) {
   }
 
   if (!isDefaultStorePath(storePath)) return { result, store, backup: { configured: false, ok: null } };
-  const backup = await backUpStore(store);
+  let backup;
+  try { backup = await backUpStore(store, { timeoutMs: backupTimeoutMs }); }
+  catch (error) { backup = { configured: true, ok: false, error: error.message }; }
   if (backup.ok === false) console.warn(`LifeOS cloud backup failed: ${backup.error}`);
   return { result, store, backup };
 }
@@ -754,58 +757,108 @@ export function buildCategoryStats(store, query, options = {}) {
 
 export async function createTask(input, storePath = DEFAULT_STORE_PATH) {
   const now = resolveNow(input.now);
+  const { result: task, store } = await mutateStore((current) => insertTask(current, input, now), storePath);
+  return { task, state: buildValidatedState(store, { now }) };
+}
+
+// Used only inside a store transaction so project creation and capture are atomic.
+function insertTask(current, input, now) {
   const title = cleanTaskTitle(input.title);
   const parentTaskId = input.parentTaskId == null || input.parentTaskId === ''
     ? null
     : String(input.parentTaskId).trim();
   const schedule = normalizeTaskSchedule(input);
-  const { result: task, store } = await mutateStore((current) => {
-    const parent = parentTaskId
-      ? current.tasks.items.find((candidate) => candidate.id === parentTaskId)
+  const parent = parentTaskId
+    ? current.tasks.items.find((candidate) => candidate.id === parentTaskId)
+    : null;
+  if (parentTaskId && !parent) throw new Error(`Parent task not found: ${parentTaskId}`);
+  if (parent?.trashedAt) throw new Error('A task in Trash cannot receive new subtasks.');
+
+  let projectId = normalizeTaskProjectId(current, input.projectId);
+  if (parent) {
+    if (input.projectId !== undefined && projectId !== (parent.projectId || null)) {
+      throw new Error('A subtask must share its parent task\'s project.');
+    }
+    projectId = parent.projectId || null;
+  }
+
+  const timestamp = now.toISOString();
+  const next = {
+    id: input.id || randomUUID(),
+    title,
+    notes: cleanTaskNotes(input.notes),
+    projectId,
+    parentTaskId,
+    status: 'open',
+    priority: cleanTaskPriority(input.priority),
+    tags: cleanTaskTags(input.tags),
+    sortOrder: nextTaskSortOrder(current.tasks.items, parentTaskId),
+    schedule,
+    createdAt: input.createdAt || timestamp,
+    updatedAt: timestamp,
+    completedAt: null,
+    trashedAt: null,
+  };
+  current.tasks.items.push(next);
+  let ancestor = parent;
+  while (ancestor) {
+    if (ancestor.status === 'completed') {
+      ancestor.status = 'open';
+      ancestor.completedAt = null;
+      ancestor.updatedAt = timestamp;
+    }
+    ancestor = ancestor.parentTaskId
+      ? current.tasks.items.find((candidate) => candidate.id === ancestor.parentTaskId)
       : null;
-    if (parentTaskId && !parent) throw new Error(`Parent task not found: ${parentTaskId}`);
-    if (parent?.trashedAt) throw new Error('A task in Trash cannot receive new subtasks.');
+  }
+  return next;
+}
 
-    let projectId = normalizeTaskProjectId(current, input.projectId);
-    if (parent) {
-      if (input.projectId !== undefined && projectId !== (parent.projectId || null)) {
-        throw new Error('A subtask must share its parent task\'s project.');
-      }
-      projectId = parent.projectId || null;
-    }
-
-    const timestamp = now.toISOString();
-    const next = {
-      id: input.id || randomUUID(),
-      title,
-      notes: cleanTaskNotes(input.notes),
-      projectId,
-      parentTaskId,
-      status: 'open',
-      priority: cleanTaskPriority(input.priority),
-      tags: cleanTaskTags(input.tags),
-      sortOrder: nextTaskSortOrder(current.tasks.items, parentTaskId),
-      schedule,
-      createdAt: input.createdAt || timestamp,
-      updatedAt: timestamp,
-      completedAt: null,
-      trashedAt: null,
+export async function captureWebPage(input, storePath = DEFAULT_STORE_PATH) {
+  if (!input || typeof input.url !== 'string' || input.url.length > 16_000
+    || /[\u0000-\u0020\u007F]/u.test(input.url)) {
+    throw new Error('This page does not have a valid web address.');
+  }
+  let url;
+  try { url = new URL(input.url); } catch { throw new Error('This page does not have a valid web address.'); }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) {
+    throw new Error('Open an ordinary HTTP or HTTPS webpage to save it.');
+  }
+  if (input.title !== undefined && typeof input.title !== 'string') throw new Error('Page title must be text.');
+  const now = resolveNow(input.now);
+  const { result, backup } = await mutateStore((current) => {
+    // Keep the user's edits (including project, priority and due date) on a repeat click.
+    const existing = current.tasks.items.find((task) => !task.trashedAt
+      && extractWebLinks(task.notes).some((link) => link.url === url.href));
+    if (existing) return {
+      created: false, task: existing,
+      project: current.projects.find((project) => project.id === existing.projectId) || null,
     };
-    current.tasks.items.push(next);
-    let ancestor = parent;
-    while (ancestor) {
-      if (ancestor.status === 'completed') {
-        ancestor.status = 'open';
-        ancestor.completedAt = null;
-        ancestor.updatedAt = timestamp;
-      }
-      ancestor = ancestor.parentTaskId
-        ? current.tasks.items.find((candidate) => candidate.id === ancestor.parentTaskId)
-        : null;
+
+    const candidates = current.projects.filter((project) => normalizeText(project.name) === 'web articles');
+    if (candidates.length > 1) throw new Error('More than one project is named Web Articles. Rename one in LifeOS before capturing.');
+    let project = candidates[0];
+    if (!project) {
+      const domain = ['learning', 'research', 'personal', 'general'].find((key) => current.domains[key])
+        || Object.keys(current.domains)[0];
+      if (!domain) throw new Error('LifeOS needs a domain before creating Web Articles.');
+      const timestamp = now.toISOString();
+      project = {
+        id: current.projects.some((item) => item.id === 'web-articles') ? randomUUID() : 'web-articles',
+        name: 'Web Articles', subtitle: 'Saved pages to read', domain, status: 'to_do',
+        priority: 1, plannedHours: 0, deadline: null, progress: null, note: '', categoryIds: [],
+        createdAt: timestamp, statusChangedAt: timestamp,
+      };
+      current.projects.push(project);
     }
-    return next;
-  }, storePath);
-  return { task, state: buildValidatedState(store, { now }) };
+    const task = insertTask(current, {
+      title: input.title?.trim() || url.hostname,
+      notes: url.href, projectId: project.id, priority: 'low', tags: [],
+      dueDate: dateOnly(now, current.meta.timezone),
+    }, now);
+    return { created: true, task, project };
+  }, storePath, { backupTimeoutMs: 2_000 });
+  return { ...result, url: url.href, backup };
 }
 
 export async function updateTask(input, storePath = DEFAULT_STORE_PATH) {

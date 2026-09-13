@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LifeOS Capture</title>
+  <link rel="stylesheet" href="popup.css">
+  <script type="module" src="popup.js"></script>
+</head>
+<body>
+  <header><span class="brand">LifeOS<span class="brand-dot">.</span></span><span class="eyebrow">Web capture</span></header>
+  <main aria-live="polite" aria-busy="true" id="capture">
+    <div class="status-row"><span class="status-icon" aria-hidden="true" id="icon">↙</span><span id="status">Saving to your reading list…</span></div>
+    <h1 id="title"></h1>
+    <a id="source" target="_blank" rel="noopener noreferrer" hidden></a>
+    <p id="message" hidden></p>
+    <button id="retry" type="button" hidden>Try again</button>
+    <button id="open" type="button" hidden>Open LifeOS <span aria-hidden="true">↗</span></button>
+  </main>
+</body>
+</html>

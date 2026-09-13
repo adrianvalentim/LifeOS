@@ -10,8 +10,9 @@
     "desktop:build": "node scripts/desktop.mjs build",
     "lifeos": "node cli/lifeos.mjs",
     "demo:reset": "node scripts/create-demo-data.mjs --write-active",
-    "check": "node --check public/app.js && node --check public/codex-context.js && node --check public/tasks.js && node --check public/projects.js && node --check public/reading.js && node --check scripts/dev-server.mjs && node --check scripts/desktop.mjs && node --check scripts/create-demo-data.mjs && node --check src/lifeos-data.mjs && node --check src/lifeos-storage.mjs && node --check src/book-catalog.mjs && node --check src/book-cover-cache.mjs && node --check src/codex-app-server.mjs && node --check cli/lifeos.mjs && npm test && npm run desktop:check",
-    "test": "node --test"
+    "check": "node --check public/app.js && node --check public/codex-context.js && node --check public/tasks.js && node --check public/projects.js && node --check public/reading.js && node --check scripts/dev-server.mjs && node --check scripts/desktop.mjs && node --check scripts/create-demo-data.mjs && node --check src/lifeos-data.mjs && node --check src/lifeos-storage.mjs && node --check src/book-catalog.mjs && node --check src/book-cover-cache.mjs && node --check src/codex-app-server.mjs && node --check cli/lifeos.mjs && node --check public/web-links.js && node --check scripts/capture-native-host.mjs && node --check scripts/install-capture-host.mjs && node --check extensions/lifeos-capture/background.js && node --check extensions/lifeos-capture/popup.js && node --check src/task-web-links.mjs && node --check scripts/capture-backup-worker.mjs && npm test && npm run desktop:check",
+    "test": "node --test",
+    "capture:install": "node scripts/install-capture-host.mjs"
   },
   "bin": {
     "lifeos": "./cli/lifeos.mjs"

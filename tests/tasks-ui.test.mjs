@@ -355,3 +355,14 @@ function task(id, title, projectId, parentTaskId, status, depth, childIds, subtr
     trashSubtreeTotal: extra.trashedAt ? (extra.trashSubtreeTotal || 1) : 0,
   };
 }
+test('task details offer safe clickable saved webpages while notes remain editable', () => {
+  const tasks = fixture();
+  tasks.items[0].notes = 'https://example.org/read?a=1&b=2\njavascript:alert(1)';
+  const ui = createTasksUiState();
+  ui.selectedTaskId = tasks.items[0].id;
+  const html = renderTaskOverlays(tasks, projects, ui, { today: TODAY });
+  assert.match(html, /href="https:\/\/example.org\/read\?a=1&amp;b=2" target="_blank" rel="noopener noreferrer"/);
+  assert.match(html, /Read on example.org/);
+  assert.match(html, /<textarea/);
+  assert.doesNotMatch(html, /href="javascript:/);
+});

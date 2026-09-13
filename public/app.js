@@ -834,6 +834,22 @@ function persistProjectPreferences() {
 function bindTaskEvents() {
   if (!['tasks', 'projects'].includes(activeTab)) return;
 
+  // WKWebView does not open target=_blank links without a native handler.
+  // Ordinary browser sessions keep their normal link and modifier-key behavior.
+  if (window.__TAURI_INTERNALS__) document.querySelectorAll('[data-task-web-link]').forEach((link) => {
+    link.addEventListener('click', async (event) => {
+      event.preventDefault();
+      if (link.getAttribute('aria-busy') === 'true') return;
+      link.setAttribute('aria-busy', 'true');
+      try {
+        await apiJson('/api/tasks/open-link', jsonRequest({ taskId: link.dataset.taskWebLink, url: link.href }));
+      } catch (error) {
+        tasksUi.detailError = error.message;
+        render();
+      } finally { link.removeAttribute('aria-busy'); }
+    });
+  });
+
   document.querySelectorAll('[data-task-filter]').forEach((button) => {
     button.addEventListener('click', () => applyTaskFilter(button.dataset.taskFilter));
   });

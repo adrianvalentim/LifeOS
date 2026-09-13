@@ -32,6 +32,9 @@ the computer.
 
 ## Current capabilities
 
+- [One-click Brave webpage capture](extensions/lifeos-capture/README.md), verified
+  in Brave: save the current title and link to Web Articles with
+  low priority and today's due date, using an on-demand macOS helper.
 - status-grouped, filterable Projects portfolio plus a focused Kanban backed by six persistent workflow states,
   reusable categories, deadlines, progress, health, streaks, weekly effort, and
   confirmed deletion that preserves historical analytics.

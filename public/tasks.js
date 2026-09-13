@@ -1,3 +1,5 @@
+import { extractWebLinks } from './web-links.js';
+
 export const TASK_PRIORITIES = ['high', 'medium', 'low', 'none'];
 export const TASK_GROUPINGS = ['none', 'priority', 'due', 'project', 'tag'];
 export const TASK_SORTS = ['manual', 'priority', 'due', 'title', 'created'];
@@ -541,6 +543,9 @@ function renderTaskDetail(task, tasks, projects, ui, options) {
             <span>Notes</span>
             <textarea id="task-detail-notes" name="notes" maxlength="20000" placeholder="Add context, links, or the next thought…" ${disabled ? 'disabled' : ''}>${escapeHtml(draft.notes)}</textarea>
           </label>
+          ${extractWebLinks(task.notes).length ? `<nav class="task-detail-links" aria-label="Saved webpages">
+            ${extractWebLinks(task.notes).map((link) => `<a href="${escapeAttribute(link.url)}" target="_blank" rel="noopener noreferrer" data-task-web-link="${escapeAttribute(task.id)}" title="${escapeAttribute(link.url)}">Read on ${escapeHtml(link.label)} <span aria-hidden="true">↗</span></a>`).join('')}
+          </nav>` : ''}
           ${ui.detailError ? `<p class="task-detail-error" role="alert">${escapeHtml(ui.detailError)}</p>` : ''}
           <footer class="task-detail-footer">
             ${trashed

@@ -1,9 +1,10 @@
 # LifeOS project state and maintainer handoff
 
-> Canonical implementation handoff for agents and maintainers. Read this after
-> [`AGENTS.md`](AGENTS.md) and before making a structural change.
+> Canonical implementation handoff for agents and maintainers. Use
+> [`AGENTS.md`](AGENTS.md) to select the sections relevant to the task; consult
+> architecture and rationale before making a structural change.
 
-- Last updated: 2026-08-31
+- Last updated: 2026-09-12
 - Implementation baseline: `main`, including the storage, Projects, Reading, and
   source-backed Tauri work described here
 - Remote: `adrianvalentim/LifeOS`, public, default branch `main`
@@ -47,6 +48,7 @@ sidecar packaging, notarized distribution, and updates remain deferred.
 | --- | --- | --- |
 | Project dashboard | Implemented | Status-grouped and filterable portfolio list plus a focused three-column drag Kanban, reusable category labels, six persistent workflow statuses, confirmed history-preserving deletion, computed health, last touch, weekly hours, deadline, progress, and streak |
 | Tasks | Focused first release implemented | Active All/Inbox/project/tag scopes, separate Completed and 30-day Trash scopes, dated smart lists with collapsed completed work, optional project association, nested subtasks, optional due dates, completion cascade, derived subtree/project progress, click-through details with editable notes/title and recoverable subtree deletion, project-detail creation and controls, and CLI operations |
+| Web capture | Implemented and live-tested in Brave | Small Manifest V3 extension and on-demand macOS native helper create a Web Articles task from the clicked tab's title and URL, with low priority and today's LifeOS-local due date; a real toolbar capture and duplicate retry are verified, with local success preserved during a stalled cloud backup |
 | Today | Implemented foundation | Computed daily entries and total, recommendation selection, real start/stop timer |
 | Analytics | Implemented foundation | Week/month/quarter/year totals, domain allocation, rhythm heatmap, trends, composition, production/consumption, deep-work counts |
 | Almanac | Read-only foundation | Computed streaks, current challenge, and configured milestones |
@@ -160,6 +162,9 @@ Run `npm run dev` and use the printed loopback URL.
 | `src/codex-app-server.mjs` | JSON-RPC bridge to the installed Codex executable |
 | `cli/lifeos.mjs` | Stable, token-efficient operational interface for Codex and humans |
 | `scripts/dev-server.mjs` | Local static server, JSON routes, SSE, file watcher, and Codex relay |
+| `extensions/lifeos-capture/` | Unpacked Brave extension, fixed public identity, popup/worker/icons, and installation guide |
+| `scripts/capture-native-host.mjs` and `scripts/install-capture-host.mjs` | One-message native capture bridge and local macOS release installation with Brave registration |
+| `public/web-links.js` and `src/task-web-links.mjs` | Safe links derived from task notes and desktop opening of an exact saved HTTP(S) URL |
 | `scripts/desktop.mjs` | Cross-platform Tauri command wrapper and APFS cache target selection for macOS builds |
 | `scripts/create-demo-data.mjs` | Deterministically generates demo data; can intentionally reset the active store |
 | `public/index.html` | Minimal browser entry point |
@@ -248,6 +253,61 @@ first, navigates the existing window to its new loopback port while preserving
 the current path and query, and then stops the preceding child. A failed startup
 leaves the existing server and window intact. Concurrent refresh requests are
 coalesced. The shell does not bundle Node or copy the browser application.
+
+### Brave webpage capture
+
+Run `npm run capture:install` on macOS, then load
+`~/Library/Application Support/LifeOS/browser-capture/extensions/lifeos-capture`
+unpacked in Brave. The installer copies an explicit helper runtime and the
+extension into Application Support without personal data or development packages.
+The small extension uses only `activeTab`
+and `nativeMessaging`. Its popup starts saving immediately; a service worker owns
+the write so closing the popup does not cancel it. No hosted service, API key,
+page scraping, content script, broad host permission, or polling is involved.
+The popup shows status, page title, source link and Open LifeOS; metadata chips
+and routine explanatory text are omitted. Real errors and backup warnings remain.
+
+Brave launches `scripts/capture-native-host.mjs` through a per-user, executable
+launcher for each capture, then the helper exits. Its native host registration
+uses `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/` because
+Brave overrides macOS helper discovery to Chrome's locations; registering under
+Brave's profile directory fails. It allows only the extension's fixed ID. The
+launcher pins the installed runtime and configured data directory using absolute,
+shell-quoted paths. Rerun the installer after source updates or a data-directory
+move, then reload the extension. Capture needs Node and the local store, but not
+Atlas, the desktop app's dynamic HTTP port, or an open app window. Open LifeOS
+still launches the source-backed desktop app, which needs its workspace.
+
+`captureWebPage` creates the task and an exact-named Web Articles project in one
+locked transaction, using the common task constructor. Existing domains are
+reused (learning, research, personal, general, then the first configured domain).
+No schema change is needed: the full URL stays in ordinary task Notes. Priority
+is low, tags are empty, and due date uses `meta.timezone`. An exact URL match in
+non-trashed task notes returns the existing task, preserving edits and completion;
+Trash allows a fresh capture. Removing that URL removes the duplicate identity.
+HTTP(S) is required and embedded credentials are rejected.
+
+Task details derive clickable links from saved notes. Browser sessions use normal
+anchors. The macOS shell routes these clicks through a same-origin-only
+`POST /api/tasks/open-link`; the server verifies the exact URL still belongs to
+the non-trashed task before opening it in the system browser. This is necessary
+because the existing WKWebView does not handle new-window links. Backup exceptions
+after a successful local transaction are reported as warnings, including an
+invalid backup configuration. Native captures bound optional backup I/O to two
+seconds and report a local-save success plus a backup warning on timeout. Optional
+snapshot work runs in a short-lived child that is terminated at the deadline, so
+blocked cloud filesystem calls cannot leave the capture helper running. The local
+store and recovery copy are complete before that child starts. Timed-out cloud
+work may be incomplete.
+Ordinary app and CLI writes retain their existing backup behavior.
+
+See [the installation guide](extensions/lifeos-capture/README.md). Native protocol,
+data integrity, duplicate, failure, and rendered popup/task checks use isolated
+fixtures. A real Brave toolbar capture and duplicate retry are now verified after
+the user loaded the extension. The installed runtime also passes framed ping and
+capture tests in an isolated directory. Loading the new Application Support
+extension folder and verifying persistence across a full Brave restart remain
+manual steps; the browser-control policy still blocks the extension manager.
 
 ## 7. Persisted data model
 
@@ -1380,8 +1440,9 @@ Automated coverage does **not** yet include:
 - self-contained sidecar packaging, notarization, and updates.
 
 For changes touching those areas, add focused tests where practical and perform
-a manual browser/live integration check. A docs-only change still runs the
-standard check to catch repository drift.
+a manual browser/live integration check. Documentation-only edits need an
+accuracy, link, and diff review; the full standard check remains required before
+committing.
 
 ## 18. Known limitations and deliberate deferrals
 
@@ -1454,9 +1515,10 @@ records determine the next structural change.
 
 ## 20. Incoming-agent checklist
 
-Before doing work:
+Use the items relevant to the task; ordinary CLI operations and small edits do
+not require the full implementation checklist:
 
-- [ ] Read `AGENTS.md` and this file.
+- [ ] Read `AGENTS.md` and the relevant sections of this file.
 - [ ] Check Git status and preserve unrelated/user changes.
 - [ ] Confirm whether the Application Support store is still demo-derived or now contains private real data.
 - [ ] Do not run `demo:reset` when real data is present.
@@ -1472,7 +1534,8 @@ Before doing work:
 - [ ] Keep approvals and user questions visible to the user.
 - [ ] Keep voice disabled unless the exact permitted capability is verified.
 - [ ] Preserve V2 Editorial and the default useful Projects screen.
-- [ ] Run `npm run check` and proportionate live/browser checks.
+- [ ] Run checks for the changed behavior and proportionate live/browser checks;
+      run `npm run check` before committing.
 - [ ] Review and privacy-scan explicit staged paths before any commit or push.
 - [ ] Update this document if the state or architecture changes materially.
 
