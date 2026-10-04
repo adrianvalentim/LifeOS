@@ -136,3 +136,7 @@ This runs JavaScript syntax checks, the Node test suite, and a Tauri compile
 check. See [`AGENTS.md`](AGENTS.md) for repository invariants and
 [`PROJECT_STATE.md`](PROJECT_STATE.md) for the architecture, data semantics,
 maintenance workflows, and deliberately deferred work.
+
+## License
+
+Copyright 2026 Adrian Valentim. Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE): you may use, modify and share the code for any noncommercial purpose. Commercial use needs my written approval, so please get in touch first ([github.com/adrianvalentim](https://github.com/adrianvalentim)).
