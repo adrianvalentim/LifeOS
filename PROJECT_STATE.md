@@ -211,9 +211,12 @@ npm run desktop:build
 ```
 
 `scripts/desktop.mjs` places Cargo build products in
-`~/Library/Caches/LifeOS/cargo-target` on macOS. The repository is on an external
+`/Volumes/sisyphus/Library/Caches/LifeOS/cargo-target` on macOS, falling back to
+`~/Library/Caches/LifeOS/cargo-target` when sisyphus isn't mounted (`CARGO_TARGET_DIR`
+overrides both). The repository is on an external
 volume that produces `._*` AppleDouble metadata; keeping build-script permission
-files on APFS prevents Tauri from attempting to parse those sidecars. The built
+files on APFS prevents Tauri from attempting to parse those sidecars. Sisyphus is
+APFS and keeps the build off the small internal disk. The built
 app is ad-hoc signed and the current bundle is about 8.1 MB.
 
 Browser-only start:

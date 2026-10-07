@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,6 +50,9 @@ child.once('exit', (code, signal) => {
 });
 
 function defaultTargetDirectory() {
-  if (process.platform === 'darwin') return path.join(os.homedir(), 'Library', 'Caches', 'LifeOS', 'cargo-target');
-  return path.join(root, 'src-tauri', 'target');
+  if (process.platform !== 'darwin') return path.join(root, 'src-tauri', 'target');
+  // Build on the sisyphus data disk (APFS) rather than the small internal disk; fall back when it isn't mounted.
+  const sisyphusCaches = '/Volumes/sisyphus/Library/Caches';
+  const cacheRoot = existsSync(sisyphusCaches) ? sisyphusCaches : path.join(os.homedir(), 'Library', 'Caches');
+  return path.join(cacheRoot, 'LifeOS', 'cargo-target');
 }
