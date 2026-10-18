@@ -219,6 +219,7 @@ export function handleTaskKey(event) {
   const rows = currentRows();
   const position = rows.indexOf(id);
   const key = event.key;
+  const letter = key.length === 1 ? key.toLowerCase() : key; // ⇧J arrives as "J"
   const mod = event.metaKey || event.ctrlKey;
   const go = (delta) => {
     const next = rows[Math.max(0, Math.min(rows.length - 1, position + delta))];
@@ -232,8 +233,8 @@ export function handleTaskKey(event) {
     focusRow(next);
     if (store.ui.sheet?.kind === 'task') act.openTask(next);
   };
-  if ((key === 'ArrowDown' || key === 'j') && !event.altKey && !mod) { event.preventDefault(); go(1); return true; }
-  if ((key === 'ArrowUp' || key === 'k') && !event.altKey && !mod) { event.preventDefault(); go(-1); return true; }
+  if ((key === 'ArrowDown' || letter === 'j') && !event.altKey && !mod) { event.preventDefault(); go(1); return true; }
+  if ((key === 'ArrowUp' || letter === 'k') && !event.altKey && !mod) { event.preventDefault(); go(-1); return true; }
   if (key === 'Enter') { event.preventDefault(); act.openTask(id); return true; }
   if (key === ' ' || key === 'Spacebar') { event.preventDefault(); if (store.ui.selection.size > 1) act.bulkTasks(store.ui.selection, task.status === 'completed' ? 'reopen' : 'complete'); else act.toggleTask(id); return true; }
   if (key === 'x') { event.preventDefault(); toggleSelect(id); return true; }

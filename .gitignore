@@ -19,6 +19,9 @@ data/.*.tmp
 *.task-pending.json
 reading-covers/
 .playwright-cli/
+.cache/
+test-results/
+playwright-report/
 
 *.history.jsonl
 *.workspace.json

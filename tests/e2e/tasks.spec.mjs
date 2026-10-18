@@ -1,0 +1,134 @@
+import { expect, test } from './fixtures.mjs';
+import { rowIds, taskRow } from './helpers.mjs';
+
+// The demo store's open tasks, in the All tasks list's manual order.
+const ACT_THREE = 'demo-task-portia-act-three';
+const CONFRONTATION = 'demo-task-portia-confrontation';
+const OBSERVATORY = 'demo-task-vulcano-observatory';
+const REVIEW_CUT = 'demo-task-vulcano-review-cut';
+const ESSAY = 'demo-task-substack-opening';
+const PASSPORT = 'demo-task-inbox-passport';
+
+test.beforeEach(async ({ app, page }) => {
+  await app.goto('/tasks?list=all');
+  expect(await rowIds(page)).toEqual([ACT_THREE, CONFRONTATION, OBSERVATORY, REVIEW_CUT, ESSAY, PASSPORT]);
+});
+
+test('the task sheet edits the title and notes, saving as you go', async ({ app, page }) => {
+  await taskRow(page, ESSAY).locator('.task-title').click();
+  const sheet = page.getByRole('dialog', { name: 'Details' });
+  const title = sheet.getByRole('textbox', { name: 'Task title' });
+  await expect(title).toHaveValue('Rewrite the essay opening');
+
+  await title.fill('Rewrite the essay opening around the eclipse');
+  await title.press('Enter');
+  await expect.poll(async () => (await app.task('Rewrite the essay opening around the eclipse'))?.id).toBe(ESSAY);
+  await expect(taskRow(page, ESSAY).locator('.task-title')).toHaveText('Rewrite the essay opening around the eclipse');
+
+  // Notes save shortly after typing pauses, with no explicit save.
+  const notes = sheet.getByPlaceholder('Add notes, links, context…');
+  await notes.fill('Lead with the 1919 photograph.\nCut the second paragraph.');
+  await expect.poll(async () => (await app.task('Rewrite the essay opening around the eclipse')).notes)
+    .toBe('Lead with the 1919 photograph.\nCut the second paragraph.');
+  await expect(taskRow(page, ESSAY).locator('.meta-note')).toBeVisible();
+
+  // Esc leaves the field, a second Esc closes the sheet.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+
+  // A fresh window shows what was saved.
+  await page.reload();
+  await taskRow(page, ESSAY).locator('.task-title').click();
+  await expect(sheet.getByRole('textbox', { name: 'Task title' })).toHaveValue('Rewrite the essay opening around the eclipse');
+  await expect(notes).toHaveValue('Lead with the 1919 photograph.\nCut the second paragraph.');
+});
+
+test('Space completes the focused task and ⌘Z brings it back', async ({ app, page }) => {
+  await page.keyboard.press('j');
+  await expect(taskRow(page, ACT_THREE)).toBeFocused();
+
+  await page.keyboard.press('Space');
+  // A completed task leaves the open list, and completing a parent completes its subtasks.
+  await expect(taskRow(page, ACT_THREE)).toBeHidden();
+  await expect(taskRow(page, CONFRONTATION)).toBeHidden();
+  await expect.poll(async () => (await app.task('Finish the Act III draft')).status).toBe('completed');
+  expect((await app.task('Write the confrontation scene')).status).toBe('completed');
+
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(taskRow(page, ACT_THREE)).toBeVisible();
+  await expect.poll(async () => (await app.task('Finish the Act III draft')).status).toBe('open');
+  expect((await app.task('Write the confrontation scene')).status).toBe('open');
+  expect(await rowIds(page)).toEqual([ACT_THREE, CONFRONTATION, OBSERVATORY, REVIEW_CUT, ESSAY, PASSPORT]);
+
+  await page.keyboard.press('Shift+ControlOrMeta+z');
+  await expect(taskRow(page, ACT_THREE)).toBeHidden();
+  await expect.poll(async () => (await app.task('Finish the Act III draft')).status).toBe('completed');
+});
+
+test('J/K move through the list, X and ⇧J select, and the bulk bar changes them together', async ({ app, page }) => {
+  await page.keyboard.press('j');
+  await expect(taskRow(page, ACT_THREE)).toBeFocused();
+  await page.keyboard.press('j');
+  await expect(taskRow(page, CONFRONTATION)).toBeFocused();
+  await page.keyboard.press('j');
+  await expect(taskRow(page, OBSERVATORY)).toBeFocused();
+  await page.keyboard.press('k');
+  await expect(taskRow(page, CONFRONTATION)).toBeFocused();
+
+  await page.keyboard.press('x');
+  await expect(taskRow(page, CONFRONTATION)).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('Shift+J');
+  await expect(taskRow(page, OBSERVATORY)).toBeFocused();
+  await page.keyboard.press('Shift+J');
+  await expect(taskRow(page, REVIEW_CUT)).toBeFocused();
+  expect(await rowIds(page, '.main .task-row[aria-selected="true"]')).toEqual([CONFRONTATION, OBSERVATORY, REVIEW_CUT]);
+
+  const bar = page.getByRole('toolbar', { name: '3 selected tasks' });
+  await expect(bar).toContainText('3 selected');
+  await bar.getByRole('button', { name: 'Priority' }).click();
+  await page.getByRole('menuitemcheckbox', { name: /^None/ }).click();
+
+  await expect.poll(async () => {
+    const { tasks } = await app.store();
+    return Object.fromEntries(tasks.items.filter((task) => task.status === 'open').map((task) => [task.id, task.priority]));
+  }).toEqual({
+    [ACT_THREE]: 'high', [CONFRONTATION]: 'none', [OBSERVATORY]: 'none', [REVIEW_CUT]: 'none', [ESSAY]: 'medium', [PASSPORT]: 'low',
+  });
+  await expect(taskRow(page, OBSERVATORY)).toHaveClass(/prio-none/);
+
+  // The bulk change is one journal entry, so one ⌘Z restores all three.
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect.poll(async () => [
+    (await app.task('Write the confrontation scene')).priority,
+    (await app.task('Lock the observatory sequence')).priority,
+    (await app.task('Export the review cut')).priority,
+  ]).toEqual(['medium', 'high', 'low']);
+});
+
+test('dragging a task reorders the list and saves the new order', async ({ app, page }) => {
+  const handle = await taskRow(page, PASSPORT).locator('.task-title').boundingBox();
+  const target = await taskRow(page, ACT_THREE).boundingBox();
+  const x = handle.x + 8;
+  const y = handle.y + handle.height / 2;
+
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y - 12, { steps: 3 });
+  // Into the top half of the first row, without moving sideways (which would nest).
+  await page.mouse.move(x, target.y + 4, { steps: 12 });
+  // The drop indicator marks a computed insertion point (moves land on animation frames).
+  await expect(page.locator('.main .drop-line')).toBeAttached();
+  await page.mouse.up();
+
+  await expect.poll(() => rowIds(page)).toEqual([PASSPORT, ACT_THREE, CONFRONTATION, OBSERVATORY, REVIEW_CUT, ESSAY]);
+  await expect.poll(async () => {
+    const roots = (await app.store()).tasks.items.filter((task) => !task.parentTaskId && task.status === 'open');
+    return roots.sort((a, b) => a.sortOrder - b.sortOrder).map((task) => task.id);
+  }).toEqual([PASSPORT, ACT_THREE, OBSERVATORY, ESSAY]);
+  expect((await app.task('Renew passport')).parentTaskId).toBeNull();
+
+  // The saved order survives a reload.
+  await page.reload();
+  await expect.poll(() => rowIds(page)).toEqual([PASSPORT, ACT_THREE, CONFRONTATION, OBSERVATORY, REVIEW_CUT, ESSAY]);
+});
