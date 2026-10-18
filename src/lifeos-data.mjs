@@ -2508,7 +2508,7 @@ function buildRecommendations(projects) {
       confidence: round2(Math.min(0.95, 0.62 + score / 240)),
       rank: index + 1,
       action,
-      reasonShort: `${project.lastTouchedLabel} - ${dueText}`,
+      reasonShort: `${project.lastTouchedLabel} · ${dueText}`,
       reasonLong: `${project.name} is currently the highest-value intervention at this rank: ${project.lastTouchedLabel}, ${dueText}, and ${formatHours(project.weekHours)} logged against a ${formatHours(project.plannedHours)} weekly plan.`,
     };
   });
