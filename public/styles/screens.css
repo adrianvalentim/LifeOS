@@ -182,7 +182,7 @@ body.is-dragging-project .project-group.is-latent.is-empty { display: block; }
 .board-head { display: flex; align-items: center; gap: 8px; padding: 9px 0 10px; font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink); }
 .board-head::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--status, var(--ink-4)); }
 .board-head b { font-weight: 500; color: var(--ink-3); }
-.board-cards { display: flex; flex-direction: column; gap: 0; min-height: 40px; }
+.board-cards { position: relative; display: flex; flex-direction: column; gap: 0; min-height: 40px; }
 .idea-board .board-cards { gap: 10px; }
 .board-empty { padding: 18px 8px; font-family: var(--font-serif); font-style: italic; font-size: 14px; color: var(--ink-3); text-align: center; border-top: 1px dashed var(--rule-2); border-bottom: 1px dashed var(--rule-2); }
 .board-add { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 8px 0; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-3); }

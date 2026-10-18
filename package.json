@@ -10,8 +10,9 @@
     "desktop:build": "node scripts/desktop.mjs build",
     "lifeos": "node cli/lifeos.mjs",
     "demo:reset": "node scripts/create-demo-data.mjs --write-active",
-    "check": "node scripts/check-syntax.mjs && npm test && npm run desktop:check",
+    "check": "node scripts/check-syntax.mjs && npm test && npm run test:e2e && npm run desktop:check",
     "test": "node --test",
+    "test:e2e": "node scripts/e2e.mjs",
     "capture:install": "node scripts/install-capture-host.mjs",
     "mcp:tasks": "node scripts/tasks-mcp-server.mjs",
     "mcp:demo:check": "WRANGLER_WRITE_LOGS=false WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --config workers/tasks-demo/wrangler.jsonc",
@@ -28,6 +29,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.3.1",
+    "@playwright/test": "1.63.0",
     "@tauri-apps/cli": "^2.11.4",
     "esbuild": "0.28.2",
     "miniflare": "5.20261006.1-alpha",

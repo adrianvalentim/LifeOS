@@ -15,7 +15,7 @@
 .list-foot, .side-foot { margin-top: 14px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em; color: var(--ink-3); }
 
 /* ——— Task lists ———————————————————————————————————————————————————————— */
-.task-groups { display: flex; flex-direction: column; gap: 4px; }
+.task-groups { position: relative; display: flex; flex-direction: column; gap: 4px; }
 .task-group { display: flex; flex-direction: column; }
 .task-group + .task-group { margin-top: 22px; }
 .task-group-head {
@@ -107,7 +107,8 @@ body.is-dragging-task .task-group.is-latent .task-drop-hint { display: block; }
 .pill-due.is-empty { opacity: 0; width: 26px; justify-content: center; padding: 0; }
 .task-row:hover .pill-due.is-empty, .task-row:focus-within .pill-due.is-empty, .task-row.is-focused .pill-due.is-empty { opacity: 1; }
 .pill-duration { color: var(--ink-3); }
-.drop-line { position: absolute; height: 2px; background: var(--accent); pointer-events: none; z-index: 5; }
+.drop-line { position: absolute; right: 0; height: 2px; background: var(--accent); pointer-events: none; z-index: 5; }
+.drop-line.card-line { left: 0; right: 0; }
 .drop-line::before { content: ''; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--accent); background: var(--paper); }
 .drag-preview { position: fixed; z-index: 1000; pointer-events: none; margin: 0 !important; background: var(--raised) !important; box-shadow: var(--shadow-pop) !important; border-radius: var(--r-1) !important; opacity: 0.96; transform: rotate(-1deg) scale(1.02); transition: transform 0.12s; }
 body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select: none; }

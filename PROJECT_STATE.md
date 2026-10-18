@@ -210,6 +210,7 @@ Run `npm run dev` and use the printed loopback URL.
 | `tests/creation.test.mjs` | Idea migration, validation, conflicts, scheduling/Trash, cloud/offline atomicity and UI projection tests |
 | `tests/commands.test.mjs` | Command layer, journal/undo/redo, workspace, views, validation and MCP |
 | `tests/ui.test.mjs` and `tests/ui-harness.mjs` | Interface rendered in Node from derived state: scopes, grouping, drop targets, rows, sheets, screens, context, capture parsing, escaping, optimistic updates |
+| `tests/e2e/` and `scripts/e2e.mjs` | Browser end-to-end suite (Playwright, Chromium): one isolated demo store and server per test, the daily flows, and the runner that installs the pinned browser into the LifeOS cache |
 | `tests/claude-code-agent.test.mjs` | Claude bridge against a protocol-faithful fake CLI: streaming, approvals, decline, transcript reload |
 | `tests/lifeos-data.test.mjs` | Data derivation, range, write safety, project matching, timer, and timezone tests |
 | `tests/lifeos-storage.test.mjs` | Platform data paths, Google Drive root discovery, and versioned snapshot tests |
@@ -229,7 +230,9 @@ Requirements:
 - Node.js 22 or newer (required by Wrangler/workerd development tooling);
 - the Codex desktop app or Codex CLI installed and signed in with a ChatGPT
   account for the rail;
-- `npm install` once for the pinned Tauri CLI development dependency;
+- `npm install` once for the pinned development dependencies (Tauri CLI,
+  Playwright); the first `npm run check` also downloads the pinned Chromium for
+  the browser tests;
 - Rust 1.86 or newer to rebuild the desktop shell. Cargo is configured to select
   dependencies compatible with the installed compiler.
 
@@ -1569,9 +1572,10 @@ npm run check
 ```
 
 It syntax-checks every shipped JavaScript file (`scripts/check-syntax.mjs`),
-runs Node's built-in test suite, then compile-checks the pinned Tauri shell.
+runs Node's built-in test suite, runs the browser end-to-end suite
+(`npm run test:e2e`, below), then compile-checks the pinned Tauri shell.
 
-At this handoff, the suite contains 135 tests. Beyond the areas below, it
+At this handoff, the Node suite contains 136 tests. Beyond the areas below, it
 covers the command layer, journal, undo/redo, workspace and MCP
 (`tests/commands.test.mjs`), the interface rendered from derived state
 (`tests/ui.test.mjs`) and the Claude bridge (`tests/claude-code-agent.test.mjs`).
@@ -1645,11 +1649,67 @@ phone width, quick capture, keyboard navigation and selection, completion and
 undo/redo, Activity, the Codex rail with the signed-in account, the Claude
 sign-in state, and agent control of the open window from the CLI.
 
+### Browser end-to-end tests
+
+`npm run test:e2e` (`scripts/e2e.mjs`) drives the real interface in Chromium
+with Playwright Test (`@playwright/test`, pinned exactly). Eight tests in
+`tests/e2e/*.spec.mjs` cover the daily flows:
+
+- quick capture of "Call the lab tomorrow 3pm !high #film @Vulcano": token
+  highlighting, chips, and the saved project, priority, tag, date and time;
+- the task sheet: the title saved on Enter and notes autosaved after a pause,
+  both surviving a reload;
+- Space to complete (with the subtask cascade), ⌘Z to undo and ⇧⌘Z to redo;
+- J/K focus, X and ⇧J selection, a bulk-bar priority change and its one-step
+  undo;
+- ⌘K search opening a task sheet, a project page and a screen;
+- drag-reordering a root task, with the drop line drawn across the list on
+  the target row's edge, and the saved `sortOrder`;
+- a new idea opened with ⌘↵, typed Markdown, autosave, the sanitized preview
+  and a reload;
+- an agent-style CLI write (`lifeos run tasks.create` with `LIFEOS_ACTOR`)
+  appearing live, `lifeos run ui.navigate` steering the window, and the
+  Activity entry naming the agent and undoing the change.
+
+Each test copies `data/lifeos.demo.json` (read only) into a fresh temporary
+`LIFEOS_DATA_DIR`, starts `scripts/dev-server.mjs` on an OS-assigned loopback
+port and points its CLI calls at the same directory, so the personal store,
+the tracked fixture and a running app are never touched. The page may reach
+only its own server: other origins are blocked, book-cover requests answer 404
+(the server would otherwise fetch Open Library) and the Codex and Claude rail
+routes answer 503, so no agent process starts. Assertions read the saved store
+from disk as well as the page, and any uncaught page error fails the test.
+
+The pinned headless Chromium, the per-test stores and failure artifacts live
+outside Git in the LifeOS cache, as `ms-playwright/`, `e2e/stores/` and
+`e2e/results/`: `/Volumes/sisyphus/Library/Caches/LifeOS/` on the development
+Mac, `~/Library/Caches/LifeOS/` on a Mac without that disk, and the ignored
+`.cache/` in the repository elsewhere. `PLAYWRIGHT_BROWSERS_PATH` and
+`LIFEOS_E2E_DIR` override them. The first run downloads Chromium's headless
+shell (about 200 MB); later runs confirm it in under a second. Pass Playwright
+arguments after `--` (`npm run test:e2e -- -g palette`, `--repeat-each 5`);
+`--headed`, `--debug` and `--ui` also fetch the full Chromium. A failure keeps
+a trace (`npx playwright show-trace <path>`), a screenshot and the server log.
+
+The suite is part of `npm run check` because it is quick and has been steady:
+about 5 seconds in parallel (9 on one worker), with every run passing across
+repeated stress runs (each test ten times at ten parallel workers) and no
+retries configured. It needs nothing the Tauri check does not already assume:
+a one-time download into the same cache. If a sandbox cannot launch Chromium
+or write the cache, report the check as blocked at the browser step instead of
+skipping it.
+
+When an interaction changes, update or add a spec. Prefer roles, labels and
+`data-*` hooks to styling classes, poll the saved store with `expect.poll`
+instead of sleeping, and let fading overlays (palette, capture) leave before
+the next key press.
+
 Automated coverage does **not** yet include:
 
 - general browser-application HTTP route integration beyond the focused MCP
   and native-capture tests;
-- browser interaction end-to-end tests (rendering is tested in Node);
+- browser flows beyond the daily set above, WebKit/WKWebView (the desktop
+  shell's engine), phone-width layouts and visual appearance;
 - SSE reconnect/file-watcher behavior;
 - a live signed-in Codex or Claude conversation;
 - full app-server protocol compatibility;
@@ -1703,7 +1763,8 @@ committing.
   typographic fallbacks remain available offline.
 - The Codex and Claude Code protocols may drift with installed application
   updates; the Claude bridge relies on the CLI's stream-json control protocol.
-- Browser interaction lacks automated end-to-end coverage.
+- Browser end-to-end tests cover the daily flows in Chromium only; WKWebView,
+  phone width, visual appearance and the remaining screens are checked by hand.
 - The journal keeps the most recent changes (compacted around 400 entries); it
   is an undo and audit aid, not a backup.
 - `LifeOS Dev.app` is source-backed and Mac-only: it depends on the current
@@ -1728,8 +1789,8 @@ committing.
    the needed semantics; keep external calendars downstream of LifeOS.
 6. Sign Claude Code in (`claude auth login`) and verify a live rail
    conversation, including an approval round-trip.
-7. Add goals, import/export with a validation report, and browser end-to-end
-   tests for the main flows.
+7. Add goals and import/export with a validation report, extending the browser
+   end-to-end suite to each new flow.
 8. Replace the source-backed shell with a self-contained sidecar and add
    notarized distribution only after those workflows stabilize.
 

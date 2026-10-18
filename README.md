@@ -187,7 +187,9 @@ distribution. Windows and Linux packaging are not yet implemented.
 npm run check
 ```
 
-This runs JavaScript syntax checks, the Node test suite, and a Tauri compile
-check. See [`AGENTS.md`](AGENTS.md) for repository invariants and
+This runs JavaScript syntax checks, the Node test suite, browser end-to-end
+tests (Playwright with a pinned Chromium, downloaded on first use; run them
+alone with `npm run test:e2e`), and a Tauri compile check. See
+[`AGENTS.md`](AGENTS.md) for repository invariants and
 [`PROJECT_STATE.md`](PROJECT_STATE.md) for the architecture, data semantics,
 maintenance workflows, and deliberately deferred work.
