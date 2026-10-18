@@ -139,6 +139,13 @@ function syncFormState(from, to) {
   }
 }
 
+// A set figure: numerals full size, unit letters small ("314h 36m").
+export function figure(value) {
+  const text = String(value ?? '');
+  if (!/\d/.test(text) || !/[a-z%]/i.test(text)) return text;
+  return html`${text.split(/(\d[\d.,]*)/).filter(Boolean).map((part) => (/^\d/.test(part) ? part : html`<small>${part}</small>`))}`;
+}
+
 export function closestData(element, name) {
   const holder = element?.closest?.(`[data-${name}]`);
   return holder ? holder.getAttribute(`data-${name}`) : null;

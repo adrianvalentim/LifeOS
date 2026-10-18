@@ -79,7 +79,7 @@ export function projectMenu(id, anchor) {
       })), width: 240 },
       { label: 'Start focus timer', icon: 'play', run: () => act.startTimer({ projectId: id, description: project.nextAction || `Focused work on ${project.name}` }) },
       { label: 'New task here', icon: 'plus', run: () => import('./ui/capture.js').then((module) => module.openCapture({ kind: 'task', projectId: id })) },
-      { label: pinned ? 'Unpin from sidebar' : 'Pin to sidebar', icon: 'pin', run: () => act.togglePin('project', id) },
+      { label: pinned ? 'Unpin from the masthead' : 'Pin to the masthead', icon: 'pin', run: () => act.togglePin('project', id) },
       { label: `Ask ${agentName()} about this`, icon: 'sparkle', run: () => attachContext('project', id) },
       { type: 'separator' },
       { label: 'Delete project…', icon: 'trash', danger: true, run: () => act.deleteProject(id) },

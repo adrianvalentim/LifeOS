@@ -1,6 +1,6 @@
 import * as act from '../actions.js';
 import { cx, html } from '../dom.js';
-import { ACTIVITY_LABELS, addDays, daysBetween, elapsed, formatClock, formatDate, formatHours, formatLongDate, formatMinutes, formatTime, plural } from '../format.js';
+import { ACTIVITY_LABELS, addDays, daysBetween, elapsed, formatClock, formatDate, formatHours, formatMinutes, formatTime, plural } from '../format.js';
 import { icon } from '../icons.js';
 import { entryMenu, projectMenu } from '../menus.js';
 import { lookup, render, store } from '../store.js';
@@ -23,26 +23,19 @@ function visibleRecommendation() {
 export function render_() {
   const state = store.state;
   const today = state.meta.today;
-  const planMinutes = Number(state.settings.defaultDailyPlanHours || 8) * 60;
-  const logged = state.summary.todayMinutes;
   const scope = taskScope('today', state);
   const groups = groupTasks(scope.items, { groupBy: 'due', sortBy: 'due' }, state);
   return html`<div class="screen today-screen scroll-y">
-    <header class="today-head">
-      <div>
-        <p class="eyebrow">${state.meta.appName} · Week ${state.meta.weekNumber} · Day ${state.meta.issueNumber}</p>
-        <h1 class="display">${formatLongDate(today)}</h1>
-        <p class="today-sub">${greeting()} ${logged ? html`You’ve logged <b>${formatMinutes(logged)}</b> of a ${formatHours(planMinutes / 60)} day.` : html`Nothing logged yet today.`} ${scope.items.length ? html`<b>${plural(scope.items.length, 'task')}</b> due.` : ''}</p>
-      </div>
-      ${renderDayRing(logged, planMinutes)}
-    </header>
+    <section class="front">
+      ${renderLede()}
+      ${renderTally()}
+    </section>
     <div class="today-grid">
       <div class="today-main">
-        ${renderFocusCard()}
         <section class="card">
-          <header class="card-head"><h2>Today’s tasks</h2><a class="link" href="/tasks?list=today">Open list ${icon('arrow-right', { size: 13 })}</a></header>
+          <header class="card-head"><h2>Today’s tasks${scope.items.length ? html`<small>${scope.items.length}</small>` : ''}</h2><a class="link" href="/tasks?list=today">Open list ${icon('arrow-right', { size: 12 })}</a></header>
           ${renderQuickAdd({ id: 'today-add', placeholder: 'Add a task for today', defaults: { dueDate: today } })}
-          ${scope.items.length ? renderTaskGroups(groups, { ...scope, id: 'today-home' }, { showProject: true }) : html`<p class="card-empty">${icon('check', { size: 16 })} Nothing due today.${scope.completed.length ? ` ${plural(scope.completed.length, 'task')} already done.` : ''}</p>`}
+          ${scope.items.length ? renderTaskGroups(groups, { ...scope, id: 'today-home' }, { showProject: true }) : html`<p class="card-empty">Nothing due today.${scope.completed.length ? ` ${plural(scope.completed.length, 'task')} already crossed off.` : ''}</p>`}
         </section>
         ${renderDayLog()}
       </div>
@@ -59,66 +52,92 @@ export function render_() {
 
 function greeting() {
   const hour = new Date().getHours();
-  return hour < 5 ? 'Working late.' : hour < 12 ? 'Good morning.' : hour < 18 ? 'Good afternoon.' : 'Good evening.';
+  return hour < 5 ? 'Working late' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 }
 
-function renderDayRing(logged, plan) {
-  const ratio = Math.min(1, plan ? logged / plan : 0);
-  const radius = 34;
-  const circumference = 2 * Math.PI * radius;
-  const entries = store.state.todayEntries;
+// The day so far, as a figure against the plan.
+function renderTally() {
+  const state = store.state;
+  const planMinutes = Number(state.settings.defaultDailyPlanHours || 8) * 60;
+  const logged = state.summary.todayMinutes;
+  const entries = state.todayEntries;
   const deep = entries.filter((entry) => DEEP.has(entry.activityType)).reduce((sum, entry) => sum + entry.durationMinutes, 0);
-  return html`<div class="day-ring" title="${formatMinutes(logged)} of ${formatMinutes(plan)} planned">
-    <svg viewBox="0 0 84 84" width="84" height="84" aria-hidden="true">
-      <circle cx="42" cy="42" r="${radius}" class="ring-track"></circle>
-      <circle cx="42" cy="42" r="${radius}" class="ring-fill" stroke-dasharray="${circumference}" stroke-dashoffset="${circumference * (1 - ratio)}"></circle>
-    </svg>
-    <div class="ring-label"><b>${Math.round(ratio * 100)}%</b><small>${deep ? `${formatMinutes(deep)} deep` : 'of plan'}</small></div>
-  </div>`;
+  const byType = {};
+  for (const entry of entries) byType[entry.activityType] = (byType[entry.activityType] || 0) + entry.durationMinutes;
+  const scale = Math.max(planMinutes, logged) || 1;
+  const hours = Math.floor(logged / 60);
+  const minutes = logged % 60;
+  return html`<aside class="tally" title="${formatMinutes(logged)} of ${formatMinutes(planMinutes)} planned">
+    <p class="eyebrow">${greeting()} · the day so far</p>
+    <p class="tally-figure">${hours}<small>h</small> ${String(minutes).padStart(2, '0')}<small>m</small></p>
+    <p class="tally-plan">of ${formatHours(planMinutes / 60)} planned${deep ? html` · <b>${formatMinutes(deep)}</b> deep` : ''}</p>
+    <div class="tally-bar" role="img" aria-label="${Math.round((logged / (planMinutes || 1)) * 100)}% of plan">
+      ${Object.entries(byType).map(([type, value]) => html`<i class="type-${type}" style="width:${(value / scale) * 100}%" title="${ACTIVITY_LABELS[type]} · ${formatMinutes(value)}"></i>`)}
+      <span class="tally-goal" style="left:${(planMinutes / scale) * 100}%"></span>
+    </div>
+    <button type="button" class="button small" data-action="today-log">${icon('plus', { size: 13 })}Log time <kbd>L</kbd></button>
+  </aside>`;
 }
 
-function renderFocusCard() {
+// The lede: what to do now, set as the page's headline.
+function emphasise(text, name) {
+  const index = name ? text.indexOf(name) : -1;
+  if (index < 0) return text;
+  return html`${text.slice(0, index)}<em>${name}</em>${text.slice(index + name.length)}`;
+}
+
+function renderLede() {
   const state = store.state;
   const session = state.activeSession;
   if (session) {
     const project = session.projectId ? lookup.project(session.projectId) : null;
     const color = project ? state.domains[project.domain]?.color : 'var(--accent)';
-    return html`<section class="card focus-card is-running" style="--focus:${color}">
-      <div class="focus-top"><span class="eyebrow live"><i></i>Focus session</span><span class="focus-since">since ${formatClock(session.startedAt)}</span></div>
-      <div class="focus-clock" data-elapsed-since="${session.startedAt}">${elapsed(session.startedAt)}</div>
+    return html`<section class="lede is-running" style="--focus:${color}">
+      <p class="lede-kicker"><span class="live"><i></i>Focus session</span><span>since ${formatClock(session.startedAt)}</span></p>
+      <div class="lede-clock" data-elapsed-since="${session.startedAt}">${elapsed(session.startedAt)}</div>
       <div class="focus-what">
-        <button type="button" class="focus-project" data-action="today-timer-project">${project ? html`<i class="dot" style="--dot:${color}"></i>${project.name}` : 'General work'} ${icon('chevron-down', { size: 13 })}</button>
-        <input class="focus-desc" data-timer-description value="${session.description}" aria-label="What you are working on" maxlength="500">
+        <button type="button" class="focus-project" data-action="today-timer-project">${project ? html`<i class="dot" style="--dot:${color}"></i>${project.name}` : 'General work'} ${icon('chevron-down', { size: 12 })}</button>
+        <input class="focus-desc" data-timer-description value="${session.description}" placeholder="What you are working on" aria-label="What you are working on" maxlength="500">
         <button type="button" class="chip" data-action="today-timer-type">${ACTIVITY_LABELS[session.activityType]}</button>
       </div>
-      <div class="focus-actions">
-        <button type="button" class="button is-primary" data-action="timer-stop">${icon('stop', { size: 14 })}Stop and log</button>
+      <div class="lede-actions">
+        <button type="button" class="button is-primary" data-action="timer-stop">${icon('stop', { size: 13 })}Stop and log</button>
         <button type="button" class="button ghost" data-action="timer-discard">Discard</button>
       </div>
     </section>`;
   }
   const rec = visibleRecommendation();
   if (!rec) {
-    return html`<section class="card focus-card">
-      <div class="focus-top"><span class="eyebrow">What now</span></div>
-      <p class="focus-quiet">${store.ui.recDismissed ? 'Suggestions hidden for now.' : 'No active project needs attention.'}</p>
-      <div class="focus-actions">
-        <button type="button" class="button is-primary" data-action="today-start-blank">${icon('play', { size: 14 })}Start a focus timer</button>
+    return html`<section class="lede is-quiet">
+      <p class="lede-kicker"><span>What now</span></p>
+      <h1 class="lede-head">${store.ui.recDismissed ? html`Suggestions are resting. <em>Choose your own way in.</em>` : html`Nothing is pressing. <em>Choose where to begin.</em>`}</h1>
+      <div class="lede-actions">
+        <button type="button" class="button is-primary" data-action="today-start-blank">${icon('play', { size: 13 })}Start a focus timer</button>
         ${store.ui.recDismissed ? html`<button type="button" class="button ghost" data-action="today-rec-restore">Show suggestions</button>` : ''}
       </div>
     </section>`;
   }
   const project = lookup.project(rec.projectId);
-  const color = state.domains[rec.domain]?.color;
+  const domain = state.domains[rec.domain];
   const count = state.recommendations.length;
-  return html`<section class="card focus-card" style="--focus:${color}">
-    <div class="focus-top"><span class="eyebrow">What now · ${(store.ui.recIndex || 0) % count + 1} of ${count}</span><span class="focus-confidence" title="How strongly the rules favor this">${Math.round(rec.confidence * 100)}% fit</span></div>
-    <h2 class="focus-title"><a href="/projects/${encodeURIComponent(rec.projectId)}">${rec.projectName}</a></h2>
-    <p class="focus-action">${rec.action}</p>
-    <p class="focus-why">${icon('info', { size: 13 })}${rec.reasonShort}${project?.taskSummary?.open ? ` · ${plural(project.taskSummary.open, 'open task')}` : ''}</p>
-    <div class="focus-actions">
-      <button type="button" class="button is-primary" data-action="today-rec-start">${icon('play', { size: 14 })}Start ${formatMinutes(rec.durationMinutes)} focus</button>
-      <button type="button" class="button ghost" data-action="today-rec-next">${icon('refresh', { size: 14 })}Another</button>
+  const index = (store.ui.recIndex || 0) % count;
+  return html`<section class="lede" style="--focus:${domain?.color || 'var(--accent)'}" data-key="lede-${rec.projectId}">
+    <p class="lede-kicker">
+      <a class="lede-project" href="/projects/${encodeURIComponent(rec.projectId)}"><i></i>${rec.projectName}</a>
+      ${domain ? html`<span>${domain.label}</span>` : ''}
+      <span class="grow"></span>
+      <span title="Ranked by deadline, health and your weekly plan">What now · ${index + 1} of ${count}</span>
+    </p>
+    <h1 class="lede-head">${emphasise(rec.action, rec.projectName)}</h1>
+    <p class="lede-why">
+      ${project ? html`<span class="${cx('health-badge', `health-${project.health}`)}">${project.health}</span>` : ''}
+      <span>${rec.reasonShort}</span>
+      ${project?.taskSummary?.open ? html`<span>${plural(project.taskSummary.open, 'open task')}</span>` : ''}
+      <span title="How strongly the rules favor this">${Math.round(rec.confidence * 100)}% fit</span>
+    </p>
+    <div class="lede-actions">
+      <button type="button" class="button is-primary" data-action="today-rec-start">${icon('play', { size: 13 })}Start ${formatMinutes(rec.durationMinutes)} focus</button>
+      <button type="button" class="button ghost" data-action="today-rec-next">${icon('refresh', { size: 13 })}Another</button>
       <button type="button" class="button ghost" data-action="today-rec-dismiss">Not now</button>
     </div>
   </section>`;
@@ -127,16 +146,11 @@ function renderFocusCard() {
 function renderDayLog() {
   const state = store.state;
   const entries = [...state.todayEntries].sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+  if (!entries.length) return '';
   const total = entries.reduce((sum, entry) => sum + entry.durationMinutes, 0) || 1;
-  const byType = {};
-  for (const entry of entries) byType[entry.activityType] = (byType[entry.activityType] || 0) + entry.durationMinutes;
   return html`<section class="card">
-    <header class="card-head"><h2>The day so far</h2><button type="button" class="button ghost small" data-action="today-log">${icon('plus', { size: 13 })}Log time <kbd>L</kbd></button></header>
-    ${entries.length ? html`
-      <div class="type-bar" role="img" aria-label="Time by activity">${Object.entries(byType).map(([type, minutes]) => html`<i class="type-${type}" style="flex:${minutes}" title="${ACTIVITY_LABELS[type]} · ${formatMinutes(minutes)}"></i>`)}</div>
-      <div class="type-legend">${Object.entries(byType).map(([type, minutes]) => html`<span><i class="type-${type}"></i>${ACTIVITY_LABELS[type]} ${formatMinutes(minutes)}</span>`)}</div>
-      <ol class="entries">${entries.map((entry) => renderEntry(entry, total))}</ol>`
-      : html`<p class="card-empty">${icon('clock', { size: 16 })} No time logged yet — start a focus timer, or log what you’ve already done.</p>`}
+    <header class="card-head"><h2>The day’s ledger<small>${formatMinutes(total)}</small></h2><button type="button" class="button ghost small" data-action="today-log">${icon('plus', { size: 13 })}Log time</button></header>
+    <ol class="entries">${entries.map((entry) => renderEntry(entry, total))}</ol>
   </section>`;
 }
 

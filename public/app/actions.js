@@ -342,7 +342,7 @@ export async function deleteIdea(id) {
 // ——— Workspace ——————————————————————————————————————————————————————
 export function togglePin(kind, id) {
   const pinned = store.state.workspace.pinned.some((pin) => pin.kind === kind && pin.id === id);
-  return run('pins.set', { kind, id, pinned: !pinned }, { quiet: true }).then(() => toast(pinned ? 'Unpinned from the sidebar' : 'Pinned to the sidebar', { tone: 'quiet' })).catch(() => undefined);
+  return run('pins.set', { kind, id, pinned: !pinned }, { quiet: true }).then(() => toast(pinned ? 'Unpinned from the masthead' : 'Pinned to the masthead', { tone: 'quiet' })).catch(() => undefined);
 }
 
 export function setTheme(mode) {

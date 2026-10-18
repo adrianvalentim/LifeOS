@@ -14,7 +14,7 @@ import { toast } from '../ui/toast.js';
 const PAGES = [
   { id: 'general', label: 'General', icon: 'settings' },
   { id: 'appearance', label: 'Appearance', icon: 'sun' },
-  { id: 'sidebar', label: 'Sidebar', icon: 'sidebar' },
+  { id: 'sidebar', label: 'Masthead', icon: 'sidebar' },
   { id: 'planning', label: 'Planning', icon: 'target' },
   { id: 'views', label: 'Saved views', icon: 'list' },
   { id: 'agents', label: 'Agents & automation', icon: 'sparkle' },
@@ -64,7 +64,7 @@ function renderGeneral() {
   const workspace = state.workspace;
   const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [state.meta.timezone];
   return html`
-    ${group('Identity', 'The name and line shown in the sidebar masthead.', html`
+    ${group('Identity', 'The name printed in the masthead, and the line under it.', html`
       ${row('Name', null, html`<input class="input" data-setting="appName" value="${state.meta.appName}" maxlength="40" aria-label="App name">`)}
       ${row('Tagline', null, html`<input class="input" data-setting="tagline" value="${state.meta.tagline}" maxlength="80" aria-label="Tagline">`)}
     `)}
@@ -93,10 +93,10 @@ function renderAppearance() {
     `)}`;
 }
 
-// ——— Sidebar ——————————————————————————————————————————————————————————
+// ——— Masthead ———————————————————————————————————————————————————————————
 function renderSidebar() {
   const nav = store.state.workspace.nav;
-  return html`${group('Sections', 'Reorder or hide sidebar sections. Hidden sections stay reachable from ⌘K and links.', html`
+  return html`${group('Sections', 'Reorder or hide the sections in the masthead. Hidden sections stay reachable from ⌘K and links.', html`
     <ol class="nav-editor">${nav.map((item, index) => html`<li data-key="nav-${item.id}" class="${item.hidden ? 'is-hidden' : ''}">
       <span class="list-icon">${icon(item.id, { size: 15 })}</span><span class="grow">${SECTION_LABELS[item.id]}</span>
       <button type="button" class="icon-button tiny" data-action="settings-nav-move" data-id="${item.id}" data-delta="-1" ${index === 0 ? 'disabled' : ''} aria-label="Move ${SECTION_LABELS[item.id]} up">${icon('chevron-up', { size: 14 })}</button>
@@ -194,7 +194,7 @@ function renderAgents() {
       ${snippet('HTTP (loopback only)', `curl -s -X POST http://127.0.0.1:${location.port || 80}/api/run/tasks.list \\\n  -H 'content-type: application/json' -H 'x-lifeos-actor: my-script' -d '{"list":"today"}'`)}
     `)}
     ${group('Agents can drive this window', 'ui.* commands navigate, open records, show toasts and start capture here — the window reports what it shows so agents can ask with ui.view.', html`
-      <p class="muted small">Theme, sidebar, saved views and pins live in the workspace file, so an agent can rearrange LifeOS around a new need (“add a Writing view for #script tasks due this week and pin it”). ${presence.views.length} views and ${presence.pinned.length} pins configured.</p>
+      <p class="muted small">Theme, sections, saved views and pins live in the workspace file, so an agent can rearrange LifeOS around a new need (“add a Writing view for #script tasks due this week and pin it”). ${presence.views.length} views and ${presence.pinned.length} pins configured.</p>
     `)}
     ${group(`Command reference${commands.length ? ` · ${commands.length}` : ''}`, null, html`
       <label class="filter-field wide">${icon('search', { size: 14 })}<input type="search" placeholder="Search commands" value="${local.commandFilter}" data-command-filter aria-label="Search commands"></label>

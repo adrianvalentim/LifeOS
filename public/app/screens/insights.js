@@ -1,5 +1,5 @@
 import { fetchState } from '../api.js';
-import { cx, html } from '../dom.js';
+import { cx, html, figure } from '../dom.js';
 import { ACTIVITY_LABELS, formatDate, formatHours, formatMinutes, normalize, plural, weekday } from '../format.js';
 import { icon } from '../icons.js';
 import { entryMenu } from '../menus.js';
@@ -42,7 +42,7 @@ export function render_() {
 }
 
 function kpi(label, value, sub, ratio, tone = '') {
-  return html`<div class="kpi ${tone}"><span class="kpi-label">${label}</span><span class="kpi-value">${value}</span><span class="kpi-sub">${sub}</span>${ratio != null ? html`<span class="kpi-meter"><i style="width:${Math.max(0, Math.min(1, ratio)) * 100}%"></i></span>` : ''}</div>`;
+  return html`<div class="kpi ${tone}"><span class="kpi-label">${label}</span><span class="kpi-value">${figure(value)}</span><span class="kpi-sub">${sub}</span>${ratio != null ? html`<span class="kpi-meter"><i style="width:${Math.max(0, Math.min(1, ratio)) * 100}%"></i></span>` : ''}</div>`;
 }
 
 function renderDomains() {

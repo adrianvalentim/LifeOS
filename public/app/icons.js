@@ -1,6 +1,6 @@
 import { raw } from './dom.js';
 
-// One line-icon family (24px grid, 1.6 stroke) so every surface speaks the
+// One line-icon family (24px grid, a fine 1.4 ink stroke) so every surface speaks the
 // same visual language. Paths are original, kept deliberately simple.
 const P = {
   today: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>',
@@ -105,7 +105,7 @@ const P = {
 
 export function icon(name, { size = 16, className = '', label = null } = {}) {
   const body = P[name] || P.circle;
-  return raw(`<svg class="icon ${className}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${label ? `role="img" aria-label="${label}"` : 'aria-hidden="true"'}>${body}</svg>`);
+  return raw(`<svg class="icon ${className}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" ${label ? `role="img" aria-label="${label}"` : 'aria-hidden="true"'}>${body}</svg>`);
 }
 
 export const ICON_NAMES = Object.keys(P);

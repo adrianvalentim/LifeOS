@@ -92,7 +92,7 @@ function quickAddPlaceholder(scope) {
 
 function renderEmpty(scope) {
   return html`<div class="list-empty">
-    <div class="empty-mark">${icon(scope.lifecycle === 'trash' ? 'trash' : 'check', { size: 22 })}</div>
+    <div class="empty-mark fleuron" aria-hidden="true">❦</div>
     <h3>${store.ui.filter ? 'No tasks match this filter' : scope.empty || 'Nothing here'}</h3>
     ${scope.lifecycle === 'active' && !store.ui.filter ? html`<p>Press <kbd>N</kbd> anywhere to capture, or type above.</p>` : ''}
   </div>`;
@@ -160,7 +160,7 @@ export const actions = {
         { label: store.state.workspace.density === 'compact' ? 'Comfortable rows' : 'Compact rows', icon: 'sliders', run: () => run('workspace.update', { density: store.state.workspace.density === 'compact' ? 'comfortable' : 'compact' }, { quiet: true }) },
         { label: 'Expand all subtasks', icon: 'chevron-down', run: () => setPref('tasks.collapsed', {}) },
         ...(scope.lifecycle === 'active' ? [{ label: 'Save as view…', icon: 'list', run: () => editView(null, filterFromScope(scope)) }] : []),
-        ...(scope.project || scope.view || scope.id.startsWith('tag:') ? [{ label: isPinned(scope) ? 'Unpin from sidebar' : 'Pin to sidebar', icon: 'pin', run: () => togglePin(scope.project ? 'project' : scope.view ? 'view' : 'tag', scope.project?.id || scope.view?.id || scope.id.slice(4)) }] : []),
+        ...(scope.project || scope.view || scope.id.startsWith('tag:') ? [{ label: isPinned(scope) ? 'Unpin from the masthead' : 'Pin to the masthead', icon: 'pin', run: () => togglePin(scope.project ? 'project' : scope.view ? 'view' : 'tag', scope.project?.id || scope.view?.id || scope.id.slice(4)) }] : []),
       ],
     });
   },
@@ -196,7 +196,7 @@ export async function editView(view = null, preset = {}) {
   const filter = { ...(view?.filter || {}), ...preset };
   const values = await formDialog({
     title: view ? `Edit “${view.name}”` : 'New saved view',
-    description: view ? '' : 'A saved view is a live, filtered task list in your sidebar. Agents can create them too.',
+    description: view ? '' : 'A saved view is a live, filtered task list you can pin to the masthead. Agents can create them too.',
     submitLabel: view ? 'Save view' : 'Create view',
     fields: [
       { name: 'name', label: 'Name', value: view?.name || '', required: true, autofocus: true, placeholder: 'Writing this week' },

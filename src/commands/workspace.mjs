@@ -33,8 +33,8 @@ defineCommand({
   name: 'workspace.update',
   title: 'Arrange workspace',
   kind: 'write',
-  description: 'Change how the app is arranged: startScreen, theme ({mode: system|light|dark, accent: #RRGGBB|null}), density (comfortable|compact), or the sidebar section order and visibility (nav: [{id, hidden}]).',
-  keywords: ['layout', 'theme', 'dark mode', 'sidebar', 'navigation', 'accent'],
+  description: 'Change how the app is arranged: startScreen, theme ({mode: system|light|dark, accent: #RRGGBB|null}), density (comfortable|compact), or the order and visibility of the sections in the masthead (nav: [{id, hidden}]).',
+  keywords: ['layout', 'theme', 'dark mode', 'night edition', 'masthead', 'sidebar', 'navigation', 'accent'],
   input: z.object({
     startScreen: section.optional(),
     theme: z.object({ mode: z.enum(['system', 'light', 'dark']).optional(), accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional() }).optional(),
@@ -43,7 +43,7 @@ defineCommand({
   }),
   label: (_result, input) => {
     if (input.theme?.mode && Object.keys(input).length === 1) return `Switched to ${input.theme.mode} theme`;
-    if (input.nav) return 'Rearranged the sidebar';
+    if (input.nav) return 'Rearranged the sections';
     return 'Updated the workspace';
   },
   run: async (input, ctx) => {
@@ -62,7 +62,7 @@ defineCommand({
   name: 'views.create',
   title: 'Save task view',
   kind: 'write',
-  description: 'Save a custom task list (smart list) that appears in the Tasks sidebar and command palette, filtered by projects, tags, priorities, due window, status and text, with its own grouping and sort.',
+  description: 'Save a custom task list (smart list) that appears in the Tasks list pane and command palette, filtered by projects, tags, priorities, due window, status and text, with its own grouping and sort.',
   keywords: ['smart list', 'filter', 'saved search', 'perspective'],
   input: z.object({ name: z.string().trim().min(1).max(60), ...viewFields }),
   label: (result) => `Saved the view ${quote(result.name)}`,
@@ -120,9 +120,9 @@ defineCommand({
 
 defineCommand({
   name: 'pins.set',
-  title: 'Pin to sidebar',
+  title: 'Pin to the masthead',
   kind: 'write',
-  description: 'Pin (or unpin) a project, saved view or tag to the sidebar for one-click access.',
+  description: 'Pin (or unpin) a project, saved view or tag to the masthead (beside the sections) for one-click access.',
   keywords: ['favorite', 'shortcut'],
   input: z.object({ kind: z.enum(['project', 'view', 'tag']), id: z.string().min(1).max(200), pinned: z.boolean().default(true) }),
   label: (_result, input) => `${input.pinned ? 'Pinned' : 'Unpinned'} a ${input.kind}`,

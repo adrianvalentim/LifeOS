@@ -50,7 +50,7 @@ sidecar packaging, notarized distribution, and updates remain deferred.
 
 | Area | State | What is true now |
 | --- | --- | --- |
-| Interface | Rebuilt (V2 Editorial, 2026-10) | Vanilla ES-module app (`public/app/`) with keyed DOM morphing, light/dark/system themes, accent and density, configurable start screen and sidebar, ⌘K palette, natural-language quick capture, one menu system, keyboard map, Undo toasts, and responsive layouts down to phone width |
+| Interface | Rebuilt (V2 Editorial in two inks, 2026-10) | Vanilla ES-module app (`public/app/`) with keyed DOM morphing, day/night/system editions, accent and density, a masthead with sections, pins and a live day strip, configurable start screen, ⌘K palette, natural-language quick capture, one menu system, keyboard map, Undo toasts, and responsive layouts down to phone width |
 | Command layer and MCP | Implemented | 81 commands with zod schemas; `POST /api/run/<name>`, `lifeos run`, `createLifeOS()` SDK and `scripts/lifeos-mcp.mjs` expose the same surface; `ui.*` commands drive the open window |
 | Activity and undo | Implemented | Journal of exact record patches per change (`lifeos.json.history.jsonl`) with actor/source, conflict-checked undo/redo in the app (⌘Z), CLI and MCP |
 | Project dashboard | Implemented | Status-grouped list and three-column board with drag, project pages with in-place editing (name, subtitle, next action, note, domain, categories, priority, deadline, weekly plan, progress), creation, pins, focus timer, sessions and week history |
@@ -61,7 +61,7 @@ sidecar packaging, notarized distribution, and updates remain deferred.
 | Almanac | Implemented | Year in numbers, challenge set/edit/clear, streaks, searchable milestone timeline with add/edit/delete |
 | Reading | Implemented | Cover-led shelf, sortable library, book sheet with tags/date read/edit, Open Library search and manual add |
 | Creation | Implemented | Five-lane board and list, Markdown editor with split preview and auto-save, dated Shorts linked to tasks |
-| Settings | Implemented | General, appearance, sidebar, planning (daily plan, deep target, health thresholds, domains, weekly plan, categories), saved views, agents & MCP setup, data & backups, keyboard |
+| Settings | Implemented | General, appearance, masthead, planning (daily plan, deep target, health thresholds, domains, weekly plan, categories), saved views, agents & MCP setup, data & backups, keyboard |
 | Data source | Implemented, demo-derived | macOS Application Support contains the active copy; `data/lifeos.demo.json` remains deterministic |
 | Persistence | Implemented | Validation, cross-process lock, atomic replacement, one local `.bak`, optional Google Drive snapshots, workspace sidecar and change journal beside the store |
 | Agent rail | Implemented | Codex and Claude Code side by side: conversations, streaming, tool steps, stop, approvals and questions routed to the person, attached record context; Activity tab |
@@ -186,7 +186,7 @@ Run `npm run dev` and use the printed loopback URL.
 | `src/commands/` | The command registry: one zod-validated command per capability (core, tasks, projects, time, reading, creation, planning, workspace, history, ui) |
 | `src/lifeos-history.mjs` | Change journal: patch diffing, append/coalesce/compaction, conflict-checked revert |
 | `src/lifeos-manage.mjs` | Project, time-entry, domain, category, settings, milestone, challenge and book-detail management operations |
-| `src/lifeos-workspace.mjs` | Workspace sidecar: start screen, theme, density, sidebar, saved views, pins |
+| `src/lifeos-workspace.mjs` | Workspace sidecar: start screen, theme, density, section order, saved views, pins |
 | `src/sdk.mjs` | `createLifeOS()` — the command layer as a JavaScript API (in-process or against the running app) |
 | `scripts/lifeos-mcp.mjs` and `.mcp.json` | Full stdio MCP server (every command as a tool) and its project registration |
 | `src/codex-app-server.mjs` | JSON-RPC bridge to the installed Codex executable |
@@ -200,12 +200,12 @@ Run `npm run dev` and use the printed loopback URL.
 | `scripts/desktop.mjs` | Cross-platform Tauri command wrapper and APFS cache target selection for macOS builds |
 | `scripts/create-demo-data.mjs` | Deterministically generates demo data; can intentionally reset the active store |
 | `public/index.html` | Minimal entry: fonts, `public/styles/*.css`, `public/app/main.js` |
-| `public/app/main.js` | Shell (sidebar, topbar, sheet, rail), delegated events, keyboard map, SSE handlers, presence |
+| `public/app/main.js` | Shell (masthead with sections and day strip, contents page, sheet, rail), delegated events, keyboard map, SSE handlers, presence |
 | `public/app/{store,api,router,dom,actions,menus,commands-ui,task-model,nlp,format,icons,agent-context,rail}.js` | Client state and batched rendering, command calls with optimistic updates/rollback, path routing, templates and DOM morphing, user intents, menus, palette actions and shortcuts, task scopes/grouping, capture parsing, formatting, icons, record context for agents, and the agent/Activity rail |
 | `public/app/ui/` | Menu, dialog, pickers (date/priority/project/tags), capture, palette, toast and pointer drag-and-drop primitives |
 | `public/app/components/` and `public/app/screens/` | Task list/sheet components and the Today, Tasks, Projects, Creation, Reading, Insights, Almanac and Settings screens |
 | `public/styles/` | Design tokens and themes (`base.css`), shell, components and screens |
-| `public/fonts/` | Self-hosted Newsreader, Inter and JetBrains Mono (OFL) |
+| `public/fonts/` | Self-hosted Newsreader, IBM Plex Sans and JetBrains Mono (OFL) |
 | `src/creation-markdown.mjs` and `scripts/build-creation-markdown.mjs` | Local sanitized Markdown preview entry and reproducible browser bundle |
 | `tests/creation.test.mjs` | Idea migration, validation, conflicts, scheduling/Trash, cloud/offline atomicity and UI projection tests |
 | `tests/commands.test.mjs` | Command layer, journal/undo/redo, workspace, views, validation and MCP |
@@ -1049,11 +1049,17 @@ configuration rather than persisted domain settings.
 
 ## 12. Browser interface and control state
 
-The interface follows the **V2 Editorial** direction, rebuilt in October 2026:
-warm paper (light) and ink (dark) themes, Newsreader display type with Inter for
-interface text and JetBrains Mono for figures, thin rules, restrained domain
-color, and a persistent agent rail on wide screens. It is a dependency-free set
-of ES modules under `public/app/` and stylesheets under `public/styles/`.
+The interface follows the **V2 Editorial** direction, rebuilt in October 2026
+as an almanac printed in two inks: ink for everything, and rubric (vermilion,
+or the chosen accent) only for what needs the person — today, now, overdue,
+critical, the active place. Warm paper with a faint grain is the day edition;
+cream ink on blue-black is the night edition. Newsreader carries everything
+read (titles, tasks, notes, figures), IBM Plex Sans the controls, and JetBrains
+Mono the small-capital labels and numbers. Rules and space separate things
+instead of boxes; only slips that lie on top (menus, palette, dialogs) and
+idea index cards are boxed. Domain colors stay as thin swatches. It is a
+dependency-free set of ES modules under `public/app/` and stylesheets under
+`public/styles/`.
 
 ### Architecture
 
@@ -1078,15 +1084,20 @@ of ES modules under `public/app/` and stylesheets under `public/styles/`.
 
 ### Shell
 
-- Sidebar: masthead with issue number and date, Search (⌘K), New (menu of every
-  capture kind), sections from the workspace order with live counts (overdue,
-  Inbox, critical projects, reading, ideas in progress), pinned projects/views/
-  tags, a live timer widget (stop, change project, discard) or a Start focus
-  timer control, settings, theme toggle, connection state and rail toggle.
-  ⌘\ collapses it to icons; under 820 px it becomes a drawer with a top bar.
-- Detail sheet (tasks, books) docks beside the content when the main column has
-  room and floats with a scrim otherwise (container query). J/K step through
-  the list while it is open; Esc closes.
+- Masthead: a dateline (weekday, date, week, issue number, live connection),
+  the italic title, and tools — the running timer (stop, change project,
+  discard) or a Focus control, Search (⌘K), New (menu of every capture kind)
+  and the rail toggle. Under a double rule, the sections in workspace order
+  with live counts (overdue, Inbox, critical projects, reading, ideas in
+  progress), pinned projects/views/tags, the night/day edition toggle and
+  settings. Along the bottom edge runs the day strip: today from 06:00 (or the
+  first entry) to midnight, each logged entry a block in its activity's ink,
+  the running timer growing in rubric, and a rubric hairline at now. ⌘\
+  condenses the masthead to one line; under 820 px it becomes a compact bar and
+  the sections open as a numbered contents page.
+- Detail sheet (tasks, books) opens under the masthead, beside the content when
+  the main column has room and over it with a scrim otherwise (container
+  query). J/K step through the list while it is open; Esc closes.
 - ⌘K palette: navigation, every create action, records (projects, tasks, books,
   ideas) with → for their action menus, saved views, settings, theme, undo,
   backups, and "Ask Codex/Claude" with the typed text.
@@ -1102,11 +1113,14 @@ of ES modules under `public/app/` and stylesheets under `public/styles/`.
 
 ### Screens
 
-- **Today**: day ring against the daily plan, focus card (live timer with
-  editable project, type and description; or a recommendation with start,
-  another, not now), today's tasks with quick add, editable day log with
-  activity composition, week bars, needs attention, coming up (tasks,
-  deadlines, dated ideas), reading now and the challenge.
+- **Today** is the front page: the lede sets the top recommendation as the
+  headline (project in rubric italic, health and reasons beneath, start,
+  another, not now) or, while a timer runs, a large clock with editable
+  project, description and type; beside it the tally of the day against the
+  plan with deep minutes and an activity bar. Below: today's tasks with quick
+  add, the day's ledger of entries (editable), and a column with week bars,
+  needs attention, coming up (tasks, deadlines, dated ideas), reading now and
+  the challenge.
 - **Tasks**: lists pane (Inbox, Today, Upcoming, All, saved views, projects,
   tags, Completed, Trash) with counts; filter; view options (group by none,
   priority, due date, list, tag; sort by custom, priority, due, title, created);
@@ -1139,14 +1153,14 @@ of ES modules under `public/app/` and stylesheets under `public/styles/`.
 - **Almanac**: year in numbers, challenge set/edit/clear, streaks, and a
   searchable milestone timeline with add, edit and delete.
 - **Settings**: general (name, tagline, time zone, start screen), appearance
-  (theme, accent, density), sidebar (order, visibility, pins), planning (daily
+  (theme, accent, density), masthead (section order, visibility, pins), planning (daily
   plan, deep-work target, health thresholds, domains with weekly hours,
   categories), saved views, agents (MCP setup for Claude Code and Codex, CLI,
   SDK, HTTP, command reference), data and backups, keyboard.
 
 ### Browser-local state
 
-- `lifeos.ui.v2` holds sidebar collapse, rail open/tab/agent/width, per-list
+- `lifeos.ui.v2` holds the condensed masthead, rail open/tab/agent/width, per-list
   task view options and collapsed subtrees, project/reading/creation view
   preferences, the insights range and recent records.
 - `lifeos.codex.threadId` and `lifeos.claude.threadId` remember the open rail

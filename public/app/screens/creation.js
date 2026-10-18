@@ -58,7 +58,7 @@ export function render_() {
       ${view === 'list' ? html`<span class="grow"></span><select class="select-small" data-creation-status aria-label="Status"><option value="all">All statuses</option>${STATUSES.map((status) => html`<option value="${status}" ${prefs.status === status ? 'selected' : ''}>${IDEA_STATUS[status]}</option>`)}</select>` : ''}
     </div>
     ${!ideas.length
-      ? html`<div class="list-empty"><div class="empty-mark">${icon('creation', { size: 22 })}</div><h3>A place for your next question, story or spark</h3><p>Capture ideas as Shorts or long videos, move them from To do to Done, and write the script right here. A dated Short also appears in Tasks.</p><button type="button" class="button is-primary small" data-action="creation-new">${icon('plus', { size: 14 })}New idea <kbd>N</kbd></button></div>`
+      ? html`<div class="list-empty"><div class="empty-mark fleuron" aria-hidden="true">❦</div><h3>A place for your next question, story or spark</h3><p>Capture ideas as Shorts or long videos, move them from To do to Done, and write the script right here. A dated Short also appears in Tasks.</p><button type="button" class="button is-primary small" data-action="creation-new">${icon('plus', { size: 14 })}New idea <kbd>N</kbd></button></div>`
       : view === 'list' ? renderList(visible) : renderBoard(visible)}
   </div>`;
 }

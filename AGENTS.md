@@ -42,7 +42,7 @@ MCP clients use `node scripts/lifeos-mcp.mjs` (this folder's `.mcp.json` registe
 
 ## One command layer
 
-Every capability is one command in `src/commands/` with a zod input schema. The same command serves the UI (`POST /api/run/<name>`), CLI, SDK (`src/sdk.mjs`), HTTP and MCP, so agents can do everything the person can. Add new capabilities as commands, never as one-off routes or UI-only logic. Store writes go through `mutateStore`, which journals exact before/after patches for undo and Activity; never write the store another way. Workspace arrangement (start screen, theme, sidebar, saved views, pins) lives in the `lifeos.json.workspace.json` sidecar and is changed through `workspace.*`, `views.*` and `pins.set`.
+Every capability is one command in `src/commands/` with a zod input schema. The same command serves the UI (`POST /api/run/<name>`), CLI, SDK (`src/sdk.mjs`), HTTP and MCP, so agents can do everything the person can. Add new capabilities as commands, never as one-off routes or UI-only logic. Store writes go through `mutateStore`, which journals exact before/after patches for undo and Activity; never write the store another way. Workspace arrangement (start screen, theme, section order, saved views, pins) lives in the `lifeos.json.workspace.json` sidecar and is changed through `workspace.*`, `views.*` and `pins.set`.
 
 ## Domain contracts
 
@@ -61,7 +61,7 @@ Before changing a feature, read its detailed model and browser contracts linked 
 - The rail's only AI transports are installed, signed-in applications: `codex app-server` with the ChatGPT account, and the `claude` CLI (Claude Code) with the person's Claude login. Do not add API-key authentication, an API SDK client, Ollama, Whisper, or an alternate model service.
 - Scope the rail to this absolute workspace. Route approvals, permission prompts, `request_user_input` and Claude's questions to the person through the rail; never auto-accept them. Claude rail sessions run with `--permission-mode manual` and pre-allow only the journaled LifeOS MCP tools.
 - Voice stays disabled until a verified path exists through the signed-in apps. Do not substitute browser speech services or another transport.
-- Preserve V2 Editorial: warm paper and ink themes, serif display type, thin rules, compact information, and the persistent right agent rail. The start screen is configurable and defaults to Projects. Preserve `design plan/` originals unless revision is requested.
+- Preserve V2 Editorial in two inks: warm paper (day) and blue-black (night) editions, Newsreader for what is read, small-capital mono labels, rules instead of boxes, rubric only for what needs the person, the masthead with its day strip, compact information, and the persistent right agent rail. The start screen is configurable and defaults to Projects. Preserve `design plan/` originals unless revision is requested.
 - Keep HTTP loopback-only. The macOS development app depends on this workspace and Node; self-contained distribution, notarization, updates, and Windows/Linux packaging remain deferred.
 - For installed-app browser/backend changes, **LifeOS Dev → Refresh LifeOS** (`Command-R`) restarts the workspace server and reloads the current route. Use that refresh to inspect changes.
 

@@ -1,5 +1,5 @@
 import { run } from '../api.js';
-import { html } from '../dom.js';
+import { html, figure } from '../dom.js';
 import { ACTIVITY_LABELS, addDays, formatDate, formatMinutes, normalize } from '../format.js';
 import { icon } from '../icons.js';
 import { lookup, store } from '../store.js';
@@ -37,7 +37,7 @@ export function render_() {
 }
 
 function stat(value, label) {
-  return html`<div class="year-stat"><b>${value}</b><span>${label}</span></div>`;
+  return html`<div class="year-stat"><b>${figure(value)}</b><span>${label}</span></div>`;
 }
 
 function renderChallenge() {

@@ -23,7 +23,7 @@ or local HTTP — and every change is journaled and undoable.
   separate display totals.
 - **Agents with full parity.** 81 commands with schemas power the UI, the CLI,
   the SDK, local HTTP and a stdio MCP server, so agents never get a lesser API.
-  They can also drive the open window and reshape it (views, sidebar, theme).
+  They can also drive the open window and reshape it (views, sections, pins, theme).
 - **Agents without another AI account.** The rail runs Codex through the
   installed `codex app-server` (ChatGPT account) and Claude Code through the
   installed `claude` CLI (Claude login) — no API keys, API SDK clients,
@@ -60,7 +60,7 @@ or local HTTP — and every change is journaled and undoable.
 - Almanac: year in numbers, challenge, streaks and a searchable milestone
   timeline.
 - Creation board and Markdown editor; dated Shorts become tasks.
-- Settings for appearance, sidebar, planning, domains, categories, saved views,
+- Settings for appearance, the masthead, planning, domains, categories, saved views,
   agents and backups.
 - Reading Kanban and full library with tags, queue ordering, date read,
   paginated Open Library search with exact ISBN lookup, local cover caching,

@@ -124,7 +124,7 @@ export function renderProjectCard(project, { compact = false } = {}) {
   const pending = store.ui.pending.has(project.id);
   return html`<article class="${cx('project-card', `health-${project.health}`, compact && 'is-compact', pending && 'is-pending')}" data-key="project-${project.id}" data-project="${project.id}" data-draggable="project" style="--domain:${domain?.color || 'var(--ink-3)'}" tabindex="0" aria-label="${project.name}, ${PROJECT_STATUS[project.status].label}, ${project.health}">
     <header class="pc-head">
-      <span class="pc-domain">${domain?.short || domain?.label || ''}</span>
+      <span class="pc-domain">${domain?.label || domain?.short || ''}</span>
       ${ACTIVE.has(project.status) ? html`<span class="health-badge health-${project.health}">${project.health}</span>` : ''}
       <button type="button" class="row-more" data-action="project-menu" aria-label="Actions for ${project.name}">${icon('more', { size: 15 })}</button>
     </header>
@@ -132,11 +132,11 @@ export function renderProjectCard(project, { compact = false } = {}) {
     ${project.subtitle ? html`<p class="pc-sub">${project.subtitle}</p>` : ''}
     ${!compact && (project.nextAction || project.note) ? html`<p class="pc-note">${project.nextAction ? html`${icon('arrow-right', { size: 12 })}${project.nextAction}` : project.note}</p>` : ''}
     <div class="pc-stats">
-      ${plan ? html`<span class="pc-week" title="This week: ${formatHours(project.weekHours)} of ${formatHours(plan)} planned"><span class="mini-meter"><i style="width:${weekRatio * 100}%"></i></span>${project.weekHours ? formatHours(project.weekHours) : '0h'}<small>/${formatHours(plan)}</small></span>` : project.weekHours ? html`<span>${formatHours(project.weekHours)} <small>this week</small></span>` : ''}
-      ${tasks.total ? html`<span title="Tasks">${icon('tasks', { size: 12 })}${tasks.completed}/${tasks.total}</span>` : ''}
-      ${due ? html`<span class="pc-due ${due.tone}">${icon('flag', { size: 12 })}${due.text}</span>` : ''}
-      ${project.streak ? html`<span title="Days in a row with 30+ minutes">${icon('bolt', { size: 12 })}${project.streak}d</span>` : ''}
-      ${!compact ? html`<span class="pc-touch" title="Last worked on">${project.lastTouchedLabel === 'never' ? 'not started' : project.lastTouchedLabel}</span>` : ''}
+      ${plan ? html`<span class="pc-week" title="This week: ${formatHours(project.weekHours)} of ${formatHours(plan)} planned"><small>Week</small><span class="mini-meter"><i style="width:${weekRatio * 100}%"></i></span>${project.weekHours ? formatHours(project.weekHours) : '0h'}<small>/ ${formatHours(plan)}</small></span>` : project.weekHours ? html`<span><small>Week</small>${formatHours(project.weekHours)}</span>` : ''}
+      ${tasks.total ? html`<span title="Tasks done of total"><small>Tasks</small>${tasks.completed}/${tasks.total}</span>` : ''}
+      ${due ? html`<span class="pc-due ${due.tone}">${due.text}</span>` : ''}
+      ${project.streak ? html`<span title="Days in a row with 30+ minutes"><small>Streak</small>${project.streak}d</span>` : ''}
+      ${!compact ? html`<span class="pc-touch" title="Last worked on"><small>Last</small>${project.lastTouchedLabel === 'never' ? 'not started' : project.lastTouchedLabel}</span>` : ''}
     </div>
     <footer class="pc-foot">
       ${project.progress != null ? html`<span class="progress" title="${percent(project.progress)} complete"><i style="width:${project.progress * 100}%"></i></span><b>${percent(project.progress)}</b>` : html`<span class="progress is-empty"></span>`}
@@ -182,7 +182,7 @@ function renderProjectPage(id) {
           ${running ? html`<button type="button" class="button is-primary" data-action="timer-stop">${icon('stop', { size: 14 })}Stop timer</button>`
             : html`<button type="button" class="button is-primary" data-action="project-start">${icon('play', { size: 14 })}Focus</button>`}
           <button type="button" class="icon-button" data-action="project-codex" title="Ask ${agentName()} about this project">${icon('sparkle', { size: 16 })}</button>
-          <button type="button" class="icon-button ${pinned ? 'is-on' : ''}" data-action="project-pin" title="${pinned ? 'Unpin' : 'Pin to sidebar'}">${icon('pin', { size: 16 })}</button>
+          <button type="button" class="icon-button ${pinned ? 'is-on' : ''}" data-action="project-pin" title="${pinned ? 'Unpin' : 'Pin to the masthead'}">${icon('pin', { size: 16 })}</button>
           <button type="button" class="icon-button" data-action="project-page-menu" aria-label="More">${icon('more', { size: 16 })}</button>
         </div>
       </div>

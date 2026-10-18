@@ -12,7 +12,7 @@ import { toast } from './ui/toast.js';
 export const SHORTCUTS = [
   { group: 'Anywhere', items: [
     ['⌘ K', 'Search and commands'], ['N', 'Quick capture (new task)'], ['L', 'Log time'], ['T', 'Start a timer'],
-    ['⌘ Z', 'Undo'], ['⇧ ⌘ Z', 'Redo'], ['⌘ J', 'Show or hide the agent rail'], ['⌘ \\', 'Show or hide the sidebar'],
+    ['⌘ Z', 'Undo'], ['⇧ ⌘ Z', 'Redo'], ['⌘ J', 'Show or hide the agent rail'], ['⌘ \\', 'Condense or expand the masthead'],
     ['⌘ ,', 'Settings'], ['/', 'Filter the current list'], ['?', 'This help'],
   ] },
   { group: 'Go to', items: [
@@ -66,10 +66,10 @@ export function paletteActions() {
     { group: 'App', label: 'Show activity', icon: 'activity', keywords: 'history log changes agent', run: () => { setPref('railOpen', true); setPref('railTab', 'activity'); } },
     { group: 'App', label: 'Ask Codex', icon: 'sparkle', keywords: 'agent assistant chat ai openai', run: () => { setPref('railOpen', true); setPref('railTab', 'agent'); setPref('railAgent', 'codex'); requestAnimationFrame(() => document.querySelector('.composer-input')?.focus()); } },
     { group: 'App', label: 'Ask Claude', icon: 'sparkle', keywords: 'agent assistant chat ai anthropic claude code', run: () => { setPref('railOpen', true); setPref('railTab', 'agent'); setPref('railAgent', 'claude'); requestAnimationFrame(() => document.querySelector('.composer-input')?.focus()); } },
-    { group: 'App', label: 'Toggle dark mode', icon: 'moon', keywords: 'theme light appearance', run: () => act.cycleTheme() },
+    { group: 'App', label: 'Night or day edition', icon: 'moon', keywords: 'dark mode light theme appearance', run: () => act.cycleTheme() },
     { group: 'App', label: 'Use system theme', icon: 'sun', keywords: 'appearance automatic', run: () => act.setTheme('system') },
     { group: 'App', label: state.workspace.density === 'compact' ? 'Comfortable density' : 'Compact density', icon: 'sliders', keywords: 'spacing rows', run: () => run('workspace.update', { density: state.workspace.density === 'compact' ? 'comfortable' : 'compact' }, { quiet: true }) },
-    { group: 'App', label: store.prefs.sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar', icon: 'sidebar', shortcut: '⌘ \\', run: () => setPref('sidebarCollapsed', !store.prefs.sidebarCollapsed) },
+    { group: 'App', label: store.prefs.sidebarCollapsed ? 'Expand the masthead' : 'Condense the masthead', icon: 'sidebar', shortcut: '⌘ \\', run: () => setPref('sidebarCollapsed', !store.prefs.sidebarCollapsed) },
     { group: 'App', label: store.prefs.railOpen ? 'Hide agent rail' : 'Show agent rail', icon: 'rail', run: () => setPref('railOpen', !store.prefs.railOpen) },
     { group: 'App', label: 'Back up now', icon: 'download', keywords: 'snapshot google drive', run: () => run('storage.backupNow', {}, { quiet: true }).then(() => toast('Snapshot written to your backup folder', { tone: 'quiet' })).catch(() => undefined) },
     { group: 'App', label: 'Reload data', icon: 'refresh', keywords: 'refresh sync', run: () => fetchState().then(() => toast('Data reloaded', { tone: 'quiet' })) },
@@ -114,7 +114,7 @@ export function handleGlobalKey(event) {
   if (key === 'g') { pendingG = Date.now(); return true; }
   if (key === 'n') { event.preventDefault(); openCapture({ kind: store.ui.route.section === 'creation' ? 'idea' : store.ui.route.section === 'reading' ? 'book' : store.ui.route.section === 'almanac' ? 'milestone' : 'task' }); return true; }
   if (key === 'l') { event.preventDefault(); openCapture({ kind: 'log' }); return true; }
-  if (key === 't' && !store.ui.focusId) { event.preventDefault(); if (store.state.activeSession) toast('A timer is already running — stop it from the sidebar.', { tone: 'info' }); else openCapture({ kind: 'timer' }); return true; }
+  if (key === 't' && !store.ui.focusId) { event.preventDefault(); if (store.state.activeSession) toast('A timer is already running — stop it from the masthead.', { tone: 'info' }); else openCapture({ kind: 'timer' }); return true; }
   if (key === '?') { event.preventDefault(); showShortcuts(); return true; }
   if (key === '/') {
     const filter = document.querySelector('[data-page-filter]');

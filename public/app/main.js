@@ -1,12 +1,12 @@
-// The LifeOS shell: sidebar, the current screen with its detail sheet, and the
-// agent rail. One delegated event layer routes every interaction to the
+// The LifeOS shell: the masthead (dateline, sections, the day strip), the
+// current page with its detail sheet, and the agent rail. One delegated event layer routes every interaction to the
 // screen, component or shell that owns it; the whole tree re-renders through
 // `morph`, so focus, caret and scroll survive live updates from agents.
 import * as act from './actions.js';
 import { connectEvents, fetchState, onEvent, redo, reportPresence, undo } from './api.js';
 import { handleGlobalKey, toggleRail } from './commands-ui.js';
 import { cx, html, morph } from './dom.js';
-import { elapsed } from './format.js';
+import { elapsed, formatMinutes } from './format.js';
 import { icon } from './icons.js';
 import { applyLocation, interceptLinks, navigate, onRoute } from './router.js';
 import { applyAppearance, lookup, render, setPref, setWorkspace, store, subscribe } from './store.js';
@@ -108,36 +108,26 @@ function renderApp() {
     body = current.render();
   } catch (error) {
     console.error(error);
-    body = html`<div class="screen-empty">${icon('warning', { size: 22 })}<h2>This view hit a problem</h2><p>${error.message}</p><button type="button" class="button" data-action="retry-load">Reload data</button></div>`;
+    body = html`<div class="screen-empty"><span class="fleuron">❦</span><h2>This page hit a problem</h2><p>${error.message}</p><button type="button" class="button" data-action="retry-load">Reload data</button></div>`;
   }
   const sheet = renderSheet();
-  return html`<div class="${cx('app', store.prefs.sidebarCollapsed && 'is-nav-collapsed', store.prefs.railOpen && 'has-rail', store.ui.navOpen && 'is-nav-open', sheet && 'has-sheet')}" style="--rail-w:${store.prefs.railWidth}px">
-    ${renderSidebar()}
-    <div class="nav-scrim" data-action="nav-toggle"></div>
+  return html`<div class="${cx('app', store.prefs.sidebarCollapsed && 'is-condensed', store.prefs.railOpen && 'has-rail', store.ui.navOpen && 'is-nav-open', sheet && 'has-sheet')}" style="--rail-w:${store.prefs.railWidth}px">
     <main class="main" id="main" data-section="${store.ui.route.section}">
-      ${renderTopbar()}
-      <div class="screen-host" data-key="screen-${store.ui.route.section}">${body}</div>
-      ${sheet}
+      ${renderMasthead()}
+      <div class="stage">
+        <div class="screen-host" data-key="screen-${store.ui.route.section}">${body}</div>
+        ${sheet}
+      </div>
     </main>
+    ${store.ui.navOpen ? renderContents() : ''}
     ${store.prefs.railOpen ? html`<div class="rail-scrim" data-action="rail-close"></div>${rail.renderRail()}` : ''}
   </div>`;
-}
-
-function renderTopbar() {
-  const section = store.ui.route.section;
-  return html`<header class="topbar">
-    <button type="button" class="icon-button" data-action="nav-toggle" aria-label="Menu">${icon('menu', { size: 18 })}</button>
-    <span class="topbar-title">${NAV_LABELS[section] || 'Settings'}</span>
-    <button type="button" class="icon-button" data-action="open-palette" aria-label="Search">${icon('search', { size: 17 })}</button>
-    <button type="button" class="icon-button" data-action="new-menu" aria-label="Create">${icon('plus', { size: 18 })}</button>
-    <button type="button" class="icon-button" data-action="rail-toggle" aria-label="Agent">${icon('sparkle', { size: 17 })}</button>
-  </header>`;
 }
 
 function navCount(id) {
   const state = store.state;
   const counts = listCounts(state);
-  if (id === 'today') return counts.overdue ? { value: counts.today, alert: true, title: `${counts.overdue} overdue` } : counts.today ? { value: counts.today } : null;
+  if (id === 'today') return counts.overdue ? { value: counts.today, alert: true, title: `${counts.overdue} overdue` } : counts.today ? { value: counts.today, title: 'Due today' } : null;
   if (id === 'tasks') return counts.inbox ? { value: counts.inbox, title: 'In Inbox' } : null;
   if (id === 'projects') return state.summary.criticalCount ? { value: state.summary.criticalCount, alert: true, title: 'Need attention' } : null;
   if (id === 'reading') { const n = state.reading.books.filter((book) => book.status === 'reading').length; return n ? { value: n, title: 'Reading now' } : null; }
@@ -145,52 +135,122 @@ function navCount(id) {
   return null;
 }
 
-function renderSidebar() {
+const dayFormat = (options) => new Intl.DateTimeFormat('en-GB', { ...options, timeZone: 'UTC' }).format(new Date(`${store.state.meta.today}T12:00:00Z`));
+const CONNECTION = { live: ['Live', 'Live — changes by agents appear instantly'], offline: ['Offline', 'Offline — reconnecting'], reconnecting: ['Reconnecting', 'Reconnecting…'], connecting: ['Connecting', 'Connecting…'] };
+
+// The masthead: dateline, title and tools; the line of sections (and pins)
+// under a double rule; and the day itself as a strip along the bottom edge.
+function renderMasthead() {
   const state = store.state;
   const section = store.ui.route.section;
   const nav = state.workspace.nav.filter((item) => !item.hidden);
   const pins = state.workspace.pinned.map(pinLink).filter(Boolean);
+  const [connLabel, connTitle] = CONNECTION[store.ui.connection] || CONNECTION.connecting;
+  return html`<header class="masthead">
+    <button type="button" class="icon-button mast-menu" data-action="nav-toggle" aria-label="Contents" title="Contents">${icon('menu', { size: 18 })}</button>
+    <p class="mast-date">
+      <b>${dayFormat({ weekday: 'long' })}</b>
+      <span>${dayFormat({ day: 'numeric', month: 'long', year: 'numeric' })}</span>
+      <span class="mast-issue">Week ${state.meta.weekNumber} · Nº ${state.meta.issueNumber}</span>
+      <span class="${cx('conn', `is-${store.ui.connection}`)}" title="${connTitle}">${connLabel}</span>
+    </p>
+    <a class="mast-title" href="/${state.workspace.startScreen}" title="${state.meta.tagline}">${state.meta.appName}</a>
+    <div class="mast-tools">
+      ${renderTimerSlot()}
+      <button type="button" class="mast-search" data-action="open-palette" title="Search and commands (⌘K)">${icon('search', { size: 14 })}<span>Search</span><kbd>⌘K</kbd></button>
+      <button type="button" class="button small is-primary mast-new" data-action="new-menu" aria-haspopup="menu" title="Create (N)">${icon('plus', { size: 13 })}<span>New</span></button>
+      <button type="button" class="${cx('icon-button mast-rail', store.prefs.railOpen && 'is-active')}" data-action="rail-toggle" aria-label="Agent rail" title="Agent rail (⌘J)">${icon('rail', { size: 16 })}</button>
+    </div>
+    <div class="sections-row">
+      <nav class="sections" aria-label="Sections">
+        ${nav.map((item) => {
+          const count = navCount(item.id);
+          return html`<a class="${cx('nav-link', section === item.id && 'is-active')}" href="/${item.id}" data-key="nav-${item.id}" ${section === item.id ? html`aria-current="page"` : ''}>
+            <span class="nav-label">${NAV_LABELS[item.id]}</span>${count ? html`<sup class="${cx('count', count.alert && 'is-alert')}" title="${count.title || ''}">${count.value}</sup>` : ''}
+          </a>`;
+        })}
+        ${pins.length ? html`<span class="sections-sep" aria-hidden="true">·</span>${pins}` : ''}
+      </nav>
+      <div class="sections-tools">
+        <button type="button" class="icon-button tiny" data-action="theme-cycle" aria-label="Day or night edition" title="Day or night edition">${icon(document.documentElement.dataset.effectiveTheme === 'dark' ? 'sun' : 'moon', { size: 15 })}</button>
+        <a class="${cx('icon-button tiny', section === 'settings' && 'is-active')}" href="/settings" aria-label="Settings" title="Settings (⌘,)">${icon('settings', { size: 15 })}</a>
+      </div>
+    </div>
+    ${renderRibbon()}
+  </header>`;
+}
+
+function renderTimerSlot() {
+  const state = store.state;
   const session = state.activeSession;
-  const project = session?.projectId ? lookup.project(session.projectId) : null;
-  const live = store.ui.connection;
-  return html`<aside class="sidebar" aria-label="Navigation">
-    <div class="masthead">
-      <a class="brand" href="/${state.workspace.startScreen}" title="${state.meta.tagline}">
-        <span class="brand-name">${state.meta.appName}</span>
-        <span class="brand-meta">No. ${state.meta.issueNumber} · ${new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${state.meta.today}T12:00:00Z`))}</span>
-      </a>
-      <button type="button" class="icon-button tiny collapse-toggle" data-action="sidebar-collapse" aria-label="${store.prefs.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}" title="Toggle sidebar (⌘\\)">${icon('sidebar', { size: 15 })}</button>
-    </div>
-    <div class="sidebar-actions">
-      <button type="button" class="search-trigger" data-action="open-palette" title="Search and commands">${icon('search', { size: 15 })}<span>Search</span><kbd>⌘K</kbd></button>
-      <button type="button" class="new-trigger" data-action="new-menu" aria-haspopup="menu" title="Create (N)">${icon('plus', { size: 16 })}<span>New</span></button>
-    </div>
-    <nav class="nav" aria-label="Sections">
-      ${nav.map((item) => {
-        const count = navCount(item.id);
-        return html`<a class="${cx('nav-link', section === item.id && 'is-active')}" href="/${item.id}" data-key="nav-${item.id}" ${section === item.id ? html`aria-current="page"` : ''} title="${NAV_LABELS[item.id]}">
-          <span class="nav-icon">${icon(item.id, { size: 17 })}</span><span class="nav-label">${NAV_LABELS[item.id]}</span>
-          ${count ? html`<b class="${cx('count', count.alert && 'is-alert')}" title="${count.title || ''}">${count.value}</b>` : ''}
-        </a>`;
-      })}
+  if (!session) return html`<button type="button" class="mast-focus" data-action="timer-start" title="Start a focus timer (T)">${icon('play', { size: 11 })}<span>Focus</span><kbd>T</kbd></button>`;
+  const project = session.projectId ? lookup.project(session.projectId) : null;
+  return html`<div class="mast-timer" data-key="timer">
+    <button type="button" class="mast-timer-main" data-action="timer-menu" aria-haspopup="menu" title="${project?.name || 'No project'} · ${session.description || 'Focused work'}">
+      <i class="timer-pulse"></i><b data-elapsed-since="${session.startedAt}">${elapsed(session.startedAt)}</b><span>${project?.name || 'Focus'}</span>
+    </button>
+    <button type="button" class="icon-button tiny" data-action="timer-stop" aria-label="Stop timer and log time" title="Stop and log">${icon('stop', { size: 12 })}</button>
+  </div>`;
+}
+
+// Today from six in the morning (or the first entry) to midnight: each logged
+// entry is a block in its activity's ink, the running timer grows in rubric,
+// and a rubric hairline marks now.
+function clockMinutes(value) {
+  const [hours, minutes] = String(value || '').split(':').map(Number);
+  return Number.isFinite(hours) ? hours * 60 + (minutes || 0) : null;
+}
+
+function renderRibbon() {
+  const state = store.state;
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const entries = state.todayEntries.map((entry) => ({ entry, start: clockMinutes(entry.time) })).filter((item) => item.start != null);
+  const session = state.activeSession;
+  const sessionStart = session ? (() => { const date = new Date(session.startedAt); return date.toDateString() === now.toDateString() ? date.getHours() * 60 + date.getMinutes() : 0; })() : null;
+  const earliest = Math.min(6 * 60, nowMinutes, ...entries.map((item) => item.start), ...(sessionStart != null ? [sessionStart] : []));
+  const from = Math.floor(earliest / 60) * 60;
+  const span = 24 * 60 - from;
+  const at = (minutes) => `${Math.max(0, Math.min(100, ((minutes - from) / span) * 100)).toFixed(3)}%`;
+  const width = (minutes) => `${Math.max(0.25, (minutes / span) * 100).toFixed(3)}%`;
+  const total = state.summary.todayMinutes;
+  const hours = [];
+  for (let hour = Math.ceil(from / 60); hour < 24; hour += 1) hours.push(hour);
+  return html`<div class="ribbon" role="img" aria-label="Today: ${total ? formatMinutes(total) : 'nothing'} logged" title="Today · ${total ? formatMinutes(total) : 'nothing'} logged">
+    ${hours.map((hour) => html`<span class="${cx('ribbon-hour', hour % 3 === 0 && 'is-major')}" style="left:${at(hour * 60)}" ${hour % 3 === 0 ? html`data-label="${String(hour).padStart(2, '0')}"` : ''}></span>`)}
+    ${entries.map(({ entry, start }) => html`<i class="${cx('ribbon-block', `type-${entry.activityType}`)}" style="left:${at(start)};width:${width(entry.durationMinutes)}" title="${entry.time} · ${entry.description} · ${formatMinutes(entry.durationMinutes)}"></i>`)}
+    ${sessionStart != null ? html`<i class="ribbon-block is-live" style="left:${at(sessionStart)};width:${width(Math.max(1, nowMinutes - sessionStart))}" title="Running · ${session.description || 'Focused work'}"></i>` : ''}
+    <i class="ribbon-now" style="left:${at(nowMinutes)}" title="Now"></i>
+  </div>`;
+}
+
+// On phones the sections open as a contents page.
+function renderContents() {
+  const state = store.state;
+  const section = store.ui.route.section;
+  const nav = state.workspace.nav.filter((item) => !item.hidden);
+  const pins = state.workspace.pinned.map(pinLink).filter(Boolean);
+  return html`<div class="contents-layer" data-key="contents">
+    <div class="contents-scrim" data-action="nav-toggle"></div>
+    <nav class="contents" aria-label="Contents">
+      <header class="contents-head">
+        <span class="contents-title">${state.meta.appName}</span>
+        <button type="button" class="icon-button" data-action="nav-toggle" aria-label="Close contents">${icon('x', { size: 18 })}</button>
+      </header>
+      <p class="eyebrow">${dayFormat({ weekday: 'long', day: 'numeric', month: 'long' })} · Nº ${state.meta.issueNumber}</p>
+      <ol class="contents-list">
+        ${nav.map((item, index) => {
+          const count = navCount(item.id);
+          return html`<li><a class="${cx('contents-link', section === item.id && 'is-active')}" href="/${item.id}"><span class="folio">${String(index + 1).padStart(2, '0')}</span><span class="contents-label">${NAV_LABELS[item.id]}</span>${count ? html`<b class="${cx('count', count.alert && 'is-alert')}">${count.value}</b>` : ''}</a></li>`;
+        })}
+      </ol>
+      ${pins.length ? html`<p class="eyebrow contents-pins-head">Pinned</p><div class="contents-pins">${pins}</div>` : ''}
+      <footer class="contents-foot">
+        <a class="button small" href="/settings">${icon('settings', { size: 14 })}Settings</a>
+        <button type="button" class="button small" data-action="theme-cycle">${icon(document.documentElement.dataset.effectiveTheme === 'dark' ? 'sun' : 'moon', { size: 14 })}${document.documentElement.dataset.effectiveTheme === 'dark' ? 'Day edition' : 'Night edition'}</button>
+      </footer>
     </nav>
-    ${pins.length ? html`<div class="nav-group"><div class="nav-heading">Pinned</div>${pins}</div>` : ''}
-    <div class="grow"></div>
-    ${session ? html`<div class="timer-widget" style="--dot:${project ? state.domains[project.domain]?.color : 'var(--accent)'}" data-key="timer">
-      <button type="button" class="timer-main" data-action="timer-menu" aria-haspopup="menu" title="Timer options">
-        <span class="timer-pulse"></span>
-        <span class="timer-text"><b data-elapsed-since="${session.startedAt}">${elapsed(session.startedAt)}</b><small>${project?.name || 'No project'} · ${session.description || 'Focused work'}</small></span>
-      </button>
-      <button type="button" class="icon-button timer-stop" data-action="timer-stop" aria-label="Stop timer and log time" title="Stop and log">${icon('stop', { size: 14 })}</button>
-    </div>` : html`<button type="button" class="timer-idle" data-action="timer-start" title="Start a focus timer (T)">${icon('play', { size: 14 })}<span>Start focus timer</span><kbd>T</kbd></button>`}
-    <footer class="sidebar-foot">
-      <a class="${cx('icon-button', section === 'settings' && 'is-active')}" href="/settings" aria-label="Settings" title="Settings (⌘,)">${icon('settings', { size: 16 })}</a>
-      <button type="button" class="icon-button" data-action="theme-cycle" aria-label="Toggle dark mode" title="Toggle dark mode">${icon(document.documentElement.dataset.effectiveTheme === 'dark' ? 'sun' : 'moon', { size: 16 })}</button>
-      <span class="grow"></span>
-      <span class="${cx('conn', `is-${live}`)}" title="${live === 'live' ? 'Live — changes by agents appear instantly' : live === 'offline' ? 'Offline — reconnecting' : 'Connecting…'}"></span>
-      <button type="button" class="${cx('icon-button', store.prefs.railOpen && 'is-active')}" data-action="rail-toggle" aria-label="Toggle agent rail" title="Agent rail (⌘J)">${icon('rail', { size: 16 })}</button>
-    </footer>
-  </aside>`;
+  </div>`;
 }
 
 function pinLink(pin) {
@@ -199,16 +259,16 @@ function pinLink(pin) {
     const project = lookup.project(pin.id);
     if (!project) return null;
     const active = store.ui.route.section === 'projects' && store.ui.route.id === pin.id;
-    return html`<a class="${cx('nav-link is-pin', active && 'is-active')}" href="/projects/${encodeURIComponent(pin.id)}" data-pin data-kind="project" data-id="${pin.id}" data-key="pin-p-${pin.id}" data-drop-list="project:${pin.id}"><span class="nav-icon"><i class="dot" style="--dot:${state.domains[project.domain]?.color}"></i></span><span class="nav-label">${project.name}</span></a>`;
+    return html`<a class="${cx('nav-link is-pin', active && 'is-active')}" href="/projects/${encodeURIComponent(pin.id)}" data-pin data-kind="project" data-id="${pin.id}" data-key="pin-p-${pin.id}" data-drop-list="project:${pin.id}"><i class="dot" style="--dot:${state.domains[project.domain]?.color}"></i><span class="nav-label">${project.name}</span></a>`;
   }
   if (pin.kind === 'view') {
     const view = state.workspace.views.find((item) => item.id === pin.id);
     if (!view) return null;
     const active = store.ui.route.section === 'tasks' && store.ui.route.params.get('list') === `view:${pin.id}`;
-    return html`<a class="${cx('nav-link is-pin', active && 'is-active')}" href="/tasks?list=view:${encodeURIComponent(pin.id)}" data-pin data-kind="view" data-id="${pin.id}" data-key="pin-v-${pin.id}"><span class="nav-icon">${icon(view.icon || 'list', { size: 15 })}</span><span class="nav-label">${view.name}</span></a>`;
+    return html`<a class="${cx('nav-link is-pin', active && 'is-active')}" href="/tasks?list=view:${encodeURIComponent(pin.id)}" data-pin data-kind="view" data-id="${pin.id}" data-key="pin-v-${pin.id}"><span class="nav-label">${view.name}</span></a>`;
   }
   const active = store.ui.route.section === 'tasks' && store.ui.route.params.get('list') === `tag:${pin.id}`;
-  return html`<a class="${cx('nav-link is-pin', active && 'is-active')}" href="/tasks?list=tag:${encodeURIComponent(pin.id)}" data-pin data-kind="tag" data-id="${pin.id}" data-key="pin-t-${pin.id}" data-drop-list="tag:${pin.id}"><span class="nav-icon">${icon('hash', { size: 15 })}</span><span class="nav-label">${pin.id}</span></a>`;
+  return html`<a class="${cx('nav-link is-pin', active && 'is-active')}" href="/tasks?list=tag:${encodeURIComponent(pin.id)}" data-pin data-kind="tag" data-id="${pin.id}" data-key="pin-t-${pin.id}" data-drop-list="tag:${pin.id}"><span class="nav-label">#${pin.id}</span></a>`;
 }
 
 function renderSheet() {
@@ -300,7 +360,7 @@ root.addEventListener('click', (event) => {
     if (actionEl.tagName === 'INPUT' && actionEl.type === 'checkbox') { runAction(actionEl.dataset.action, actionEl, event); return; }
     event.preventDefault();
     runAction(actionEl.dataset.action, actionEl, event);
-    if (store.ui.navOpen && actionEl.closest('.sidebar') && actionEl.dataset.action !== 'nav-toggle') { store.ui.navOpen = false; render(); }
+    if (store.ui.navOpen && actionEl.closest('.contents') && actionEl.dataset.action !== 'nav-toggle') { store.ui.navOpen = false; render(); }
     return;
   }
   if (event.target.closest('a[href]')) {
@@ -459,12 +519,15 @@ function restoreRowFocus() {
   requestAnimationFrame(() => root.querySelector(`.main [data-task="${CSS.escape(id)}"]`)?.focus({ preventScroll: true }));
 }
 
-// Live clocks for running timers.
+// Live clocks for running timers, and the day strip once a minute.
+let lastMinute = new Date().getMinutes();
 setInterval(() => {
   for (const element of document.querySelectorAll('[data-elapsed-since]')) {
     const text = elapsed(element.dataset.elapsedSince);
     if (element.textContent !== text) element.textContent = text;
   }
+  const minute = new Date().getMinutes();
+  if (minute !== lastMinute) { lastMinute = minute; render(); }
 }, 1000);
 
 // ——— Live events from the server (agents, CLI, other windows) —————————
