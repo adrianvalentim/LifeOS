@@ -1,0 +1,298 @@
+import * as act from '../actions.js';
+import { cx, html } from '../dom.js';
+import { ACTIVITY_LABELS, addDays, daysBetween, elapsed, formatClock, formatDate, formatHours, formatLongDate, formatMinutes, formatTime, plural } from '../format.js';
+import { icon } from '../icons.js';
+import { entryMenu, projectMenu } from '../menus.js';
+import { lookup, render, store } from '../store.js';
+import { groupTasks, taskScope } from '../task-model.js';
+import { formDialog } from '../ui/dialog.js';
+import { openCapture } from '../ui/capture.js';
+import { pickFromList, pickProject } from '../ui/pickers.js';
+import { renderQuickAdd, renderTaskGroups } from '../components/task-list.js';
+import { renderCover } from './reading.js';
+
+const DEEP = new Set(['deep_work', 'research', 'creative']);
+const SHALLOW = new Set(['shallow_work', 'communication']);
+
+function visibleRecommendation() {
+  const recs = store.state.recommendations || [];
+  if (!recs.length || store.ui.recDismissed) return null;
+  return recs[(store.ui.recIndex || 0) % recs.length];
+}
+
+export function render_() {
+  const state = store.state;
+  const today = state.meta.today;
+  const planMinutes = Number(state.settings.defaultDailyPlanHours || 8) * 60;
+  const logged = state.summary.todayMinutes;
+  const scope = taskScope('today', state);
+  const groups = groupTasks(scope.items, { groupBy: 'due', sortBy: 'due' }, state);
+  return html`<div class="screen today-screen scroll-y">
+    <header class="today-head">
+      <div>
+        <p class="eyebrow">${state.meta.appName} · Week ${state.meta.weekNumber} · Day ${state.meta.issueNumber}</p>
+        <h1 class="display">${formatLongDate(today)}</h1>
+        <p class="today-sub">${greeting()} ${logged ? html`You’ve logged <b>${formatMinutes(logged)}</b> of a ${formatHours(planMinutes / 60)} day.` : html`Nothing logged yet today.`} ${scope.items.length ? html`<b>${plural(scope.items.length, 'task')}</b> due.` : ''}</p>
+      </div>
+      ${renderDayRing(logged, planMinutes)}
+    </header>
+    <div class="today-grid">
+      <div class="today-main">
+        ${renderFocusCard()}
+        <section class="card">
+          <header class="card-head"><h2>Today’s tasks</h2><a class="link" href="/tasks?list=today">Open list ${icon('arrow-right', { size: 13 })}</a></header>
+          ${renderQuickAdd({ id: 'today-add', placeholder: 'Add a task for today', defaults: { dueDate: today } })}
+          ${scope.items.length ? renderTaskGroups(groups, { ...scope, id: 'today-home' }, { showProject: true }) : html`<p class="card-empty">${icon('check', { size: 16 })} Nothing due today.${scope.completed.length ? ` ${plural(scope.completed.length, 'task')} already done.` : ''}</p>`}
+        </section>
+        ${renderDayLog()}
+      </div>
+      <aside class="today-side">
+        ${renderWeek()}
+        ${renderAttention()}
+        ${renderComingUp()}
+        ${renderReadingNow()}
+        ${renderChallenge()}
+      </aside>
+    </div>
+  </div>`;
+}
+
+function greeting() {
+  const hour = new Date().getHours();
+  return hour < 5 ? 'Working late.' : hour < 12 ? 'Good morning.' : hour < 18 ? 'Good afternoon.' : 'Good evening.';
+}
+
+function renderDayRing(logged, plan) {
+  const ratio = Math.min(1, plan ? logged / plan : 0);
+  const radius = 34;
+  const circumference = 2 * Math.PI * radius;
+  const entries = store.state.todayEntries;
+  const deep = entries.filter((entry) => DEEP.has(entry.activityType)).reduce((sum, entry) => sum + entry.durationMinutes, 0);
+  return html`<div class="day-ring" title="${formatMinutes(logged)} of ${formatMinutes(plan)} planned">
+    <svg viewBox="0 0 84 84" width="84" height="84" aria-hidden="true">
+      <circle cx="42" cy="42" r="${radius}" class="ring-track"></circle>
+      <circle cx="42" cy="42" r="${radius}" class="ring-fill" stroke-dasharray="${circumference}" stroke-dashoffset="${circumference * (1 - ratio)}"></circle>
+    </svg>
+    <div class="ring-label"><b>${Math.round(ratio * 100)}%</b><small>${deep ? `${formatMinutes(deep)} deep` : 'of plan'}</small></div>
+  </div>`;
+}
+
+function renderFocusCard() {
+  const state = store.state;
+  const session = state.activeSession;
+  if (session) {
+    const project = session.projectId ? lookup.project(session.projectId) : null;
+    const color = project ? state.domains[project.domain]?.color : 'var(--accent)';
+    return html`<section class="card focus-card is-running" style="--focus:${color}">
+      <div class="focus-top"><span class="eyebrow live"><i></i>Focus session</span><span class="focus-since">since ${formatClock(session.startedAt)}</span></div>
+      <div class="focus-clock" data-elapsed-since="${session.startedAt}">${elapsed(session.startedAt)}</div>
+      <div class="focus-what">
+        <button type="button" class="focus-project" data-action="today-timer-project">${project ? html`<i class="dot" style="--dot:${color}"></i>${project.name}` : 'General work'} ${icon('chevron-down', { size: 13 })}</button>
+        <input class="focus-desc" data-timer-description value="${session.description}" aria-label="What you are working on" maxlength="500">
+        <button type="button" class="chip" data-action="today-timer-type">${ACTIVITY_LABELS[session.activityType]}</button>
+      </div>
+      <div class="focus-actions">
+        <button type="button" class="button is-primary" data-action="timer-stop">${icon('stop', { size: 14 })}Stop and log</button>
+        <button type="button" class="button ghost" data-action="timer-discard">Discard</button>
+      </div>
+    </section>`;
+  }
+  const rec = visibleRecommendation();
+  if (!rec) {
+    return html`<section class="card focus-card">
+      <div class="focus-top"><span class="eyebrow">What now</span></div>
+      <p class="focus-quiet">${store.ui.recDismissed ? 'Suggestions hidden for now.' : 'No active project needs attention.'}</p>
+      <div class="focus-actions">
+        <button type="button" class="button is-primary" data-action="today-start-blank">${icon('play', { size: 14 })}Start a focus timer</button>
+        ${store.ui.recDismissed ? html`<button type="button" class="button ghost" data-action="today-rec-restore">Show suggestions</button>` : ''}
+      </div>
+    </section>`;
+  }
+  const project = lookup.project(rec.projectId);
+  const color = state.domains[rec.domain]?.color;
+  const count = state.recommendations.length;
+  return html`<section class="card focus-card" style="--focus:${color}">
+    <div class="focus-top"><span class="eyebrow">What now · ${(store.ui.recIndex || 0) % count + 1} of ${count}</span><span class="focus-confidence" title="How strongly the rules favor this">${Math.round(rec.confidence * 100)}% fit</span></div>
+    <h2 class="focus-title"><a href="/projects/${encodeURIComponent(rec.projectId)}">${rec.projectName}</a></h2>
+    <p class="focus-action">${rec.action}</p>
+    <p class="focus-why">${icon('info', { size: 13 })}${rec.reasonShort}${project?.taskSummary?.open ? ` · ${plural(project.taskSummary.open, 'open task')}` : ''}</p>
+    <div class="focus-actions">
+      <button type="button" class="button is-primary" data-action="today-rec-start">${icon('play', { size: 14 })}Start ${formatMinutes(rec.durationMinutes)} focus</button>
+      <button type="button" class="button ghost" data-action="today-rec-next">${icon('refresh', { size: 14 })}Another</button>
+      <button type="button" class="button ghost" data-action="today-rec-dismiss">Not now</button>
+    </div>
+  </section>`;
+}
+
+function renderDayLog() {
+  const state = store.state;
+  const entries = [...state.todayEntries].sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+  const total = entries.reduce((sum, entry) => sum + entry.durationMinutes, 0) || 1;
+  const byType = {};
+  for (const entry of entries) byType[entry.activityType] = (byType[entry.activityType] || 0) + entry.durationMinutes;
+  return html`<section class="card">
+    <header class="card-head"><h2>The day so far</h2><button type="button" class="button ghost small" data-action="today-log">${icon('plus', { size: 13 })}Log time <kbd>L</kbd></button></header>
+    ${entries.length ? html`
+      <div class="type-bar" role="img" aria-label="Time by activity">${Object.entries(byType).map(([type, minutes]) => html`<i class="type-${type}" style="flex:${minutes}" title="${ACTIVITY_LABELS[type]} · ${formatMinutes(minutes)}"></i>`)}</div>
+      <div class="type-legend">${Object.entries(byType).map(([type, minutes]) => html`<span><i class="type-${type}"></i>${ACTIVITY_LABELS[type]} ${formatMinutes(minutes)}</span>`)}</div>
+      <ol class="entries">${entries.map((entry) => renderEntry(entry, total))}</ol>`
+      : html`<p class="card-empty">${icon('clock', { size: 16 })} No time logged yet — start a focus timer, or log what you’ve already done.</p>`}
+  </section>`;
+}
+
+export function renderEntry(entry, total = 60) {
+  const project = entry.projectId ? lookup.project(entry.projectId) : null;
+  const color = project ? store.state.domains[project.domain]?.color : 'var(--ink-4)';
+  return html`<li class="entry" data-key="entry-${entry.id}" data-entry="${entry.id}">
+    <span class="entry-time">${entry.time ? formatTime(entry.time) : '—'}</span>
+    <span class="entry-bar"><i style="--dot:${color}; width:${Math.max(6, Math.min(100, (entry.durationMinutes / Math.max(60, total)) * 100))}%"></i></span>
+    <span class="entry-body">
+      <span class="entry-desc">${entry.description}</span>
+      <span class="entry-meta">${project ? html`<i class="dot" style="--dot:${color}"></i>${project.name}` : 'General'} · ${ACTIVITY_LABELS[entry.activityType]}</span>
+    </span>
+    <span class="entry-duration">${formatMinutes(entry.durationMinutes)}</span>
+    <button type="button" class="row-more" data-action="entry-menu" aria-label="Entry actions">${icon('more', { size: 15 })}</button>
+  </li>`;
+}
+
+function renderWeek() {
+  const state = store.state;
+  const today = state.meta.today;
+  const days = state.weekByDay || [];
+  const max = Math.max(1, ...days.map((day) => day.deep + day.shallow + day.admin));
+  const planDay = Number(state.settings.defaultDailyPlanHours || 8);
+  const weekStart = addDays(today, -((new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7));
+  return html`<section class="card side-card">
+    <header class="card-head"><h3>This week</h3><span class="muted">${state.summary.currentWeekLabel}</span></header>
+    <div class="week-bars">
+      ${days.map((day, index) => {
+        const date = addDays(weekStart, index);
+        const total = day.deep + day.shallow + day.admin;
+        const height = (value) => `${(value / Math.max(max, planDay)) * 100}%`;
+        return html`<div class="${cx('week-day', date === today && 'is-today', date > today && 'is-future')}" title="${day.day}: ${formatHours(total)}">
+          <div class="week-stack"><i class="seg-admin" style="height:${height(day.admin)}"></i><i class="seg-shallow" style="height:${height(day.shallow)}"></i><i class="seg-deep" style="height:${height(day.deep)}"></i></div>
+          <span>${day.day[0]}</span>
+        </div>`;
+      })}
+    </div>
+    <div class="legend"><span><i class="seg-deep"></i>Deep</span><span><i class="seg-shallow"></i>Shallow</span><span><i class="seg-admin"></i>Admin</span></div>
+  </section>`;
+}
+
+function renderAttention() {
+  const state = store.state;
+  const projects = state.projects.filter((project) => ['to_do', 'next_up', 'doing'].includes(project.status) && project.health !== 'healthy').slice(0, 5);
+  if (!projects.length) return '';
+  return html`<section class="card side-card">
+    <header class="card-head"><h3>Needs attention</h3><a class="link" href="/projects">All ${icon('arrow-right', { size: 13 })}</a></header>
+    <ul class="mini-list">${projects.map((project) => html`<li data-key="att-${project.id}">
+      <a href="/projects/${encodeURIComponent(project.id)}" class="mini-main"><i class="health health-${project.health}"></i><span>${project.name}</span>
+        <small>${project.dueInDays != null && project.dueInDays <= 7 ? (project.dueInDays < 0 ? `${-project.dueInDays}d overdue` : `due in ${project.dueInDays}d`) : `touched ${project.lastTouchedLabel}`}</small></a>
+      <button type="button" class="icon-button tiny" data-action="today-start-project" data-id="${project.id}" title="Start a focus timer">${icon('play', { size: 12 })}</button>
+    </li>`)}</ul>
+  </section>`;
+}
+
+function renderComingUp() {
+  const state = store.state;
+  const today = state.meta.today;
+  const horizon = addDays(today, 7);
+  const items = [];
+  for (const task of state.tasks.items) {
+    const due = task.schedule?.dueDate;
+    if (task.trashedAt || task.status !== 'open' || !due || due <= today || due > horizon) continue;
+    items.push({ date: due, kind: 'task', label: task.title, id: task.id });
+  }
+  for (const project of state.projects) {
+    if (project.deadline && project.deadline >= today && project.deadline <= addDays(today, 21) && !['done', 'dropped'].includes(project.status)) items.push({ date: project.deadline, kind: 'deadline', label: `${project.name} deadline`, id: project.id });
+  }
+  for (const idea of state.creation.ideas) {
+    if (idea.date && idea.date > today && idea.date <= horizon && !['done', 'dropped'].includes(idea.status) && !idea.taskId) items.push({ date: idea.date, kind: 'idea', label: idea.title, id: idea.id });
+  }
+  if (!items.length) return '';
+  items.sort((a, b) => a.date.localeCompare(b.date));
+  return html`<section class="card side-card">
+    <header class="card-head"><h3>Coming up</h3><a class="link" href="/tasks?list=next7">Upcoming ${icon('arrow-right', { size: 13 })}</a></header>
+    <ul class="agenda">${items.slice(0, 8).map((item) => html`<li data-key="up-${item.kind}-${item.id}">
+      <span class="agenda-date"><b>${daysBetween(today, item.date) === 1 ? 'Tmrw' : formatDate(item.date, { today }).replace(/ \d{4}$/, '')}</b></span>
+      <button type="button" class="agenda-label kind-${item.kind}" data-action="today-open" data-kind="${item.kind}" data-id="${item.id}">${icon(item.kind === 'deadline' ? 'flag' : item.kind === 'idea' ? 'creation' : 'circle', { size: 12 })}${item.label}</button>
+    </li>`)}</ul>
+  </section>`;
+}
+
+function renderReadingNow() {
+  const books = store.state.reading.books.filter((book) => book.status === 'reading');
+  if (!books.length) return '';
+  return html`<section class="card side-card">
+    <header class="card-head"><h3>Reading now</h3><a class="link" href="/reading">Shelf ${icon('arrow-right', { size: 13 })}</a></header>
+    <div class="reading-now">${books.slice(0, 3).map((book) => html`<button type="button" class="reading-now-item" data-action="today-open" data-kind="book" data-id="${book.id}">
+      ${renderCover(book, 'tiny')}
+      <span><b>${book.title}</b><small>${book.authors.join(', ')}</small></span></button>`)}</div>
+  </section>`;
+}
+
+function renderChallenge() {
+  const challenge = store.state.challenge;
+  if (!challenge) return '';
+  return html`<section class="card side-card">
+    <header class="card-head"><h3>Challenge</h3><span class="muted">${challenge.daysLeft}d left</span></header>
+    <p class="challenge-text">${challenge.text}</p>
+    <div class="pips">${Array.from({ length: challenge.target }, (_, index) => html`<i class="${index < challenge.progress ? 'on' : ''}"></i>`)}<span>${challenge.progress}/${challenge.target}</span></div>
+  </section>`;
+}
+
+export async function editEntry(id) {
+  const entry = store.state.timeEntries.find((item) => item.id === id);
+  if (!entry) return;
+  const values = await formDialog({
+    title: 'Edit time entry',
+    submitLabel: 'Save entry',
+    fields: [
+      { name: 'description', label: 'What', value: entry.description, required: true, autofocus: true },
+      { name: 'projectId', label: 'Project', type: 'select', value: entry.projectId || '', options: [{ value: '', label: 'General (no project)' }, ...store.state.projects.map((project) => ({ value: project.id, label: project.name }))] },
+      { name: 'activityType', label: 'Activity', type: 'select', value: entry.activityType, options: Object.entries(ACTIVITY_LABELS).map(([value, label]) => ({ value, label })) },
+      { name: 'durationMinutes', label: 'Minutes', type: 'number', value: entry.durationMinutes, min: 1, max: 1440, required: true },
+      { name: 'date', label: 'Date', type: 'date', value: entry.date, required: true },
+      { name: 'time', label: 'Start time', type: 'time', value: entry.time || '' },
+    ],
+  });
+  if (!values) return;
+  act.updateEntry(id, {
+    description: values.description,
+    projectId: values.projectId || null,
+    activityType: values.activityType,
+    durationMinutes: Number(values.durationMinutes),
+    date: values.date,
+    time: values.time || null,
+  });
+}
+
+let descriptionTimer = 0;
+export function onTimerDescription(value) {
+  clearTimeout(descriptionTimer);
+  descriptionTimer = setTimeout(() => act.updateTimer({ description: value }), 700);
+}
+
+export const actions = {
+  'today-rec-start': () => {
+    const rec = visibleRecommendation();
+    if (rec) act.startTimer({ projectId: rec.projectId, description: rec.action });
+  },
+  'today-rec-next': () => { store.ui.recIndex = (store.ui.recIndex || 0) + 1; render(); },
+  'today-rec-dismiss': () => { store.ui.recDismissed = true; render(); },
+  'today-rec-restore': () => { store.ui.recDismissed = false; render(); },
+  'today-start-blank': () => openCapture({ kind: 'timer' }),
+  'today-start-project': (el) => { const project = lookup.project(el.dataset.id); act.startTimer({ projectId: project.id, description: project.nextAction || `Focused work on ${project.name}` }); },
+  'today-log': () => openCapture({ kind: 'log' }),
+  'today-open': (el) => {
+    const kind = el.dataset.kind;
+    if (kind === 'deadline') act.openProject(el.dataset.id);
+    else act.openRecord(kind, el.dataset.id);
+  },
+  'today-timer-project': (el) => pickProject({ anchor: el, value: store.state.activeSession?.projectId ?? null, title: 'Timer project', allowInbox: true, onPick: (projectId) => act.updateTimer({ projectId }) }),
+  'today-timer-type': (el) => pickFromList({ anchor: el, title: 'Activity', value: store.state.activeSession?.activityType, options: Object.entries(ACTIVITY_LABELS).map(([value, label]) => ({ value, label })), onPick: (activityType) => act.updateTimer({ activityType }) }),
+  'entry-menu': (el) => entryMenu(el.closest('[data-entry]').dataset.entry, el, { onEdit: editEntry }),
+  'project-menu': (el) => projectMenu(el.dataset.id, el),
+};
+
+export default { id: 'today', render: render_, actions, presence: () => ({ title: 'Today' }) };

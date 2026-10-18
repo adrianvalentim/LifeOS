@@ -8,7 +8,7 @@ import { readStore, DEMO_STORE_PATH, getState, createTask, updateTask, setTaskPr
   mutateStore, writeStore, purgeExpiredTaskTrash } from '../src/lifeos-data.mjs';
 import { createCloudTaskService, taskDocumentFromStore } from '../src/cloud-task-service.mjs';
 import { withTaskRepository, createOnlineTaskCoordinator } from '../src/task-online.mjs';
-import { renderTasks, createTasksUiState } from '../public/tasks.js';
+import { renderTasksScreen } from './ui-harness.mjs';
 
 async function fixture(t) {
   const dir = await mkdtemp(path.join(tmpdir(), 'lifeos-online-'));
@@ -39,8 +39,8 @@ test('desktop task editing, capture and project-to-Inbox semantics share the sam
   await f.using(async () => {
     const state = await getState(f.storePath);
     assert.equal(state.tasks.items[0].notes, 'Mercury fixture edit'); assert.equal(state.tasks.authority.online, true);
-    const html = renderTasks(state.tasks, state.projects, state.domains, createTasksUiState());
-    assert.ok(html.includes('data-task-create')); assert.ok(html.includes('shared cloud storage')); assert.ok(!html.includes('editing is paused'));
+    const html = renderTasksScreen(state);
+    assert.ok(html.includes('data-quick-add')); assert.ok(html.includes('Synced to cloud')); assert.ok(!html.includes('Task transfer pending'));
     await updateTask({ taskId: 'fixture-task', title: 'Desktop fixture edit' }, f.storePath);
     await setTaskPriority({ taskId: 'fixture-task', priority: 'high' }, f.storePath);
     const child = (await createTask({ title: 'Child fixture', parentTaskId: 'fixture-task' }, f.storePath)).task;
@@ -61,7 +61,7 @@ test('offline reads use the cache, task writes fail, and unrelated local records
   const f = await fixture(t); f.offline(true);
   await f.using(async () => {
     const state = await getState(f.storePath); assert.equal(state.tasks.authority.online, false);
-    assert.match(renderTasks(state.tasks, state.projects, state.domains, createTasksUiState()), /Showing cached tasks/);
+    assert.match(renderTasksScreen(state), /Offline — cached tasks, reconnect to edit/);
     const before = await readFile(f.storePath);
     await assert.rejects(createTask({ title: 'Offline unsaved fixture' }, f.storePath), /offline/);
     assert.deepEqual(await readFile(f.storePath), before);

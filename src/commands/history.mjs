@@ -16,7 +16,7 @@ defineCommand({
 
 async function undoEntry(entry, ctx, { verb, redo = false }) {
   if (entry.undoneBy) throw new CommandError('That change was already undone.');
-  const label = `${verb} ${entry.label?.replace(/^Undid |^Redid /, '') || entry.command}`;
+  const label = `${verb}: ${entry.label?.replace(/^(Undid|Redid):? /, '') || entry.command}`;
   ctx.operation.label = label;
   if (redo) ctx.operation.redoOf = entry.id;
   else ctx.operation.undoOf = entry.id;

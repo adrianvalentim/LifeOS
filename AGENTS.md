@@ -1,34 +1,36 @@
 # LifeOS Agent Guide
 
-LifeOS is a local-first personal almanac operated and modified through Codex. Preserve reliable personal records, reproducible statistics, and the V2 Editorial interface.
+LifeOS is a local-first personal almanac operated and modified by its owner and by agents (Codex, Claude Code, any MCP client). Preserve reliable personal records, reproducible statistics, and the V2 Editorial interface.
 
 ## Read what the task needs
 
-Use the stable CLI for ordinary logging, tasks, stats, and recommendations. Read source when implementation, bug investigation, or a schema change needs it.
+Use the command layer for ordinary work — the `lifeos` MCP server, `lifeos run <command>`, or the focused CLI verbs below. Read source when implementation, bug investigation, or a schema change needs it.
 
 [`PROJECT_STATE.md`](PROJECT_STATE.md) is the canonical detailed handoff. Use its relevant sections; small fixes and documentation edits do not require the whole handoff or repository map.
 
 | Work | Context |
 | --- | --- |
-| CLI operations | [CLI contract](PROJECT_STATE.md#11-cli-contract) |
+| CLI, MCP, SDK operations | [Command layer](PROJECT_STATE.md#10-command-layer-local-http-and-events), [CLI contract](PROJECT_STATE.md#11-cli-contract) |
 | Schema, statistics, or tasks | [Persisted model](PROJECT_STATE.md#7-persisted-data-model), [calculations](PROJECT_STATE.md#8-derived-calculations), relevant [maintenance workflow](PROJECT_STATE.md#16-maintenance-workflows) |
 | Storage, backups, or imports | [Persistence](PROJECT_STATE.md#9-persistence-and-recovery), [private-data transition](PROJECT_STATE.md#15-demo-data-and-the-transition-to-real-data) |
 | UI or desktop | [Browser contracts](PROJECT_STATE.md#12-browser-interface-and-control-state), [startup and refresh](PROJECT_STATE.md#6-starting-and-stopping-the-system) |
-| Codex bridge | [Codex rail](PROJECT_STATE.md#13-codex-rail) |
+| Codex or Claude bridge | [Agent rail](PROJECT_STATE.md#13-agent-rail) |
 | Structural or roadmap changes | [Architecture](PROJECT_STATE.md#4-architecture), [rationale](PROJECT_STATE.md#14-why-these-development-decisions-were-made), [limitations](PROJECT_STATE.md#18-known-limitations-and-deliberate-deferrals), [next phase](PROJECT_STATE.md#19-recommended-next-implementation-order) |
 
 ## CLI fast path
 
 ```bash
+npm run lifeos -- overview                     # today, timer, health, overdue tasks
+npm run lifeos -- commands                     # every command; `describe <name>` shows its schema
+npm run lifeos -- run tasks.create --title "Draft Act III" --projectId portia --priority high --tags writing
+npm run lifeos -- run time.log --durationMinutes 180 --projectId vulcano --activityType creative --description "Edited eclipse sequence"
+npm run lifeos -- run ui.navigate --to /projects/portia   # drives the open window
+npm run lifeos -- activity                     # recent changes; `undo [operationId]` reverts one
 npm run lifeos -- projects --health
-npm run lifeos -- tasks --project "Portia"
-npm run lifeos -- tasks add --title "Draft Act III" --project "Portia" --priority high --tag writing
 npm run lifeos -- stats --range week
-npm run lifeos -- log --project "Vulcano" --duration 180 --type creative --desc "Edited eclipse sequence"
-npm run lifeos -- storage status
 ```
 
-Use `--json` on reads when useful and verify writes with a focused read. Preserve the user's language in `rawInput`. Omit a project only for general inbox/admin work; report an unknown explicit project instead of silently logging general work. Activity types are `deep_work`, `shallow_work`, `admin`, `research`, `creative`, and `communication`.
+MCP clients use `node scripts/lifeos-mcp.mjs` (this folder's `.mcp.json` registers it). Use `--json` on reads when useful and verify writes with a focused read. Preserve the user's language in `rawInput`. Omit a project only for general inbox/admin work; report an unknown explicit project instead of silently logging general work. Activity types are `deep_work`, `shallow_work`, `admin`, `research`, `creative`, and `communication`.
 
 ## Personal data boundaries
 
@@ -37,6 +39,10 @@ Use `--json` on reads when useful and verify writes with a focused read. Preserv
 - Prefer supported CLI/routes and validated, atomic writes. Preserve concurrent edits. The active `.bak` is recovery state, not a second source of truth.
 - Google Drive snapshots are secondary copies to one explicitly selected folder; do not guess between accounts. Backup failure must not invalidate a successful local write.
 - Use an isolated `LIFEOS_DATA_DIR` with disposable fixtures for write-oriented UI checks. Routine development does not authorize changes to the user's records.
+
+## One command layer
+
+Every capability is one command in `src/commands/` with a zod input schema. The same command serves the UI (`POST /api/run/<name>`), CLI, SDK (`src/sdk.mjs`), HTTP and MCP, so agents can do everything the person can. Add new capabilities as commands, never as one-off routes or UI-only logic. Store writes go through `mutateStore`, which journals exact before/after patches for undo and Activity; never write the store another way. Workspace arrangement (start screen, theme, sidebar, saved views, pins) lives in the `lifeos.json.workspace.json` sidecar and is changed through `workspace.*`, `views.*` and `pins.set`.
 
 ## Domain contracts
 
@@ -50,12 +56,12 @@ Before changing a feature, read its detailed model and browser contracts linked 
 - Creation stores ideas in `creation.ideas[]` with five workflow statuses, Markdown and flexible types. Dated Shorts create one linked task through the shared transaction; preserve task identity, subtree/Trash semantics and conflict checks. Keep scripts out of task notes/cloud documents, and preserve editor drafts on failed saves.
 - Cache covers only for saved books in adjacent `reading-covers/`; preserve original remote URLs, remove cached files with their book, and keep regenerable images out of JSON snapshots.
 
-## Codex rail and product boundaries
+## Agent rail and product boundaries
 
-- The installed `codex app-server` using the signed-in ChatGPT account is the only AI transport. Do not add OpenAI API/API-key authentication, an SDK client, Ollama, Whisper, or an alternate model service.
-- Scope the rail to this absolute workspace. Route approvals and `request_user_input` to the user through the rail; never auto-accept them.
-- Voice stays disabled until app-server exposes a verified path using the signed-in account. Do not substitute browser speech services or another transport.
-- Preserve V2 Editorial: warm paper, serif masthead, thin rules, compact information, and persistent right Codex rail. Default to a useful Projects screen. Preserve `design plan/` originals unless revision is requested.
+- The rail's only AI transports are installed, signed-in applications: `codex app-server` with the ChatGPT account, and the `claude` CLI (Claude Code) with the person's Claude login. Do not add API-key authentication, an API SDK client, Ollama, Whisper, or an alternate model service.
+- Scope the rail to this absolute workspace. Route approvals, permission prompts, `request_user_input` and Claude's questions to the person through the rail; never auto-accept them. Claude rail sessions run with `--permission-mode manual` and pre-allow only the journaled LifeOS MCP tools.
+- Voice stays disabled until a verified path exists through the signed-in apps. Do not substitute browser speech services or another transport.
+- Preserve V2 Editorial: warm paper and ink themes, serif display type, thin rules, compact information, and the persistent right agent rail. The start screen is configurable and defaults to Projects. Preserve `design plan/` originals unless revision is requested.
 - Keep HTTP loopback-only. The macOS development app depends on this workspace and Node; self-contained distribution, notarization, updates, and Windows/Linux packaging remain deferred.
 - For installed-app browser/backend changes, **LifeOS Dev → Refresh LifeOS** (`Command-R`) restarts the workspace server and reloads the current route. Use that refresh to inspect changes.
 
@@ -65,6 +71,6 @@ Carry the requested change through implementation, relevant verification, and fi
 
 Local tests use demo data and temporary stores. Run affected tests and fix regressions without asking again. Inspect rendered UI when appearance or interaction changes. Documentation-only edits need an accuracy, link, and diff review. Broaden or repeat checks when failures or remaining uncertainty justify it.
 
-Before committing, run `npm run check` (syntax, Node tests, Tauri compile check), inspect the exact diff, stage explicit reviewed paths, and scan staged content for secrets/private data. Preserve unrelated changes. Report what was verified and any blocker; compilation alone does not establish live UI or signed-in Codex behavior. Update relevant handoff sections when behavior or architecture changes.
+Before committing, run `npm run check` (syntax, Node tests, Tauri compile check), inspect the exact diff, stage explicit reviewed paths, and scan staged content for secrets/private data. Preserve unrelated changes. Report what was verified and any blocker; compilation alone does not establish live UI or signed-in Codex/Claude behavior. Update relevant handoff sections when behavior or architecture changes.
 
 Basis: [OpenAI's guidance on skills and prompts](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra): task-specific context, concrete constraints, and clear completion criteria.

@@ -6,7 +6,7 @@ import test from 'node:test';
 import { readStore, DEMO_STORE_PATH, createTask, mutateStore, writeStore, getState, buildState } from '../src/lifeos-data.mjs';
 import { prepareTaskCutover, fenceTaskCutover, verifyCutoverManifest, markTaskCutoverActive, digest } from '../src/task-cutover.mjs';
 import { readTaskAuthority } from '../src/task-authority.mjs';
-import { renderTasks, createTasksUiState } from '../public/tasks.js';
+import { renderTasksScreen } from './ui-harness.mjs';
 import { createTaskService } from '../src/task-service.mjs';
 import { withTaskRepository } from '../src/task-online.mjs';
 
@@ -54,8 +54,8 @@ test('pending task fence blocks task rewrites but preserves unrelated local writ
   await markTaskCutoverActive(manifest, 2);
   const state = await withTaskRepository(storePath, { read: async () => ({ revision: 2, document: { ...JSON.parse(await readFile(manifest.documentPath)), phase: 'active' } }) }, () => getState(storePath));
   assert.equal(state.tasks.authority.phase, 'active');
-  const html = renderTasks(state.tasks, state.projects, state.domains, createTasksUiState());
-  assert.ok(html.includes('data-task-create')); assert.ok(html.includes('Preserve this fixture')); assert.ok(!html.includes('Task transfer pending'));
+  const html = renderTasksScreen(state);
+  assert.ok(html.includes('data-quick-add')); assert.ok(html.includes('Preserve this fixture')); assert.ok(!html.includes('Task transfer pending'));
 });
 test('tampered backup/import artifacts prevent cutover', async t => {
   const { prepare } = await fixture(t), manifest = await prepare();

@@ -6,7 +6,8 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { createCreationIdea, updateCreationIdea, readStore, DEMO_STORE_PATH, migrateStore, validateStore,
   createTask, reorderTask, setTaskCompletion, setTaskPriority, updateTask, trashTask } from '../src/lifeos-data.mjs';
-import { createCreationUiState, renderCreation, visibleCreationIdeas, formatMarkdownSelection } from '../public/creation.js';
+import creationScreen, { formatSelection as formatMarkdownSelection, visibleIdeas } from '../public/app/screens/creation.js';
+import { store } from '../public/app/store.js';
 import { taskDocumentFromStore } from '../src/cloud-task-service.mjs';
 import { withTaskRepository } from '../src/task-online.mjs';
 
@@ -134,20 +135,23 @@ test('Creation participates in the existing cloud task transaction, and offline 
 });
 
 test('board, list, type filters and sorts share the same records and escape user input', () => {
-  const ui = createCreationUiState();
   const ideas = [
-    { id: 'one', title: '<script>bad</script>', markdown: 'Body', type: 'short', status: 'doing', sortOrder: 1, date: null },
-    { id: 'two', title: 'A film', markdown: '', type: 'long_video', status: 'done', sortOrder: 2, date: '2026-10-21' },
-    { id: 'three', title: 'Essay', markdown: '', type: 'Essay', status: 'dropped', sortOrder: 3, date: '2026-10-20' },
+    { id: 'one', title: '<script>bad</script>', markdown: 'Body', type: 'short', status: 'doing', sortOrder: 1, date: null, updatedAt: '2026-10-01T00:00:00Z' },
+    { id: 'two', title: 'A film', markdown: '', type: 'long_video', status: 'done', sortOrder: 2, date: '2026-10-21', updatedAt: '2026-10-02T00:00:00Z' },
+    { id: 'three', title: 'Essay', markdown: '', type: 'Essay', status: 'dropped', sortOrder: 3, date: '2026-10-20', updatedAt: '2026-10-03T00:00:00Z' },
   ];
-  const html = renderCreation({ ideas }, ui);
-  for (const status of Object.keys({ to_do: 1, next_up: 1, doing: 1, done: 1, dropped: 1 })) assert.ok(html.includes(`data-creation-drop="${status}"`));
+  store.state = { meta: { today: '2026-10-18' }, creation: { ideas }, tasks: { items: [] } };
+  store.ui.filter = '';
+  Object.assign(store.prefs.creation, { view: 'board', type: 'all', status: 'all', sort: 'manual', editorMode: 'edit' });
+  const view = (params = '', id = null) => { store.ui.route = { section: 'creation', id, params: new URLSearchParams(params) }; return String(creationScreen.render()); };
+  const html = view('view=board');
+  for (const status of ['to_do', 'next_up', 'doing', 'done', 'dropped']) assert.ok(html.includes(`data-idea-drop="${status}"`));
   assert.ok(!html.includes('<script>bad')); assert.ok(html.includes('&lt;script&gt;bad'));
-  ui.type = 'short'; assert.deepEqual(visibleCreationIdeas(ideas, ui).map(i => i.id), ['one']);
-  ui.type = 'all'; ui.sort = 'date'; assert.deepEqual(visibleCreationIdeas(ideas, ui).map(i => i.id), ['three', 'two', 'one']);
-  ui.query = 'body'; assert.equal(visibleCreationIdeas(ideas, ui).length, 1);
-  ui.query = ''; ui.view = 'list'; assert.ok(renderCreation({ ideas }, ui).includes('<table'));
-  ui.selectedId = 'one'; assert.ok(renderCreation({ ideas }, ui).includes('data-creation-field="markdown"'));
+  store.prefs.creation.type = 'short'; assert.deepEqual(visibleIdeas().map(i => i.id), ['one']);
+  store.prefs.creation.type = 'all'; store.prefs.creation.sort = 'date'; assert.deepEqual(visibleIdeas().map(i => i.id), ['three', 'two', 'one']);
+  store.ui.filter = 'body'; assert.equal(visibleIdeas().length, 1);
+  store.ui.filter = ''; assert.ok(view('view=list').includes('<table'));
+  assert.ok(view('', 'one').includes('data-idea-field="markdown"'));
 });
 
 test('Markdown formatting preserves selected text, Unicode, and multiline lists', () => {

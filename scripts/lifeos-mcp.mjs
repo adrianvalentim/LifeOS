@@ -44,7 +44,7 @@ for (const command of registry.values()) {
       const output = await runCommand(command.name, args, {
         storePath: DEFAULT_STORE_PATH,
         source: 'mcp',
-        actor: client?.title || client?.name || 'MCP agent',
+        actor: process.env.LIFEOS_ACTOR || client?.title || client?.name || 'MCP agent',
       });
       const payload = { result: output.result };
       if (output.operationId) Object.assign(payload, { operationId: output.operationId, label: output.label });

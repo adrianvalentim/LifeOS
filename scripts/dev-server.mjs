@@ -5,6 +5,7 @@ import { readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getOrCacheReadingBookCover } from '../src/book-cover-cache.mjs';
+import { claudeCodeAgent } from '../src/claude-code-agent.mjs';
 import { CODEX_VOICE_CAPABILITY, codexAppServer } from '../src/codex-app-server.mjs';
 import { CommandError, listCommands, runCommand, serverInfoPath } from '../src/commands/index.mjs';
 import { DEFAULT_STORE_PATH, initializeDefaultStore } from '../src/lifeos-storage.mjs';
@@ -65,7 +66,10 @@ const server = createServer(async (req, res) => {
       return sendJson(res, await clientState(url.searchParams.get('range') || 'week'));
     }
     if (url.pathname === '/api/commands' && req.method === 'GET') {
-      return sendJson(res, { commands: listCommands() });
+      return sendJson(res, {
+        commands: listCommands(),
+        mcp: { command: 'node', args: [path.join(root, 'scripts', 'lifeos-mcp.mjs')], cwd: root },
+      });
     }
     const runMatch = url.pathname.match(/^\/api\/run\/([a-zA-Z.]+)$/);
     if (runMatch && req.method === 'POST') {
@@ -79,7 +83,7 @@ const server = createServer(async (req, res) => {
       });
       const body = { result: output.result, operationId: output.operationId || null, label: output.label || null };
       if (url.searchParams.get('state') === '1') {
-        if (output.state) body.state = { ...output.state, workspace: await readWorkspace() };
+        if (output.state) body.state = { ...output.state, workspace: await readWorkspace(), storeMtime: await storeMtime() };
         else if (output.result?.workspace) body.workspace = output.result.workspace;
       }
       return sendJson(res, body);
@@ -149,6 +153,49 @@ const server = createServer(async (req, res) => {
       await codexAppServer.respondToServerRequest(body.id, body.result);
       return sendJson(res, { ok: true });
     }
+    // Claude Code: the installed, signed-in `claude` CLI, same shapes as Codex.
+    if (url.pathname === '/api/claude/bootstrap' && req.method === 'GET') {
+      let executable;
+      try {
+        executable = claudeCodeAgent.resolveExecutable();
+      } catch (error) {
+        return sendJson(res, { connection: { status: 'error', detail: error.message }, account: null, threads: [], pendingRequests: [] });
+      }
+      const account = await claudeCodeAgent.account({ refresh: url.searchParams.get('refresh') === '1' });
+      return sendJson(res, {
+        connection: { status: 'connected', executable },
+        account,
+        threads: await claudeCodeAgent.listThreads(),
+        pendingRequests: [...claudeCodeAgent.serverRequests.values()].map((entry) => entry.request),
+      });
+    }
+    if (url.pathname.startsWith('/api/claude/') && req.method === 'POST') assertJsonPost(req);
+    if (url.pathname === '/api/claude/thread/start' && req.method === 'POST') {
+      return sendJson(res, { thread: await claudeCodeAgent.startThread() });
+    }
+    if (url.pathname === '/api/claude/thread/read' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.threadId, 'threadId');
+      return sendJson(res, { thread: await claudeCodeAgent.readThread(body.threadId) });
+    }
+    if (url.pathname === '/api/claude/turn/start' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.threadId, 'threadId');
+      requireString(body.message, 'message');
+      return sendJson(res, { turn: await claudeCodeAgent.startTurn(body.threadId, body.message) });
+    }
+    if (url.pathname === '/api/claude/turn/interrupt' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.threadId, 'threadId');
+      await claudeCodeAgent.interruptTurn(body.threadId);
+      return sendJson(res, { ok: true });
+    }
+    if (url.pathname === '/api/claude/request/respond' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.id, 'id');
+      await claudeCodeAgent.respondToServerRequest(body.id, body.result);
+      return sendJson(res, { ok: true });
+    }
     if (url.pathname.startsWith('/api/')) return sendJson(res, { error: 'Not found' }, 404);
     return serveStatic(url.pathname, res);
   } catch (error) {
@@ -159,6 +206,7 @@ const server = createServer(async (req, res) => {
 });
 
 codexAppServer.subscribe((event) => broadcastEvent('codex', event));
+claudeCodeAgent.subscribe((event) => broadcastEvent('claude', event));
 
 const initialization = await initializeDefaultStore();
 if (initialization.created) {
@@ -171,7 +219,7 @@ const dataWatcher = watch(dataDir, (_eventType, filename) => {
   const name = String(filename || '');
   if (name === storeName) {
     clearTimeout(dataChangeTimer);
-    dataChangeTimer = setTimeout(() => broadcastEvent('lifeos', { type: 'stateChanged' }), 60);
+    dataChangeTimer = setTimeout(async () => broadcastEvent('lifeos', { type: 'stateChanged', mtime: await storeMtime() }), 60);
   } else if (name === `${storeName}.history.jsonl`) {
     clearTimeout(historyChangeTimer);
     historyChangeTimer = setTimeout(() => broadcastEvent('history', { type: 'historyChanged' }), 80);
@@ -211,7 +259,12 @@ function listen(port) {
 
 async function clientState(range) {
   const [state, workspace] = await Promise.all([getState(undefined, { range }), readWorkspace()]);
-  return { ...state, workspace };
+  return { ...state, workspace, storeMtime: await storeMtime() };
+}
+
+// Lets a window skip the refetch triggered by its own write.
+async function storeMtime() {
+  try { return (await stat(DEFAULT_STORE_PATH)).mtimeMs; } catch { return 0; }
 }
 
 function sanitizePresence(body) {
@@ -440,6 +493,7 @@ async function shutdown() {
     if (info.pid === process.pid) await unlink(serverInfoPath(DEFAULT_STORE_PATH));
   } catch { /* already gone */ }
   await codexAppServer.stop().catch(() => undefined);
+  await claudeCodeAgent.stop().catch(() => undefined);
   server.close(() => process.exit(0));
 }
 

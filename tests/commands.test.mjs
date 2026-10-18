@@ -53,7 +53,7 @@ test('writes are journaled with source and wording, and undo/redo restore exact 
   const completed = await run('tasks.complete', { taskId });
   assert.equal(completed.label, 'Completed “Journal me”');
   const undone = await run('history.undo', {});
-  assert.equal(undone.label, 'Undid Completed “Journal me”');
+  assert.equal(undone.label, 'Undid: Completed “Journal me”');
   assert.deepEqual((await readStore(storePath)).tasks.items.find((task) => task.id === taskId), before);
 
   await run('history.redo', {});
