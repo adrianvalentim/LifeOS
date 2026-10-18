@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { endianness } from 'node:os';
 import { promisify } from 'node:util';
 import { captureWebPage, readStore } from '../src/lifeos-data.mjs';
+import { operationContext } from '../src/lifeos-history.mjs';
 
 const manifest = JSON.parse(await readFile(new URL('../extensions/lifeos-capture/manifest.json', import.meta.url), 'utf8'));
 const extensionId = createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex')
@@ -31,7 +32,10 @@ async function handle(message) {
     return { ok: true };
   }
   if (message.action !== 'capture') throw new Error('Unsupported capture request.');
-  const result = await captureWebPage({ url: message.url, title: message.title });
+  // Journaled like every other change, so a capture appears in Activity and can be undone.
+  const operation = { command: 'capture.webPage', source: 'capture', actor: 'Browser capture',
+    label: (captured) => `Saved “${String(captured?.task?.title || 'a page').slice(0, 60)}” from the browser` };
+  const result = await operationContext.run(operation, () => captureWebPage({ url: message.url, title: message.title }));
   return {
     ok: true, created: result.created, url: result.url,
     task: { id: result.task.id, title: result.task.title, priority: result.task.priority,

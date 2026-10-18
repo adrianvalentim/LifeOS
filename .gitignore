@@ -19,3 +19,7 @@ data/.*.tmp
 *.task-pending.json
 reading-covers/
 .playwright-cli/
+
+*.history.jsonl
+*.workspace.json
+*.server.json
