@@ -1,0 +1,18 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "lifeos-tasks-demo",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-09",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "send_metrics": false,
+  "observability": { "enabled": false },
+  "vars": {
+    "MCP_ORIGIN": "https://replace-with-approved-worker-host.invalid",
+    "OWNER_GITHUB_ID": "REPLACE_WITH_VERIFIED_OWNER_ID"
+  },
+  "kv_namespaces": [
+    { "binding": "OAUTH_KV", "id": "REPLACE_WITH_APPROVED_DEMO_NAMESPACE_ID" }
+  ]
+}

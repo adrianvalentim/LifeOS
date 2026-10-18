@@ -44,6 +44,10 @@ export function createTasksUiState() {
 }
 
 export function renderTasks(tasks, projects, domains, ui, options = {}) {
+  if (tasks.authority && !(tasks.authority.mode === 'online' && tasks.authority.phase === 'active')) return `<main class="tasks-main"><header class="tasks-header"><div>
+    <span class="tasks-eyebrow">Task ledger</span><h1>Task transfer pending</h1>
+    <p>Your task snapshot is preserved locally. Editing resumes when the shared task store is activated.</p>
+    </div></header></main>`;
   const filter = normalizeTaskFilter(ui.filter, projects, tasks);
   const scope = taskScope(filter, tasks, projects, options.today);
   const projectById = new Map(projects.map((project) => [project.id, project]));
@@ -73,9 +77,12 @@ export function renderTasks(tasks, projects, domains, ui, options = {}) {
             <span class="tasks-eyebrow">Task ledger</span>
             <h1>${escapeHtml(scope.label)}</h1>
             <p>${escapeHtml(scope.copy)}</p>
+            ${tasks.authority?.mode === 'online' ? `<p role="status">${tasks.authority.online === false
+              ? 'Showing cached tasks. Reconnect before editing tasks.'
+              : 'Tasks use shared cloud storage.'}</p>` : ''}
           </div>
           ${scope.lifecycle === 'trash'
-            ? '<div class="task-retention-note"><b>30 days</b><span>automatic cleanup</span></div>'
+            ? `<div class="task-retention-note"><b>30 days</b><span>${tasks.authority?.mode === 'online' ? 'visible in Trash' : 'automatic cleanup'}</span></div>`
             : renderTaskSummary(scope.summary)}
         </header>
         ${showCreate ? renderTaskCreateForm(projects, filter, ui.creating) : ''}
@@ -140,7 +147,7 @@ export function renderTaskOverlays(tasks, projects, ui, options = {}) {
   return [
     menuTarget ? renderTaskContextMenu(menuTarget, tasks, projects, ui, options) : '',
     selected ? renderTaskDetail(selected, tasks, projects, ui, options) : '',
-    deleteTarget ? renderTaskDeleteConfirmation(deleteTarget, ui) : '',
+    deleteTarget && !(deleteTarget.trashedAt && tasks.authority?.mode === 'online') ? renderTaskDeleteConfirmation(deleteTarget, ui, tasks.authority?.mode === 'online') : '',
   ].join('');
 }
 
@@ -362,8 +369,8 @@ function renderTaskContextMenu(task, tasks, projects, ui, options) {
           <div class="task-menu-items">
             <button class="task-menu-item" data-task-menu-detail="${escapeAttribute(task.id)}" role="menuitem" type="button"><span aria-hidden="true">✎</span>Open details</button>
             <button class="task-menu-item" data-task-restore="${escapeAttribute(task.id)}" role="menuitem" type="button"><span aria-hidden="true">↶</span>Restore</button>
-            <div class="task-menu-separator" role="separator"></div>
-            <button class="task-menu-item danger" data-task-delete-request="${escapeAttribute(task.id)}" role="menuitem" type="button"><span aria-hidden="true">✕</span>Delete forever</button>
+            ${tasks.authority?.mode === 'online' ? '' : `<div class="task-menu-separator" role="separator"></div>
+            <button class="task-menu-item danger" data-task-delete-request="${escapeAttribute(task.id)}" role="menuitem" type="button"><span aria-hidden="true">✕</span>Delete forever</button>`}
           </div>
         </div>
       </div>
@@ -551,9 +558,9 @@ function renderTaskDetail(task, tasks, projects, ui, options) {
             ${trashed
               ? `<div class="task-detail-trash-actions">
                   <button class="task-detail-restore" data-task-restore="${escapeAttribute(task.id)}" type="button">Restore</button>
-                  <button class="task-detail-delete" data-task-delete-request="${escapeAttribute(task.id)}" type="button">Delete forever</button>
+                  ${tasks.authority?.mode === 'online' ? '' : `<button class="task-detail-delete" data-task-delete-request="${escapeAttribute(task.id)}" type="button">Delete forever</button>`}
                 </div>
-                <span class="task-detail-retention">Automatically deleted 30 days after ${escapeHtml(formatTimestampDate(task.trashedAt))}</span>`
+                <span class="task-detail-retention">${tasks.authority?.mode === 'online' ? 'Hidden from Trash' : 'Automatically deleted'} 30 days after ${escapeHtml(formatTimestampDate(task.trashedAt))}</span>`
               : `<button class="task-detail-delete" data-task-delete-request="${escapeAttribute(task.id)}" type="button" ${updating ? 'disabled' : ''}>Move to Trash</button>
                 <div class="task-detail-save">
                   <span data-task-save-state aria-live="polite">${updating ? 'Saving…' : dirty ? 'Unsaved changes' : 'Saved'}</span>
@@ -571,7 +578,7 @@ function renderTaskDetail(task, tasks, projects, ui, options) {
   `;
 }
 
-function renderTaskDeleteConfirmation(task, ui) {
+function renderTaskDeleteConfirmation(task, ui, cloud = false) {
   const deleting = ui.deletingTaskId === task.id;
   const permanent = Boolean(task.trashedAt);
   const descendantCount = Math.max(0, Number(task.allSubtreeTotal || task.subtreeTotal || 1) - 1);
@@ -583,7 +590,7 @@ function renderTaskDeleteConfirmation(task, ui) {
       <section class="task-delete-confirm" role="alertdialog" aria-modal="true" aria-labelledby="delete-task-title" aria-describedby="delete-task-description" ${deleting ? 'aria-busy="true"' : ''}>
         <span class="smallcaps">${permanent ? 'Permanent deletion' : 'Recoverable deletion'}</span>
         <h2 id="delete-task-title">${permanent ? 'Delete' : 'Move'} “${escapeHtml(task.title)}” ${permanent ? 'forever' : 'to Trash'}?</h2>
-        <p id="delete-task-description">${consequence} ${permanent ? 'This cannot be undone.' : 'Trash is cleaned automatically after 30 days; until then, you can restore it.'}</p>
+        <p id="delete-task-description">${consequence} ${permanent ? 'This cannot be undone.' : cloud ? 'You can restore this task from Trash for 30 days. The cloud integration retains the record.' : 'Trash is cleaned automatically after 30 days; until then, you can restore it.'}</p>
         ${ui.deleteError ? `<p class="task-delete-error" role="alert">${escapeHtml(ui.deleteError)}</p>` : ''}
         <div class="task-delete-actions">
           <button data-task-delete-cancel type="button" ${deleting ? 'disabled' : ''}>Cancel</button>
@@ -840,7 +847,7 @@ function taskScope(filter, tasks, projects, today) {
     const trashed = tasks.items.filter(isTrashedTask);
     return {
       label: 'Trash',
-      copy: 'Recover tasks here before automatic deletion after 30 days.',
+      copy: tasks.authority?.mode === 'online' ? 'Recover tasks here for 30 days. Cloud records are retained.' : 'Recover tasks here before automatic deletion after 30 days.',
       summary: summarize(trashed),
       items: taskSubsetRoots(tasks.items, isTrashedTask),
       flat: false,

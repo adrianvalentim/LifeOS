@@ -10,17 +10,36 @@
     "desktop:build": "node scripts/desktop.mjs build",
     "lifeos": "node cli/lifeos.mjs",
     "demo:reset": "node scripts/create-demo-data.mjs --write-active",
-    "check": "node --check public/app.js && node --check public/codex-context.js && node --check public/tasks.js && node --check public/projects.js && node --check public/reading.js && node --check scripts/dev-server.mjs && node --check scripts/desktop.mjs && node --check scripts/create-demo-data.mjs && node --check src/lifeos-data.mjs && node --check src/lifeos-storage.mjs && node --check src/book-catalog.mjs && node --check src/book-cover-cache.mjs && node --check src/codex-app-server.mjs && node --check cli/lifeos.mjs && node --check public/web-links.js && node --check scripts/capture-native-host.mjs && node --check scripts/install-capture-host.mjs && node --check extensions/lifeos-capture/background.js && node --check extensions/lifeos-capture/popup.js && node --check src/task-web-links.mjs && node --check scripts/capture-backup-worker.mjs && npm test && npm run desktop:check",
+    "check": "node --check public/app.js && node --check public/codex-context.js && node --check public/tasks.js && node --check public/projects.js && node --check public/creation.js && node --check src/creation-markdown.mjs && node --check scripts/build-creation-markdown.mjs && node --check public/reading.js && node --check scripts/dev-server.mjs && node --check scripts/desktop.mjs && node --check scripts/create-demo-data.mjs && node --check src/lifeos-data.mjs && node --check src/lifeos-storage.mjs && node --check src/book-catalog.mjs && node --check src/book-cover-cache.mjs && node --check src/codex-app-server.mjs && node --check cli/lifeos.mjs && node --check public/web-links.js && node --check scripts/capture-native-host.mjs && node --check scripts/install-capture-host.mjs && node --check extensions/lifeos-capture/background.js && node --check extensions/lifeos-capture/popup.js && node --check src/task-web-links.mjs && node --check scripts/capture-backup-worker.mjs && node --check src/task-service.mjs && node --check src/tasks-mcp.mjs && node --check src/tasks-mcp-auth.mjs && node --check src/tasks-mcp-http.mjs && node --check scripts/tasks-mcp-server.mjs && node --check workers/tasks-demo/worker.mjs && node --check workers/tasks-demo/demo-tasks.mjs && node --check src/cloud-task-service.mjs && node --check src/tasks-worker.mjs && node --check src/task-authority.mjs && node --check src/task-cutover.mjs && node --check src/task-online.mjs && node --check src/cloud-task-repository.mjs && node --check src/task-query-bootstrap.mjs && node --check scripts/tasks-cloud.mjs && node --check workers/tasks/worker.mjs && npm test && npm run desktop:check",
     "test": "node --test",
-    "capture:install": "node scripts/install-capture-host.mjs"
+    "capture:install": "node scripts/install-capture-host.mjs",
+    "mcp:tasks": "node scripts/tasks-mcp-server.mjs",
+    "mcp:demo:check": "WRANGLER_WRITE_LOGS=false WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --config workers/tasks-demo/wrangler.jsonc",
+    "mcp:demo:test": "node --test tests/tasks-worker.test.mjs",
+    "tasks:cloud": "node scripts/tasks-cloud.mjs",
+    "mcp:private:check": "WRANGLER_WRITE_LOGS=false WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --config workers/tasks/wrangler.jsonc",
+    "build:markdown": "node scripts/build-creation-markdown.mjs"
   },
   "bin": {
     "lifeos": "./cli/lifeos.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.4"
+    "@modelcontextprotocol/client": "2.3.1",
+    "@tauri-apps/cli": "^2.11.4",
+    "esbuild": "0.28.2",
+    "miniflare": "5.20261006.1-alpha",
+    "wrangler": "4.149.0"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.3",
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "dompurify": "3.4.17",
+    "jose": "6.2.12",
+    "marked": "18.1.1",
+    "zod": "4.6.5"
   }
 }

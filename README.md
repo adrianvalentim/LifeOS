@@ -74,13 +74,30 @@ authentication material into the LifeOS store or repository. The selected task
 ID stays in browser `localStorage`; the installed Codex application remains the
 owner of Codex task history.
 
-The server binds only to `127.0.0.1`. It has no remote-access authentication, so
-that loopback boundary must be preserved. Book lookup sends a query to Open
-Library only after an explicit search.
+The browser server binds only to `127.0.0.1`. It has no remote-access
+authentication, so that loopback boundary must be preserved. Book lookup sends
+a query to Open Library only after an explicit search.
+
+A separate [task-only MCP proof](docs/tasks-mcp.md) uses the same local store,
+requires authentication, and defaults to read-only on a separate loopback port.
+An isolated synthetic-only Cloudflare Worker is deployed on the verified Free
+account, with live HTTPS authentication-boundary checks passing. The final
+private Worker and task database are deployed after direct approval. The owner
+completed secure secret entry and connected the private LifeOS Tasks plugin
+through GitHub public identity and OAuth. ChatGPT discovered all eight tools.
+The [private task cloud implementation](docs/tasks-cloud.md) adds D1 revision
+writes, a verified-backup cutover, a cloud CLI and an opt-in desktop/capture
+adapter to the same task store. Guarded activation imported and verified all 37
+existing tasks against a fresh full backup. Desktop and the installed capture
+helper read the shared store; cached tasks remain readable offline and task
+edits require connectivity. Live write tests used a separate fictional table.
+Mercury successfully read the 37 real tasks directly in the main conversation,
+without creating a Codex thread for the lookup.
 
 ## Run locally
 
-Requirements: Node.js 20 or newer. The Codex rail additionally requires the
+Requirements: Node.js 22 or newer (including the Worker development tools).
+The Codex rail additionally requires the
 Codex desktop app or CLI signed in with a ChatGPT account.
 
 ```bash

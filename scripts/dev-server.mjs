@@ -12,6 +12,8 @@ import { openSavedTaskLink } from '../src/task-web-links.mjs';
 import {
   addReadingBook,
   createTask,
+  createCreationIdea,
+  updateCreationIdea,
   deleteProject,
   deleteReadingBook,
   deleteTask,
@@ -93,6 +95,16 @@ const server = createServer(async (req, res) => {
         projectId: body.projectId,
         preserveHistory: true,
       })));
+    }
+    if (['/api/creation/create', '/api/creation/update'].includes(url.pathname) && req.method === 'POST') {
+      const body = await readJson(req, 1024 * 1024);
+      try {
+        const result = await (url.pathname.endsWith('/create') ? createCreationIdea(body) : updateCreationIdea(body));
+        return sendJson(res, result);
+      } catch (error) {
+        if (/Idea|idea|Markdown/.test(error.message)) throw new ClientError(error.message);
+        throw error;
+      }
     }
     if (url.pathname === '/api/tasks/create' && req.method === 'POST') {
       const body = await readJson(req);

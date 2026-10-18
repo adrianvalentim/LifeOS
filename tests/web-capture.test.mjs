@@ -162,7 +162,7 @@ test('native host rejects unknown callers, malformed JSON, oversized and partial
 });
 
 test('macOS installer pins one extension origin and handles spaces and quotes in paths', { skip: process.platform !== 'darwin' }, async (t) => {
-  const { directory } = await fixture(t);
+  const { directory, storePath } = await fixture(t);
   const result = await installCaptureHost({ home: directory, dataDirectory: directory });
   assert.equal(result.hostPath, path.join(directory, 'Library', 'Application Support', 'Google', 'Chrome', 'NativeMessagingHosts', 'com.lifeos.capture.json'));
   const host = JSON.parse(await readFile(result.hostPath, 'utf8'));
@@ -174,6 +174,10 @@ test('macOS installer pins one extension origin and handles spaces and quotes in
   assert.deepEqual(JSON.parse(await readFile(path.join(result.extensionDirectory, 'manifest.json'), 'utf8')), manifest);
   assert.deepEqual(await sendHost(directory, { action: 'ping' }, { launcher: result.launcher }), { ok: true, app: 'LifeOS', version: 1 });
   assert.equal((await sendHost(directory, { action: 'capture', ...PAGE }, { launcher: result.launcher })).ok, true);
+  const before = await readFile(storePath, 'utf8');
+  await writeFile(`${storePath}.task-authority.json`, JSON.stringify({ source: 'cloudflare-d1', phase: 'pending', taskDigest: 'fixture-digest', origin: 'https://tasks.example' }), { mode: 0o600 });
+  const blocked = await sendHost(directory, { action: 'capture', title: 'Fenced fixture', url: 'https://example.org/fenced' }, { launcher: result.launcher });
+  assert.equal(blocked.ok, false); assert.equal(await readFile(storePath, 'utf8'), before);
 });
 
 test('extension uses only click-scoped page access and native messaging, with all assets present', async () => {

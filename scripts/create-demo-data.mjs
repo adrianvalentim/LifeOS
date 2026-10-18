@@ -137,7 +137,7 @@ for (const [dayOffset, time, durationMinutes, projectId, activityType, descripti
 
 const store = {
   meta: {
-    schemaVersion: 10,
+    schemaVersion: 11,
     appName: 'LifeOS',
     tagline: 'A personal almanac',
     timezone: 'America/Sao_Paulo',
@@ -166,6 +166,7 @@ const store = {
   projects,
   tasks: { items: tasks },
   reading: { books: readingBooks },
+  creation: { ideas: [] },
   timeEntries,
   activeSession: null,
   challenge: {

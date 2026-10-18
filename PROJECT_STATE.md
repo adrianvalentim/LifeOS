@@ -28,7 +28,7 @@ a recommendation, or modify LifeOS itself.
 The current foundation is deliberately small:
 
 - a dependency-free browser interface;
-- a local Node.js 20 server;
+- a local Node.js server (Node 22+ including Worker development tools);
 - one portable JSON personal store outside Git;
 - a stable CLI for data operations;
 - a bridge to the **installed** `codex app-server` and its already signed-in
@@ -112,6 +112,13 @@ scripts/dev-server.mjs
 
 cli/lifeos.mjs --------------------------> src/lifeos-data.mjs
 
+scripts/tasks-mcp-server.mjs (separate authenticated loopback MCP)
+  `-- src/tasks-mcp*.mjs -> src/task-service.mjs -> src/lifeos-data.mjs
+
+workers/tasks-demo/worker.mjs (separate synthetic-only HTTPS MCP proof)
+  `-- Workers OAuth Provider + OAuth KV -> src/tasks-mcp.mjs -> demo-tasks.mjs
+      (no personal store, task database, app assets, or Mac proxy)
+
 filesystem change to the active Application Support lifeos.json
   `-- fs.watch -> SSE lifeos event -> browser refetches derived state
 
@@ -170,6 +177,9 @@ Run `npm run dev` and use the printed loopback URL.
 | `public/index.html` | Minimal browser entry point |
 | `public/app.js` | Shared browser state, page routing/event orchestration, API calls, and streamed Codex item handling |
 | `public/tasks.js` | Task scopes, nested tree rendering, progress presentation, accessible controls, and project-detail task panel |
+| `public/creation.js` and `public/creation.css` | Creation board/list, idea pages, auto-save, Markdown editing and task navigation |
+| `src/creation-markdown.mjs` and `scripts/build-creation-markdown.mjs` | Local sanitized Markdown preview entry and reproducible browser bundle |
+| `tests/creation.test.mjs` | Idea migration, validation, conflicts, scheduling/Trash, cloud/offline atomicity and UI projection tests |
 | `public/reading.js` | Reading Kanban/library rendering and catalog/detail presentation |
 | `public/styles.css` | V2 Editorial visual system and responsive layouts |
 | `public/reading.css` | Cover-led Reading workspace, database rows, Kanban cards, and detail overlay |
@@ -190,7 +200,7 @@ are not runtime dependencies.
 
 Requirements:
 
-- Node.js 20 or newer;
+- Node.js 22 or newer (required by Wrangler/workerd development tooling);
 - the Codex desktop app or Codex CLI installed and signed in with a ChatGPT
   account for the rail;
 - `npm install` once for the pinned Tauri CLI development dependency;
@@ -314,8 +324,8 @@ manual steps; the browser-control policy still blocks the extension manager.
 
 ## 7. Persisted data model
 
-The active store is a single JSON object. `schemaVersion` is currently 10, with
-explicit compatibility migrations from versions 2 through 9; there is no
+The active store is a single JSON object. `schemaVersion` is currently 11, with
+explicit compatibility migrations from versions 2 through 10; there is no
 general migration framework yet.
 
 ### `meta`
@@ -478,6 +488,37 @@ surface that shows all five statuses and the all-time finished collection, and
 can filter by tag. Both views mutate the same record through narrow local
 routes. Permanent deletion removes exactly one local book by ID after a named
 browser confirmation and removes its deterministic cached cover.
+
+### `creation.ideas[]`
+
+Schema version 11 adds a local idea collection; older stores migrate to an empty
+`creation.ideas` without changing existing records. Each idea has a unique `id`,
+`title` (1–300 characters), `markdown` (up to 200,000 characters), `type` (1–40
+characters), `status`, nullable calendar `date`, finite `sortOrder`, `createdAt`,
+`updatedAt`, and nullable `taskId`. States are `to_do`, `next_up`, `doing`, `done`,
+and `dropped`. Built-in types are `short` and `long_video`; custom type labels
+are supported. All counts, filters and sorts derive from the idea collection.
+
+A dated Short outside Dropped creates one Inbox task, tagged Creation and Shorts,
+inside the same locked transaction. The idea holds the link; scripts and Markdown
+never enter task notes or cloud task documents. Later title/date changes update
+that task while retaining notes, priority, tags, project and subtree identity.
+Moving an idea to Done completes its non-trashed task subtree; leaving Done reopens
+only its linked task. Removing the date, changing away from Short, or dropping the
+idea moves the linked subtree to recoverable Trash. Re-scheduling restores the
+same task/subtree, restoring trashed ancestors and reopening completed ancestors
+as required by the task contract. Ordinary body edits do not rewrite task fields
+or restore a task manually put in Trash. Edits made directly in Tasks do not
+change the source idea; Creation metadata changes flow toward the linked task.
+A stale link after task purging is allowed and replaced on a later scheduling edit.
+
+Idea edits require `expectedUpdatedAt`; stale editors retain their draft and must
+reload before overwriting a newer save. Browser-created IDs make create retries
+idempotent. Task-affecting changes use the existing online coordinator when cloud
+authority is active: an offline failure leaves both records unchanged. Markdown
+edits remain local and can save offline unless a pending cloud transaction blocks
+all local writes. Creation currently has browser/HTTP operations; no CLI command
+or idea deletion endpoint is exposed.
 
 ### `timeEntries[]`
 
@@ -746,6 +787,98 @@ the entire result, and retain an out-of-repository backup first.
 
 ## 10. Local HTTP and event interface
 
+The separate task-only MCP server is documented in
+[`docs/tasks-mcp.md`](docs/tasks-mcp.md). `npm run mcp:tasks` requires a private
+out-of-workspace authentication file and an existing store. It defaults to
+read-only, binds to `127.0.0.1:3010`, and serves stateless Streamable HTTP at
+`/mcp`. It exposes list/search/get plus optionally create/edit/complete/Trash/
+restore, never permanent deletion, `/api/state`, or the Codex rail. Reads use
+`readStore(..., { initialize: false })`; multi-field `editTask` uses one locked
+transaction with optional `ifUpdatedAt` concurrency protection. OAuth resource
+metadata and JWT/owner/scope verification prepare approved HTTPS forwarding;
+no real-task remote deployment, task access grant, plugin installation, or
+migration has occurred. The existing local JSON remains the task authority.
+
+`workers/tasks-demo/` implements the deployed Cloudflare Free demo with three
+compile-time synthetic tasks and only list/search/get. It uses current Workers
+OAuth Provider 1.x, CIMD public clients, S256 PKCE, browser-bound consent/state,
+canonical resource audiences, an exact numeric GitHub-owner allowlist and
+per-request `tasks:read` checks. GitHub is used for public identity only;
+upstream tokens are not stored. MCP access lasts one hour, with no refresh
+tokens or remembered consent. It has no D1 binding, assets or connection to the
+Mac. Wrangler dry-run and mocked workerd OAuth/MCP tests pass. Existing-account
+Cloudflare sign-in and Workers Free were verified. Direct owner approval enabled
+Wrangler's account/user read, Workers scripts/KV write and offline grant;
+`whoami` verified encrypted credential storage with its key in macOS Keychain.
+Separate direct approval enabled creation of one isolated OAuth KV namespace
+and deployment of only the synthetic Worker. All 13 live HTTPS boundary checks
+passed: metadata advertises the canonical resource, CIMD and S256; missing/invalid
+tokens, hostile Origin, queries, methods, oversized bodies and unrelated routes
+are rejected. Demo owner sign-in remains unconfigured (503). The final private
+setup has since been directly approved, as described below. The synthetic
+Worker remains unlinked; private acceptance is described below. Actual
+destination/configuration and verification evidence remain outside Git. See the
+runbook for exact access needs.
+
+The owner subsequently approved private task storage and full editing. The
+final implementation in `workers/tasks/` uses the shared OAuth boundary
+`src/tasks-worker.mjs` and a private D1 task-only JSON row with a revision.
+`src/cloud-task-service.mjs` implements primary reads and conditional revision
+writes/retries, retaining IDs/content and subtree lifecycle semantics. A full
+byte-identical local backup and task-only staged artifact were verified outside
+Git. Direct typed approval covered exact
+Wrangler `d1:write`, a dedicated GitHub public-identity app, the final ChatGPT
+read/write/renewable grant and online task edits/cached reads. The exact six
+Wrangler scopes were verified, the private D1 database was created, and
+the private Worker deployed on Free. The GitHub app is registered with the
+exact HTTPS callback and public client ID configured. The user generated and
+submitted the secret directly, completed owner OAuth and connected the private
+LifeOS Tasks plugin. ChatGPT discovered all eight authenticated tools. A fresh
+full backup preceded guarded import and activation of all 37 existing tasks.
+Post-activation reads verified every task field and unrelated local records
+unchanged. The first direct Mercury call preceded activation and returned an
+uninitialized-store error. Its direct retry after activation succeeded in the
+main conversation, returning 37 real tasks at revision 2. Routine task reads
+can now use the installed plugin without a Codex thread. Mercury also created,
+read, edited with `ifUpdatedAt`, verified and moved one clearly labeled temporary
+task to recoverable Trash, reaching revision 5. Original task content was not
+edited. Keep that temporary task recoverable; do not permanently purge it.
+Read-only follow-up verified the installed native helper and desktop projection
+matched revision 5, with the test task retained in Trash, all 37 originals
+unchanged, unrelated records preserved and no pending recovery journal.
+All 13 private live HTTPS boundary checks passed, with no public task data.
+Skip linking the read-only demo plugin.
+
+`npm run tasks:cloud` supplies private backup/fence/import/activation and cloud
+task operations through the existing encrypted Wrangler credentials. The
+archive-only cutover was rejected because it would pause desktop editing and
+capture. Its replacement is the opt-in `src/task-online.mjs` adapter at the
+shared store boundary: desktop/CLI/capture keep their existing task actions
+against the same cloud authority as Mercury, with atomic local projections and
+backups. Cached reads remain available offline; task edits/capture require
+internet. Unrelated local records remain local and writable offline, except
+while an interrupted cloud transaction needs recovery. Revision/stale checks
+prevent overwrite, and a private local journal recovers cloud success before
+local disk failure, including capture's local project creation. Permanent task
+removal is blocked in cloud mode. The online adapter is active.
+
+The guarded cutover rechecks the task digest, refuses concurrent local edits,
+imports only into an empty staged cloud row, and activates an `online` authority
+marker with the exact private connection. Refresh the installed capture runtime
+and stop old workspace writers for the brief migration; editing resumes through
+the adapter afterward. The first local transport invokes Wrangler for each
+query, requiring this checkout/Node and approved D1 administration access. Live
+fictional acceptance on an isolated table verified 0.9–1.2 second reads and
+about 2 second edit/capture domain saves. A Node preloader keeps SQL out of the
+OS command line while using Wrangler's ordinary query API; its `--file` bulk
+import path cannot return SELECT/CAS rows. The refreshed installed native
+helper's read-only ping verified the real task store, and the installed Tasks
+screen shows shared cloud storage. Mercury's isolated temporary task verifies
+production create/edit/Trash access. Live refresh-token rotation remains
+unverified. See
+[`docs/tasks-cloud.md`](docs/tasks-cloud.md) for offline/recovery limits,
+completed grants, main-conversation acceptance evidence and rollback.
+
 `scripts/dev-server.mjs` exposes these loopback-only routes:
 
 | Method and path | Purpose |
@@ -756,6 +889,8 @@ the entire result, and retain an out-of-repository backup first.
 | `POST /api/session/stop` | Stop, log elapsed time, and return updated state |
 | `POST /api/projects/status` | Move one project to one of the six workflow statuses |
 | `POST /api/projects/delete` | Permanently remove one exact project while preserving its tracked-time history |
+| `POST /api/creation/create` | Create an idea and, for a dated Short, its linked task atomically; returns `{ idea, state }` |
+| `POST /api/creation/update` | Patch idea fields using `ideaId` and required `expectedUpdatedAt`; reconcile linked task in the same transaction; returns `{ idea, state }` |
 | `POST /api/tasks/create` | Create an Inbox/project root task or inherited-project subtask |
 | `POST /api/tasks/update` | Update one task's title and multiline notes |
 | `POST /api/tasks/trash` | Move one exact task and its descendants to recoverable Trash |
@@ -1039,6 +1174,46 @@ below the page on narrow screens.
   immutable browser-cache headers. Missing covers receive a local typographic
   fallback. Once cached, saved covers and records remain available offline.
 
+### Creation
+
+- Main tab beside Readings, preserving V2 Editorial and the right Codex rail.
+- Kanban shows all five status columns, with native card dragging and visible
+  status menus as the keyboard alternative. List shows the same records, type,
+  status, date and an explicit Open button. Double-click or Enter opens an idea.
+- Type filters include Shorts, Long videos and existing custom types. Both views
+  share search over title/body, status filtering and sorting by idea order, title,
+  type, earliest date (undated last), or last edit. View/filter/sort preferences
+  are browser-local; URLs retain `creationView` and the open `idea` ID.
+- An idea opens as a full page with title, status, editable type (including custom
+  labels), date and a Markdown source editor. Its toolbar supports headings,
+  emphasis, strike, quotes, lists, checklists, links, images, code, tables and
+  dividers. Command/Control-B/I/K format selections; Command/Control-S saves.
+- Auto-save runs after 900 ms of idle typing, serializes edits arriving during
+  an in-flight save, and keeps drafts, caret, focus and page scroll through state
+  refreshes. Explicit Save is also available. Errors retain the draft, show a
+  retryable failure, and offer a Markdown download or a confirmed reload of the
+  current saved version. Leaving the document through its Back/Open task controls
+  flushes changes; closing/reloading with unsaved changes warns before leaving.
+- Preview uses pinned Marked and DOMPurify bundled locally in
+  `public/vendor/creation-markdown.js`; no CDN or external editor service is used.
+  Rebuild it with `npm run build:markdown` when dependencies or the entry change.
+  Preview supports GFM including tables/checklists and sanitizes executable HTML
+  and unsafe link protocols. Remote Markdown images remain explicit user content.
+- A saved dated Short exposes Open linked task and its current task date/status.
+  Task creation and lifecycle follow the model above. Write-oriented browser
+  validation uses disposable stores; no demonstration ideas belong in real data.
+
+Creation verification (2026-10-17): `npm run check` passed all 142 Node tests
+and the Tauri compile check. Disposable-store Chromium checks covered creation,
+task navigation, dragging, type filters/list/sorting/search, Markdown preview
+(including unsafe HTML/link rejection), reload persistence, in-flight edits,
+formatting shortcuts, conflict draft retention/download and confirmed reload.
+Light and narrow editor layouts were inspected; the installed dark-mode app was
+refreshed through Refresh LifeOS and left on Creation without adding test records.
+The installed capture runtime was refreshed to schema 11 and its read-only native
+ping passed. This does not qualify real-data Creation task writes in the installed
+WebKit window or re-qualify the separate Codex sign-in rail.
+
 ### Analytics
 
 - Range controls update both URL state and derived backend state.
@@ -1151,11 +1326,15 @@ The source data is personal and should remain portable, inspectable, and usable
 without a hosted service. Loopback-only operation also avoids premature account,
 sync, and server-security work.
 
-### Node 20 and web standards
+### Node and web standards
 
 Node supplies filesystem, HTTP, process, and test primitives across macOS,
 Linux, and Windows. Vanilla HTML/CSS/JavaScript avoids a package install, bundle
 step, framework churn, and unnecessary application weight.
+
+The separate task MCP boundary uses the official MCP SDK, and the synthetic
+Worker proof adds Wrangler/workerd development tooling. Those tools require
+Node 22+; they do not replace or bundle the browser-native main app.
 
 Tradeoff: `public/app.js` and `public/styles.css` are already large single files.
 They are acceptable for the present scope, but should be split by responsibility
@@ -1333,6 +1512,8 @@ Recommended import sequence:
 6. Update UI rendering and empty/error states.
 7. Add fixture-based tests, including invalid references and recovery.
 8. Update this file and `AGENTS.md` if an invariant changes.
+9. Refresh an installed capture helper with `npm run capture:install` after a
+   schema change; its copied runtime must understand the new store version.
 
 ### Adding a browser control
 
@@ -1394,7 +1575,7 @@ It performs JavaScript syntax checks for the browser, server, data/storage
 modules, Codex bridge, CLI, and desktop launcher; runs Node's built-in test
 suite; then compile-checks the pinned Tauri shell.
 
-At this handoff, the suite contains 79 tests covering:
+At this handoff, the suite contains 142 tests covering:
 
 - duration parsing;
 - demo-derived totals and recommendation;
@@ -1432,9 +1613,34 @@ At this handoff, the suite contains 79 tests covering:
 - exact project/book composer context and message composition;
 - the intentional voice-disabled boundary.
 
+Additional task MCP coverage exercises authenticated loopback HTTP with the
+official SDK client, schema/request bounds and Host/Origin checks, isolated
+task-tree lifecycle operations, atomic/stale edits, concurrent writes, no
+read initialization/pruning, JWT signature/issuer/audience/owner/expiry checks,
+and per-tool write scopes. Real-task local reads were checked without writes;
+this does not establish HTTPS/OAuth account linking or direct Mercury access.
+Five additional workerd tests exercise the synthetic and private Workers through a full
+mocked OAuth/PKCE flow and the official MCP client, other-owner rejection,
+broader upstream-scope rejection, consent escaping/CSRF/single-use state,
+audience/write-scope denial, body/origin bounds, and fail-closed configuration.
+The consent page was visually inspected on a disposable loopback preview.
+Private D1 fixture coverage verifies authenticated creation/editing/completion/
+Trash/restore, read-only write rejection and no public task counts/content.
+Four portable-model tests compare cloud/local lifecycle results and verify
+revision conflicts/validation; four cutover tests verify backup hashes, a
+concurrent-local-edit refusal, task fences, unrelated-record preservation and
+tampered-artifact refusal. Ten adapter tests verify desktop/capture behavior,
+offline reads/unrelated edits, stale/racing writes, interrupted-save and local
+disk recovery, capture deduplication, out-of-band change refusal and retained
+Trash. A pinned Wrangler transport test verifies SELECT/CAS result rows,
+leading-comment SQL and absence of private query content from the OS command
+line. UI changes are checked with synthetic state and the actual stylesheet;
+the active installed Tasks screen was also inspected without personal writes.
+
 Automated coverage does **not** yet include:
 
-- HTTP route integration;
+- general browser-application HTTP route integration beyond the focused MCP
+  and native-capture tests;
 - browser rendering and interaction end-to-end tests;
 - SSE reconnect/file-watcher behavior;
 - a live signed-in Codex conversation;
@@ -1469,14 +1675,26 @@ committing.
 
 ### Technical limitations
 
-- Validation is partial; only the focused version-2-through-9 compatibility steps
+- Validation is partial; only the focused version-2-through-10 compatibility steps
   are implemented, not a general migration framework.
 - Daily/monthly JSON snapshots provide history but not cross-device merge or
   immutable disaster recovery.
 - Timers crossing midnight are logged as one entry on the start date.
 - The file watcher observes the active filename only and is intentionally
   process-local.
-- HTTP endpoints trust local callers and must remain loopback-only.
+- Browser HTTP endpoints trust local callers and must remain loopback-only.
+  The separate task MCP server requires authentication but also binds only to
+  loopback. The separate private remote Worker is deployed, authenticated and
+  connected as a personal plugin; the browser app remains loopback-only.
+- Tasks MCP has no operation-ID deduplication for uncertain create responses,
+  an iPhone client or a general multi-device sync protocol. The private
+  Cloudflare Workers + D1 implementation is the active task authority after
+  direct approval, verified backup and guarded import. Its private OAuth plugin
+  is connected and a direct real-task read by Mercury succeeded in the main
+  conversation. Desktop task reads use a local cache offline; edits require
+  connectivity. The synthetic-only Worker is deployed on
+  Free and has no task database. See the task MCP/cloud runbooks for the staged
+  proof and approval requirements. Actual OAuth/MCP CPU usage has not been measured.
 - Catalog search, temporary cover previews, and the first load of an uncached
   saved cover require internet access. Cached saved covers, reading records, and
   typographic fallbacks remain available offline.

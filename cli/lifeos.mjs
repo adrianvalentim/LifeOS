@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import {
+  DEFAULT_STORE_PATH,
   ACTIVITY_TYPES,
   addProjectCategory,
   buildCategoryStats,
@@ -25,6 +26,7 @@ import {
   trashTask,
   updateTaskTags,
 } from '../src/lifeos-data.mjs';
+import { readTaskAuthority } from '../src/task-authority.mjs';
 
 const args = process.argv.slice(2);
 const command = args[0] || 'help';
@@ -88,6 +90,8 @@ Activity types:
 }
 
 async function tasksCommand(flags) {
+  const authority = await readTaskAuthority(DEFAULT_STORE_PATH);
+  if (authority && !(authority.mode === 'online' && authority.phase === 'active')) throw new Error('Task storage transfer is pending. Try again after activation.');
   const action = flags[0]?.startsWith('--') || !flags[0] ? 'list' : flags[0];
   const parsed = parseFlags(action === 'list' ? flags : flags.slice(1));
 

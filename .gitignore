@@ -3,6 +3,9 @@
 node_modules/
 .env
 .env.*
+.dev.vars
+.dev.vars.*
+.wrangler/
 .codex/
 dist/
 src-tauri/target/
@@ -12,5 +15,7 @@ npm-debug.log*
 data/*.bak
 data/*.lock
 data/.*.tmp
+*.task-authority.json
+*.task-pending.json
 reading-covers/
 .playwright-cli/

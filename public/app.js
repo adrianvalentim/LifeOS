@@ -1,3 +1,4 @@
+import { createCreationController, renderCreation } from './creation.js';
 import {
   codexMessageWithContext,
   createBookCodexContext,
@@ -31,7 +32,7 @@ import {
   TASK_SORTS,
 } from './tasks.js';
 
-const VALID_TABS = ['today', 'tasks', 'projects', 'reading', 'analytics', 'almanac'];
+const VALID_TABS = ['today', 'tasks', 'projects', 'reading', 'creation', 'analytics', 'almanac'];
 let state = null;
 let activeTab = 'projects';
 let activeRange = 'week';
@@ -50,6 +51,15 @@ let readingCatalogRequestId = 0;
 const projectsUi = createProjectsUiState();
 const readingUi = createReadingUiState();
 const tasksUi = createTasksUiState();
+const creation = createCreationController({
+  getState: () => state,
+  setState: next => { state = next; },
+  render,
+  request: (url, body) => apiJson(url, jsonRequest(body)),
+  fetchState,
+  updateLocation,
+  openTask: id => { activeTab = 'tasks'; updateLocation(); openTaskDetail(id); },
+});
 
 const codex = {
   connection: 'connecting',
@@ -103,6 +113,7 @@ async function init() {
     ? normalizeProjectStatusFilter(params.get('projectStatus'))
     : savedProjectPreferences.statusFilter;
   readingUi.view = params.get('view') === 'library' ? 'library' : 'kanban';
+  creation.readLocation(params);
   tasksUi.filter = parseTaskFilter(params.get('taskScope'));
   loadTaskViewPreferences();
   try {
@@ -183,6 +194,7 @@ async function init() {
     }
   });
   window.addEventListener('popstate', async () => {
+    if (!(await creation.save())) { updateLocation(); return; }
     const next = new URLSearchParams(location.search);
     activeTab = validTab(next.get('tab')) || 'projects';
     activeRange = ['week', 'month', 'quarter', 'year'].includes(next.get('range')) ? next.get('range') : 'week';
@@ -193,6 +205,7 @@ async function init() {
     projectsUi.filtersOpen = false;
     persistProjectPreferences();
     readingUi.view = next.get('view') === 'library' ? 'library' : 'kanban';
+    creation.readLocation(next);
     tasksUi.filter = parseTaskFilter(next.get('taskScope'));
     state = await fetchState(activeRange);
     tasksUi.filter = validTaskFilter(tasksUi.filter);
@@ -212,6 +225,7 @@ async function apiJson(url, options = {}) {
 }
 
 function render() {
+  const creationFocus = creation.captureFocus();
   const focusedProjectId = document.activeElement
     ?.closest?.('[data-project-drag-id]')
     ?.dataset.projectDragId;
@@ -253,6 +267,7 @@ function render() {
     document.querySelector(`.task-item[data-task-detail="${CSS.escape(focusedTaskId)}"]`)?.focus();
   }
   restoreProjectLanePeek();
+  creation.restoreFocus(creationFocus);
 }
 
 function renderChatRegion() {
@@ -325,6 +340,7 @@ function bindPageEvents() {
   bindProjectEvents();
   bindTaskEvents();
   bindReadingEvents();
+  if (activeTab === 'creation') creation.bind();
   bindCodexContextTriggers();
 }
 
@@ -1269,7 +1285,7 @@ function openTaskDetail(taskId) {
   const task = state.tasks.items.find((candidate) => candidate.id === taskId);
   if (!task) return;
   tasksUi.selectedTaskId = task.id;
-  tasksUi.detailDraft = { title: task.title, notes: task.notes || '' };
+  tasksUi.detailDraft = { title: task.title, notes: task.notes || '', ifUpdatedAt: task.updatedAt };
   tasksUi.detailError = null;
   tasksUi.deleteTaskId = null;
   tasksUi.deleteError = null;
@@ -1283,6 +1299,7 @@ function syncTaskDetailDraft(form) {
   tasksUi.detailDraft = {
     title: String(values.get('title') || ''),
     notes: String(values.get('notes') || ''),
+    ifUpdatedAt: tasksUi.detailDraft?.ifUpdatedAt,
   };
   const task = state.tasks.items.find((candidate) => candidate.id === tasksUi.selectedTaskId);
   const dirty = Boolean(task) && (
@@ -1313,10 +1330,11 @@ async function saveTaskDetails(taskId, { closeAfter = false } = {}) {
       taskId,
       title: draft.title,
       notes: draft.notes,
+      ifUpdatedAt: draft.ifUpdatedAt,
     }));
     tasksUi.updatingTaskId = null;
     const saved = state.tasks.items.find((candidate) => candidate.id === taskId);
-    tasksUi.detailDraft = saved ? { title: saved.title, notes: saved.notes || '' } : null;
+    tasksUi.detailDraft = saved ? { title: saved.title, notes: saved.notes || '', ifUpdatedAt: saved.updatedAt } : null;
     if (closeAfter) closeTaskDetail(taskId);
     else {
       render();
@@ -2483,6 +2501,7 @@ function updateLocation() {
     params.set('projectStatus', projectsUi.statusFilter.join(','));
   }
   if (activeTab === 'reading' && readingUi.view !== 'kanban') params.set('view', readingUi.view);
+  if (activeTab === 'creation') creation.writeLocation(params);
   if (activeTab === 'tasks' && tasksUi.filter !== 'all') params.set('taskScope', tasksUi.filter);
   const query = params.toString();
   history.pushState(null, '', query ? `?${query}` : location.pathname);
@@ -2519,6 +2538,7 @@ function renderTabs() {
     ['analytics', 'Analytics'],
     ['almanac', 'Almanac'],
     ['reading', 'Readings'],
+    ['creation', 'Creation'],
   ];
   const meta = {
     today: state.activeSession ? 'A focused session is running' : 'What now and what has happened',
@@ -2539,6 +2559,7 @@ function renderTabs() {
 }
 
 function renderPage() {
+  if (activeTab === 'creation') return renderCreation(state.creation, creation.ui, state.tasks);
   if (activeTab === 'today') return renderToday();
   if (activeTab === 'tasks') return renderTasks(state.tasks, state.projects, state.domains, tasksUi, {
     today: state.meta.today,

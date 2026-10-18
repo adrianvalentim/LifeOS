@@ -1,6 +1,6 @@
 {
   "meta": {
-    "schemaVersion": 10,
+    "schemaVersion": 11,
     "appName": "LifeOS",
     "tagline": "A personal almanac",
     "timezone": "America/Sao_Paulo",
@@ -767,6 +767,9 @@
         "droppedAt": "2026-07-29T12:00:00-03:00"
       }
     ]
+  },
+  "creation": {
+    "ideas": []
   },
   "timeEntries": [
     {
