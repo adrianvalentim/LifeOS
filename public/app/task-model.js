@@ -10,6 +10,10 @@ const PRIORITY_RANK = { high: 0, medium: 1, low: 2, none: 3 };
 export const isOpen = (task) => !task.trashedAt && task.status === 'open';
 export const isCompleted = (task) => !task.trashedAt && task.status === 'completed';
 export const isTrashed = (task) => Boolean(task.trashedAt);
+// A task just crossed off stays in its list for a moment (struck through in
+// rubric) before it moves to Completed, so the act is seen and Undo is obvious.
+export const lingering = new Map();
+export const isListed = (task) => isOpen(task) || (!task.trashedAt && lingering.has(task.id));
 
 export function subsetRoots(items, predicate) {
   const matching = items.filter(predicate);
@@ -65,8 +69,8 @@ export function taskScope(list, state) {
       id: list,
       label: list === 'today' ? 'Today' : 'Upcoming',
       copy: list === 'today' ? 'Overdue and due today.' : 'Everything due in the next seven days.',
-      items: scheduled.filter(isOpen),
-      completed: scheduled.filter(isCompleted),
+      items: scheduled.filter(isListed),
+      completed: scheduled.filter((task) => isCompleted(task) && !lingering.has(task.id)),
       flat: true,
       lifecycle: 'active',
       defaultGroup: list === 'today' ? 'due' : 'day',
@@ -92,7 +96,7 @@ export function taskScope(list, state) {
   if (list === 'inbox') {
     return {
       id: list, label: 'Inbox', copy: 'Captured commitments without a project.',
-      items: subsetRoots(items, (task) => isOpen(task) && task.projectId == null), flat: false, lifecycle: 'active', icon: 'inbox',
+      items: subsetRoots(items, (task) => isListed(task) && task.projectId == null), flat: false, lifecycle: 'active', icon: 'inbox',
       defaults: { projectId: null }, empty: 'Inbox zero. Everything has a home.',
     };
   }
@@ -100,7 +104,7 @@ export function taskScope(list, state) {
     const project = state.projects.find((item) => item.id === list.slice(8));
     return {
       id: list, label: project?.name || 'Project', copy: project?.subtitle || 'Project tasks', project,
-      items: subsetRoots(items, (task) => isOpen(task) && task.projectId === project?.id), flat: false, lifecycle: 'active', icon: 'projects',
+      items: subsetRoots(items, (task) => isListed(task) && task.projectId === project?.id), flat: false, lifecycle: 'active', icon: 'projects',
       defaults: { projectId: project?.id ?? null }, empty: 'No open tasks in this project.',
     };
   }
@@ -108,17 +112,17 @@ export function taskScope(list, state) {
     const tag = list.slice(4);
     return {
       id: list, label: `#${tag}`, copy: 'Every open task with this tag.',
-      items: items.filter((task) => isOpen(task) && task.tags.some((item) => normalize(item) === normalize(tag))), flat: true, lifecycle: 'active', icon: 'hash',
+      items: items.filter((task) => isListed(task) && task.tags.some((item) => normalize(item) === normalize(tag))), flat: true, lifecycle: 'active', icon: 'hash',
       defaults: { tags: [tag] }, empty: 'No open tasks carry this tag.',
     };
   }
   if (list.startsWith('view:')) {
     const view = state.workspace.views.find((item) => item.id === list.slice(5));
     if (view) {
-      const matching = items.filter((task) => matchesViewFilter(task, view.filter, today));
+      const matching = items.filter((task) => matchesViewFilter(task, view.filter, today) || (lingering.has(task.id) && matchesViewFilter({ ...task, status: 'open' }, view.filter, today)));
       return {
         id: list, label: view.name, copy: describeFilter(view.filter, state), view,
-        items: matching.filter((task) => view.filter.status !== 'open' || isOpen(task)),
+        items: matching.filter((task) => view.filter.status !== 'open' || isListed(task)),
         flat: true, lifecycle: view.filter.status === 'completed' ? 'completed' : 'active', icon: view.icon,
         defaultGroup: view.groupBy, defaultSort: view.sortBy,
         defaults: {
@@ -131,7 +135,7 @@ export function taskScope(list, state) {
   }
   return {
     id: 'all', label: 'All tasks', copy: 'Every open commitment, by list.',
-    items: subsetRoots(items, isOpen), flat: false, lifecycle: 'active', icon: 'tasks', empty: 'No open tasks. Press N to capture one.',
+    items: subsetRoots(items, isListed), flat: false, lifecycle: 'active', icon: 'tasks', empty: 'No open tasks. Press N to capture one.',
   };
 }
 
@@ -150,7 +154,8 @@ export function describeFilter(filter, state) {
 
 export function sortTasks(tasks, sortBy) {
   const list = [...tasks];
-  const completion = (a, b) => (a.status === 'completed' ? 1 : 0) - (b.status === 'completed' ? 1 : 0);
+  const done = (task) => (task.status === 'completed' && !lingering.has(task.id) ? 1 : 0);
+  const completion = (a, b) => done(a) - done(b);
   const due = (a, b) => {
     const x = a.schedule?.dueDate;
     const y = b.schedule?.dueDate;
@@ -302,7 +307,7 @@ export function visibleRows(groups, scope, collapsed, index) {
     rows.push(task.id);
     if (scope.flat || collapsed[task.id]) return;
     for (const child of index.get(task.id) || []) {
-      if (scope.lifecycle === 'trash' ? isTrashed(child) : scope.lifecycle === 'completed' ? isCompleted(child) : isOpen(child)) visit(child);
+      if (scope.lifecycle === 'trash' ? isTrashed(child) : scope.lifecycle === 'completed' ? isCompleted(child) : isListed(child)) visit(child);
     }
   };
   for (const group of groups) for (const task of group.tasks) visit(task);

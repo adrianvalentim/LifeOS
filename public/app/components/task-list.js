@@ -8,7 +8,7 @@ import { icon } from '../icons.js';
 import { taskMenu } from '../menus.js';
 import { parseCapture } from '../nlp.js';
 import { lookup, patchUi, render, store } from '../store.js';
-import { childrenIndex, isCompleted, isOpen, isTrashed, visibleRows } from '../task-model.js';
+import { childrenIndex, isCompleted, isListed, isTrashed, visibleRows } from '../task-model.js';
 import { beginDrag } from '../ui/dnd.js';
 import { knownTags, pickDate, pickPriority, pickProject, pickTags } from '../ui/pickers.js';
 
@@ -32,7 +32,7 @@ export function renderTaskGroups(groups, scope, options = {}) {
 }
 
 function childFilter(scope) {
-  return scope.lifecycle === 'trash' ? isTrashed : scope.lifecycle === 'completed' ? isCompleted : isOpen;
+  return scope.lifecycle === 'trash' ? isTrashed : scope.lifecycle === 'completed' ? isCompleted : isListed;
 }
 
 function renderNode(task, context) {

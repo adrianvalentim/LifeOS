@@ -5,6 +5,7 @@ import { optimistic, postJson, run } from './api.js';
 import { uid } from './dom.js';
 import { addDays } from './format.js';
 import { navigate } from './router.js';
+import { lingering } from './task-model.js';
 import { lookup, patchUi, rememberRecent, render, store } from './store.js';
 import { confirmDialog } from './ui/dialog.js';
 import { toast } from './ui/toast.js';
@@ -103,6 +104,15 @@ export function toggleTask(id, completed = null) {
   if (!task || task.trashedAt) return;
   const next = completed ?? task.status !== 'completed';
   const ids = next ? [id, ...descendants(id).filter((childId) => !lookup.task(childId)?.trashedAt)] : [id];
+  if (next) {
+    const until = Date.now() + 1400;
+    for (const taskId of ids) lingering.set(taskId, until);
+    setTimeout(() => {
+      let changed = false;
+      for (const taskId of ids) if (lingering.get(taskId) === until) { lingering.delete(taskId); changed = true; }
+      if (changed) render();
+    }, 1400);
+  } else for (const taskId of ids) lingering.delete(taskId);
   return run('tasks.complete', { taskId: id, completed: next }, {
     optimistic: (state) => optimistic.tasks(state, ids, { status: next ? 'completed' : 'open', completedAt: next ? now() : null }),
     pending: [id],

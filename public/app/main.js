@@ -33,6 +33,7 @@ import * as todayScreen from './screens/today.js';
 
 const SCREENS = { today, tasks, projects, creation, reading, insights, almanac, settings };
 const NAV_LABELS = { today: 'Today', tasks: 'Tasks', projects: 'Projects', creation: 'Creation', reading: 'Reading', insights: 'Insights', almanac: 'Almanac' };
+const NAV_KEYS = { today: 'H', tasks: 'T', projects: 'P', creation: 'C', reading: 'R', insights: 'S', almanac: 'A' };
 const NEW_ITEMS = [
   { kind: 'task', label: 'Task', icon: 'tasks', key: 'N' },
   { kind: 'log', label: 'Log time', icon: 'clock', key: 'L' },
@@ -165,7 +166,7 @@ function renderMasthead() {
       <nav class="sections" aria-label="Sections">
         ${nav.map((item) => {
           const count = navCount(item.id);
-          return html`<a class="${cx('nav-link', section === item.id && 'is-active')}" href="/${item.id}" data-key="nav-${item.id}" ${section === item.id ? html`aria-current="page"` : ''}>
+          return html`<a class="${cx('nav-link', section === item.id && 'is-active')}" href="/${item.id}" data-key="nav-${item.id}" title="${NAV_LABELS[item.id]}${count?.title ? ` · ${/^\d/.test(count.title) ? count.title : `${count.value} ${count.title.toLowerCase()}`}` : ''} — G then ${NAV_KEYS[item.id]}" ${section === item.id ? html`aria-current="page"` : ''}>
             <span class="nav-label">${NAV_LABELS[item.id]}</span>${count ? html`<sup class="${cx('count', count.alert && 'is-alert')}" title="${count.title || ''}">${count.value}</sup>` : ''}
           </a>`;
         })}

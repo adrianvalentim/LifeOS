@@ -23,7 +23,7 @@ const PAGES = [
 ];
 
 const SECTION_LABELS = { today: 'Today', tasks: 'Tasks', projects: 'Projects', creation: 'Creation', reading: 'Reading', insights: 'Insights', almanac: 'Almanac' };
-const ACCENTS = [null, '#b4502c', '#a23c6b', '#5e4a9c', '#3a6b85', '#2f7a68', '#5e7d2c', '#9c7720'];
+const ACCENTS = [null, '#c2502a', '#a23c6b', '#5e4a9c', '#3a6b85', '#2f7a68', '#5e7d2c', '#9c7720'];
 const local = { commands: null, storage: null, mcp: null, commandFilter: '', loading: false };
 
 function page() {
@@ -81,11 +81,11 @@ function renderAppearance() {
   const workspace = store.state.workspace;
   const accent = workspace.theme.accent;
   return html`
-    ${group('Theme', 'Warm paper by day, ink by night — or follow the system.', html`
-      ${row('Mode', null, segmented('theme', workspace.theme.mode, [['system', 'System', 'monitor'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']]))}
-      ${row('Accent', 'Used for focus, selection and primary actions.', html`<div class="swatches">
-        ${ACCENTS.map((color) => html`<button type="button" class="${cx('swatch', (accent || null) === color && 'is-active')}" style="${color ? `--swatch:${color}` : ''}" data-action="settings-accent" data-value="${color || ''}" aria-label="${color ? `Accent ${color}` : 'Default accent'}" title="${color || 'Default'}">${color ? '' : icon('check', { size: 11 })}</button>`)}
-        <label class="swatch is-custom" title="Custom color"><input type="color" value="${accent || '#b4502c'}" data-accent-custom aria-label="Custom accent color">${icon('plus', { size: 12 })}</label>
+    ${group('Edition', 'Warm paper by day, cream ink on blue-black by night — or follow the system.', html`
+      ${row('Edition', null, segmented('theme', workspace.theme.mode, [['system', 'System', 'monitor'], ['light', 'Day', 'sun'], ['dark', 'Night', 'moon']]))}
+      ${row('Second ink', 'Rubric marks only what needs you: today, now, overdue, critical, the active place.', html`<div class="swatches">
+        ${ACCENTS.map((color) => html`<button type="button" class="${cx('swatch', (accent || null) === color && 'is-active')}" style="${color ? `--swatch:${color}` : ''}" data-action="settings-accent" data-value="${color || ''}" aria-label="${color ? `Second ink ${color}` : 'Rubric (default)'}" title="${color || 'Rubric (default)'}">${color ? '' : icon('check', { size: 11 })}</button>`)}
+        <label class="swatch is-custom" title="Custom color"><input type="color" value="${accent || '#b2361d'}" data-accent-custom aria-label="Custom second ink">${icon('plus', { size: 12 })}</label>
       </div>`)}
     `)}
     ${group('Density', 'Compact fits more rows on screen; comfortable gives them room.', html`

@@ -35,7 +35,7 @@ export function render_() {
         <section class="card">
           <header class="card-head"><h2>Today’s tasks${scope.items.length ? html`<small>${scope.items.length}</small>` : ''}</h2><a class="link" href="/tasks?list=today">Open list ${icon('arrow-right', { size: 12 })}</a></header>
           ${renderQuickAdd({ id: 'today-add', placeholder: 'Add a task for today', defaults: { dueDate: today } })}
-          ${scope.items.length ? renderTaskGroups(groups, { ...scope, id: 'today-home' }, { showProject: true }) : html`<p class="card-empty">Nothing due today.${scope.completed.length ? ` ${plural(scope.completed.length, 'task')} already crossed off.` : ''}</p>`}
+          ${scope.items.length ? renderTaskGroups(groups, { ...scope, id: 'today-home' }, { showProject: true }) : html`<p class="card-empty">Nothing due today.${scope.completed.length ? ` ${plural(scope.completed.length, 'task')} already crossed off.` : ''}${upcomingTaskCount() ? html` <span class="card-empty-hint">Pull something forward from <em>Coming up</em>, or add a task above.</span>` : ''}</p>`}
         </section>
         ${renderDayLog()}
       </div>
@@ -48,6 +48,13 @@ export function render_() {
       </aside>
     </div>
   </div>`;
+}
+
+function upcomingTaskCount() {
+  const state = store.state;
+  const today = state.meta.today;
+  const horizon = addDays(today, 7);
+  return state.tasks.items.filter((task) => !task.trashedAt && task.status === 'open' && task.schedule?.dueDate > today && task.schedule.dueDate <= horizon).length;
 }
 
 function greeting() {
@@ -80,6 +87,26 @@ function renderTally() {
 }
 
 // The lede: what to do now, set as the page's headline.
+const UNITS = { m: 'minute', h: 'hour', d: 'day', w: 'week', mo: 'month', y: 'year' };
+function inWords(label) {
+  const match = String(label || '').match(/^(\d+)(mo|m|h|d|w|y) ago$/);
+  if (!match) return label === 'never' ? null : label;
+  const [, count, unit] = match;
+  if (unit === 'd' && count === '1') return 'yesterday';
+  return `${count} ${UNITS[unit]}${count === '1' ? '' : 's'} ago`;
+}
+
+function leadReasons(project) {
+  if (!project) return [];
+  const reasons = [];
+  const touched = inWords(project.lastTouchedLabel);
+  reasons.push(touched ? `last worked ${touched}` : 'not started yet');
+  const days = project.dueInDays;
+  if (days != null) reasons.push(days < 0 ? `${-days} day${days === -1 ? '' : 's'} overdue` : days === 0 ? 'due today' : days === 1 ? 'due tomorrow' : `due in ${days} days`);
+  if (project.taskSummary?.open) reasons.push(plural(project.taskSummary.open, 'open task'));
+  return reasons;
+}
+
 function emphasise(text, name) {
   const index = name ? text.indexOf(name) : -1;
   if (index < 0) return text;
@@ -131,9 +158,8 @@ function renderLede() {
     <h1 class="lede-head">${emphasise(rec.action, rec.projectName)}</h1>
     <p class="lede-why">
       ${project ? html`<span class="${cx('health-badge', `health-${project.health}`)}">${project.health}</span>` : ''}
-      <span>${rec.reasonShort}</span>
-      ${project?.taskSummary?.open ? html`<span>${plural(project.taskSummary.open, 'open task')}</span>` : ''}
-      <span title="How strongly the rules favor this">${Math.round(rec.confidence * 100)}% fit</span>
+      <span class="lede-reasons">${project ? leadReasons(project).join(' · ') : rec.reasonShort}</span>
+      <span class="lede-fit" title="How strongly the rules favor this over the other ${count - 1}">${Math.round(rec.confidence * 100)}% fit</span>
     </p>
     <div class="lede-actions">
       <button type="button" class="button is-primary" data-action="today-rec-start">${icon('play', { size: 13 })}Start ${formatMinutes(rec.durationMinutes)} focus</button>
@@ -230,6 +256,7 @@ function renderComingUp() {
     <ul class="agenda">${items.slice(0, 8).map((item) => html`<li data-key="up-${item.kind}-${item.id}">
       <span class="agenda-date"><b>${daysBetween(today, item.date) === 1 ? 'Tmrw' : formatDate(item.date, { today }).replace(/ \d{4}$/, '')}</b></span>
       <button type="button" class="agenda-label kind-${item.kind}" data-action="today-open" data-kind="${item.kind}" data-id="${item.id}">${icon(item.kind === 'deadline' ? 'flag' : item.kind === 'idea' ? 'creation' : 'circle', { size: 12 })}${item.label}</button>
+      ${item.kind === 'task' ? html`<button type="button" class="agenda-pull" data-action="today-pull" data-id="${item.id}" title="Move to today" aria-label="Do “${item.label}” today">Today</button>` : ''}
     </li>`)}</ul>
   </section>`;
 }
@@ -298,6 +325,7 @@ export const actions = {
   'today-start-blank': () => openCapture({ kind: 'timer' }),
   'today-start-project': (el) => { const project = lookup.project(el.dataset.id); act.startTimer({ projectId: project.id, description: project.nextAction || `Focused work on ${project.name}` }); },
   'today-log': () => openCapture({ kind: 'log' }),
+  'today-pull': (el) => act.setTaskDue(el.dataset.id, store.state.meta.today),
   'today-open': (el) => {
     const kind = el.dataset.kind;
     if (kind === 'deadline') act.openProject(el.dataset.id);

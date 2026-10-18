@@ -1057,7 +1057,10 @@ cream ink on blue-black is the night edition. Newsreader carries everything
 read (titles, tasks, notes, figures), IBM Plex Sans the controls, and JetBrains
 Mono the small-capital labels and numbers. Rules and space separate things
 instead of boxes; only slips that lie on top (menus, palette, dialogs) and
-idea index cards are boxed. Domain colors stay as thin swatches. It is a
+idea index cards are boxed. Domain colors stay as thin swatches. Legibility
+has a floor: no text below 10 px, labels at 11 px, informational text in
+`--ink-3` (at least 5:1 against the paper in both editions), and `--ink-4`
+only for placeholders, decoration and deliberately quiet states. It is a
 dependency-free set of ES modules under `public/app/` and stylesheets under
 `public/styles/`.
 
@@ -1115,18 +1118,20 @@ dependency-free set of ES modules under `public/app/` and stylesheets under
 
 - **Today** is the front page: the lede sets the top recommendation as the
   headline (project in rubric italic, health and reasons beneath, start,
-  another, not now) or, while a timer runs, a large clock with editable
+  another, not now; the reasons are written out, e.g. "last worked 6 days
+  ago · due in 3 days · 1 open task") or, while a timer runs, a large clock with editable
   project, description and type; beside it the tally of the day against the
   plan with deep minutes and an activity bar. Below: today's tasks with quick
   add, the day's ledger of entries (editable), and a column with week bars,
-  needs attention, coming up (tasks, deadlines, dated ideas), reading now and
-  the challenge.
+  needs attention, coming up (tasks, deadlines, dated ideas; tasks can be
+  pulled forward to today from there), reading now and the challenge.
 - **Tasks**: lists pane (Inbox, Today, Upcoming, All, saved views, projects,
   tags, Completed, Trash) with counts; filter; view options (group by none,
   priority, due date, list, tag; sort by custom, priority, due, title, created);
   quick add with natural language; rows with priority checkbox and flag,
   subtasks, notes marker, tags, list, duration and due pill; collapsible
-  subtrees; completed fold. Drag reorders and nests (custom order, no grouping)
+  subtrees; completed fold (a task you complete stays in place, crossed off in
+  rubric, for 1.4 s before it moves there). Drag reorders and nests (custom order, no grouping)
   or drops onto a list (move, date today, tag, complete, trash) or a group lane
   that names one value. Keyboard: J/K/arrows, ↵ open, Space complete, X and ⇧
   select, D/P/M/# pickers, S subtask, 0–3 priority, ⌫ Trash, ⌘D duplicate,

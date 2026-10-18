@@ -7,7 +7,7 @@ import { buildState, DEMO_STORE_PATH, readStore } from '../src/lifeos-data.mjs';
 import { defaultWorkspace } from '../src/lifeos-workspace.mjs';
 import { store } from '../public/app/store.js';
 import { attr, html, raw } from '../public/app/dom.js';
-import { canReorder, groupTasks, matchesViewFilter, taskScope } from '../public/app/task-model.js';
+import { canReorder, groupTasks, lingering, matchesViewFilter, sortTasks, taskScope } from '../public/app/task-model.js';
 import { renderTaskGroups, renderTaskRow } from '../public/app/components/task-list.js';
 import { renderTaskSheet } from '../public/app/components/task-sheet.js';
 import { contextFor, messageWithContext } from '../public/app/agent-context.js';
@@ -68,6 +68,24 @@ test('a tag scope stays active-only even when a completed subtask shares the tag
     done.tags = ['writing'];
   }));
   assert.ok(!taskScope('tag:writing', s).items.some((task) => task.status === 'completed'));
+});
+
+test('a task just completed stays in its list, crossed off and in place, until it stops lingering', () => {
+  const open = demo.tasks.items.find((task) => task.status === 'open' && !task.trashedAt && task.projectId == null && !task.parentTaskId);
+  const done = state((copy) => { const task = copy.tasks.items.find((item) => item.id === open.id); task.status = 'completed'; task.completedAt = NOW; });
+  mount(done);
+  assert.ok(!taskScope('inbox', done).items.some((task) => task.id === open.id), 'completed tasks leave the list');
+  lingering.set(open.id, Date.now() + 1000);
+  try {
+    const inbox = taskScope('inbox', done);
+    const row = inbox.items.find((task) => task.id === open.id);
+    assert.ok(row, 'a lingering task is still listed');
+    const byTitle = [...inbox.items].sort((x, y) => x.title.localeCompare(y.title)).map((task) => task.id);
+    assert.deepEqual(sortTasks(inbox.items, 'title').map((task) => task.id), byTitle, 'it keeps its place instead of sinking below open tasks');
+    assert.match(String(renderTaskRow(row, { scope: inbox })), /task-row[^"]*is-completed/);
+  } finally {
+    lingering.delete(open.id);
+  }
 });
 
 test('due-date grouping separates overdue work and marks single-date lanes as drop targets', () => {
