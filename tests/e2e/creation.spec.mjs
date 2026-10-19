@@ -2,7 +2,7 @@ import { expect, test } from './fixtures.mjs';
 
 const MARKDOWN = '# Saros\n\nEclipses repeat every **18 years**.\n\n- [ ] Find the 1919 plates';
 
-test('a new idea opens in the editor and its Markdown saves itself', async ({ app, page }) => {
+test('a new idea opens in the editor, renders as you type, and saves plain Markdown', async ({ app, page }) => {
   await app.goto('/creation');
 
   // On Creation, N captures an idea; ⌘↵ adds it and opens the editor.
@@ -16,22 +16,26 @@ test('a new idea opens in the editor and its Markdown saves itself', async ({ ap
   const idea = async () => (await app.store()).creation.ideas.find((item) => item.title === 'Why eclipses repeat');
   expect(await idea()).toMatchObject({ type: 'short', markdown: '' });
 
-  const body = page.getByRole('textbox', { name: 'Idea Markdown' });
+  // Writing and reading happen in one place: Markdown shortcuts turn into formatting as they are typed.
+  const body = page.getByRole('textbox', { name: 'Idea body' });
   await body.click();
-  await body.pressSequentially(MARKDOWN);
+  await page.keyboard.type('# Saros');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Eclipses repeat every **18 years**.');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('[ ] Find the 1919 plates');
+  await expect(body.locator('h1')).toHaveText('Saros');
+  await expect(body.locator('strong')).toHaveText('18 years');
+  await expect(body.locator('input[type="checkbox"]')).toHaveCount(1);
+  await expect(body).not.toContainText('**');
   await expect(page.locator('.save-state')).not.toHaveText('Saved');
 
-  // Autosave: no ⌘S, the store catches up once typing pauses.
+  // Autosave: no ⌘S, the store catches up once typing pauses, as Markdown.
   await expect.poll(async () => (await idea()).markdown).toBe(MARKDOWN);
   await expect(page.locator('.save-state')).toHaveText('Saved');
 
-  // The split view previews sanitized Markdown.
-  const preview = page.getByRole('article', { name: 'Preview' });
-  await expect(preview.locator('h1')).toHaveText('Saros');
-  await expect(preview.locator('strong')).toHaveText('18 years');
-  await expect(preview.locator('input[type="checkbox"]')).toHaveCount(1);
-
-  // A fresh window loads the saved draft.
+  // A fresh window loads the saved draft, rendered.
   await page.reload();
-  await expect(page.getByRole('textbox', { name: 'Idea Markdown' })).toHaveValue(MARKDOWN);
+  await expect(page.getByRole('textbox', { name: 'Idea body' }).locator('h1')).toHaveText('Saros');
+  await expect(page.getByRole('textbox', { name: 'Idea body' }).locator('strong')).toHaveText('18 years');
 });

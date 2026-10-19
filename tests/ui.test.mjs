@@ -218,10 +218,13 @@ test('Creation renders five workflow lanes, the editor, and Markdown formatting 
   for (const status of ['to_do', 'next_up', 'doing', 'done', 'dropped']) assert.match(board, new RegExp(`data-idea-drop="${status}"`));
   assert.match(board, /Eclipse hook/);
   store.ui.route = { section: 'creation', id: s.creation.ideas[0].id, params: new URLSearchParams() };
-  store.prefs.creation.editorMode = 'edit'; // the live preview needs a browser for sanitizing
+  store.prefs.creation.editorMode = 'visual'; // the editor itself mounts in a browser
   const editor = render(creationScreen);
-  assert.match(editor, /data-idea-field="markdown"/);
+  assert.match(editor, /class="editor-visual"/);
   assert.match(editor, /role="status">Saved</);
+  store.prefs.creation.editorMode = 'source';
+  assert.match(render(creationScreen), /data-idea-field="markdown"/);
+  store.prefs.creation.editorMode = 'visual';
   const bold = formatSelection('make this bold', 5, 9, 'bold');
   assert.equal(bold.value, 'make **this** bold');
 });

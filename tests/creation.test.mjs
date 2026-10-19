@@ -142,7 +142,7 @@ test('board, list, type filters and sorts share the same records and escape user
   ];
   store.state = { meta: { today: '2026-10-18' }, creation: { ideas }, tasks: { items: [] } };
   store.ui.filter = '';
-  Object.assign(store.prefs.creation, { view: 'board', type: 'all', status: 'all', sort: 'manual', editorMode: 'edit' });
+  Object.assign(store.prefs.creation, { view: 'board', type: 'all', status: 'all', sort: 'manual', editorMode: 'visual' });
   const view = (params = '', id = null) => { store.ui.route = { section: 'creation', id, params: new URLSearchParams(params) }; return String(creationScreen.render()); };
   const html = view('view=board');
   for (const status of ['to_do', 'next_up', 'doing', 'done', 'dropped']) assert.ok(html.includes(`data-idea-drop="${status}"`));
@@ -151,7 +151,12 @@ test('board, list, type filters and sorts share the same records and escape user
   store.prefs.creation.type = 'all'; store.prefs.creation.sort = 'date'; assert.deepEqual(visibleIdeas().map(i => i.id), ['three', 'two', 'one']);
   store.ui.filter = 'body'; assert.equal(visibleIdeas().length, 1);
   store.ui.filter = ''; assert.ok(view('view=list').includes('<table'));
+  // Writing is inline by default; the Markdown itself is one toggle away.
+  assert.ok(view('', 'one').includes('class="editor-visual"'));
+  assert.ok(!view('', 'one').includes('data-idea-field="markdown"'));
+  store.prefs.creation.editorMode = 'source';
   assert.ok(view('', 'one').includes('data-idea-field="markdown"'));
+  store.prefs.creation.editorMode = 'visual';
 });
 
 test('Markdown formatting preserves selected text, Unicode, and multiline lists', () => {

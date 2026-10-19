@@ -59,7 +59,7 @@ or local HTTP — and every change is journaled and undoable.
 - Insights for week, month, quarter and year, with an editable time log.
 - Almanac: year in numbers, challenge, streaks and a searchable milestone
   timeline.
-- Creation board and Markdown editor; dated Shorts become tasks.
+- Creation board and an inline, Notion-style editor that stores plain Markdown; dated Shorts become tasks.
 - Settings for appearance, the masthead, planning, domains, categories, saved views,
   agents and backups.
 - Reading Kanban and full library with tags, queue ordering, date read,
