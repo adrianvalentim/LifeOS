@@ -91,3 +91,64 @@ test('dragging a project card by its name changes its status', async ({ app, pag
   await expect.poll(async () => (await app.store()).projects.find((project) => project.name === 'Substack').status).toBe('doing');
   await expect(page).toHaveURL(/\/projects/);
 });
+
+test('a dragged card lifts when picked up and glides into its slot when dropped', async ({ app, page }) => {
+  for (const title of TITLES) await app.cli(['run', 'creation.create', '--title', title, '--type', 'short']);
+  await app.goto('/creation');
+  const card = page.locator('.idea-card:not(.drag-preview)', { hasText: 'Kepler planets' });
+  const box = await card.locator('.idea-title').boundingBox();
+  const next = await page.locator('[data-idea-drop="next_up"]').boundingBox();
+  await page.mouse.move(box.x + 10, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 22, box.y + box.height / 2, { steps: 3 });
+
+  // Picked up: the lifted copy is larger than the card it came from, which fades into a slot.
+  const preview = page.locator('.drag-preview');
+  await expect(preview).toHaveClass(/is-lifted/);
+  await expect.poll(() => preview.evaluate((node) => getComputedStyle(node).scale)).toBe('1.035');
+  await expect(card).toHaveClass(/is-drag-source/);
+
+  // The lifted card follows the pointer, wherever it goes.
+  const pointer = { x: next.x + next.width / 2, y: next.y + 200 };
+  await page.mouse.move(pointer.x, pointer.y, { steps: 8 });
+  await expect.poll(async () => {
+    const lifted = await preview.boundingBox();
+    return lifted.x < pointer.x && pointer.x < lifted.x + lifted.width && lifted.y < pointer.y && pointer.y < lifted.y + lifted.height;
+  }).toBe(true);
+  await page.mouse.up();
+  // It glides to the new slot (hidden underneath) and is gone a moment later.
+  await expect(page.locator('.is-settling')).toHaveCount(1);
+  await expect(preview).toHaveCount(0);
+  await expect(page.locator('.is-settling, .is-drag-source')).toHaveCount(0);
+  const landed = await page.locator('[data-idea-drop="next_up"] .idea-card').boundingBox();
+  expect(Math.abs(landed.x - next.x)).toBeLessThanOrEqual(2);
+});
+
+test('Esc brings a dragged card back, and reduced motion drops it without animation', async ({ app, page }) => {
+  for (const title of TITLES) await app.cli(['run', 'creation.create', '--title', title, '--type', 'short']);
+  await app.goto('/creation');
+  const card = page.locator('.idea-card:not(.drag-preview)', { hasText: 'Kepler planets' });
+  const title = card.locator('.idea-title');
+  const box = await title.boundingBox();
+  const next = await page.locator('[data-idea-drop="next_up"]').boundingBox();
+  const pickUp = async () => {
+    await page.mouse.move(box.x + 10, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 22, box.y + box.height / 2, { steps: 3 });
+    await page.mouse.move(next.x + next.width / 2, next.y + 200, { steps: 8 });
+  };
+
+  await pickUp();
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await expect(page.locator('.drag-preview')).toHaveCount(0);
+  await expect(card).not.toHaveClass(/is-drag-source/);
+  expect((await app.store()).creation.ideas.find((idea) => idea.title === 'Kepler planets').status).toBe('to_do');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await pickUp();
+  await expect(page.locator('.drag-preview')).not.toHaveClass(/is-lifted/);
+  await page.mouse.up();
+  await expect(page.locator('.drag-preview')).toHaveCount(0);
+  await expect.poll(async () => (await app.store()).creation.ideas.find((idea) => idea.title === 'Kepler planets').status).toBe('next_up');
+});
