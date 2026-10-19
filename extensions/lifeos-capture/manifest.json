@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "LifeOS Capture",
+  "version": "0.1.1",
+  "description": "One click to save the current webpage as a task in LifeOS.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4hSxaVpOaH9VtYQAz2O6Vjv/8dnmqxFRsPsjF9jmXBfhTptdPPdv0rUeTWqCqxm9Wb95shw2wV7ErhaJafQdLN1s6qDsavsAjmsDyNdoC+oNPc0Xhz1vJG22wdUuUDjTWJ4JyWQrnqa6WYWGda8N56rf44BWxPwAeWMwyRKQUjBsOTM3Duwvx1vZI6d5AdQUDR/khOjz/12QQ5ghq8ZoC+zSjxoYSVlihuLjYWIYuHoMS/j7bNGql8U0ceWXSNG+qYRVlHMggRXKNsBUZBanZ+D4uuX5jIMDFz4bnCX1PrUuJf/mcyuJ9TvToPXjL4rrfdiiiY4QHQwQJBG7k7JBWwIDAQAB",
+  "permissions": [
+    "activeTab",
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Save to LifeOS",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

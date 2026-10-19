@@ -1,11 +1,13 @@
 # LifeOS project state and maintainer handoff
 
-> Canonical implementation handoff for agents and maintainers. Read this after
-> [`AGENTS.md`](AGENTS.md) and before making a structural change.
+> Canonical implementation handoff for agents and maintainers. Use
+> [`AGENTS.md`](AGENTS.md) to select the sections relevant to the task; consult
+> architecture and rationale before making a structural change.
 
-- Last updated: 2026-08-31
-- Implementation baseline: `main`, including the storage, Projects, Reading, and
-  source-backed Tauri work described here
+- Last updated: 2026-10-18
+- Implementation baseline: branch `claude/redesign` — the unified command layer
+  (UI, CLI, SDK, HTTP, MCP), change journal with undo, workspace configuration,
+  the rebuilt interface, and Claude Code beside Codex in the agent rail
 - Remote: `adrianvalentim/LifeOS`, public, default branch `main`
 
 ## 1. Executive summary
@@ -20,22 +22,25 @@ answering five questions:
 4. What concrete commitments are open, and how do they break down?
 5. What am I reading now and next?
 
-The dashboard is the legibility layer. Codex is intended to be the main natural-
-language operating layer: the user can ask it to log work, inspect state, explain
-a recommendation, or modify LifeOS itself.
+The interface is the legibility layer. Agents are a first-class operating layer:
+every capability the person has in the app is one named command that the UI,
+CLI, JavaScript SDK, local HTTP and an MCP server all share, so Codex, Claude
+Code or any MCP client can log work, plan, inspect state, rearrange the app, or
+modify LifeOS itself — with every change journaled and undoable.
 
 The current foundation is deliberately small:
 
 - a dependency-free browser interface;
-- a local Node.js 20 server;
+- a local Node.js server (Node 22+ including Worker development tools);
 - one portable JSON personal store outside Git;
-- a stable CLI for data operations;
-- a bridge to the **installed** `codex app-server` and its already signed-in
-  ChatGPT account;
+- one command registry (`src/commands/`) behind the UI, CLI, SDK, HTTP and a
+  stdio MCP server, with a change journal for Activity and undo;
+- bridges to the **installed** `codex app-server` (signed-in ChatGPT account)
+  and the **installed** `claude` CLI (signed-in Claude login);
 - a source-backed Tauri/WKWebView macOS development app;
 - optional latest, daily, and monthly snapshots to one explicitly configured Google Drive folder.
 
-There is no hosted backend, database daemon, OpenAI API key, SDK client, or
+There is no hosted backend, database daemon, AI API key, API SDK client, or
 separate AI model. The server binds to loopback only. The development shell is
 usable now without freezing the application: it starts the Node server directly
 from this workspace, so normal browser assets remain refreshable. Self-contained
@@ -45,19 +50,23 @@ sidecar packaging, notarized distribution, and updates remain deferred.
 
 | Area | State | What is true now |
 | --- | --- | --- |
-| Project dashboard | Implemented | Status-grouped and filterable portfolio list plus a focused three-column drag Kanban, reusable category labels, six persistent workflow statuses, confirmed history-preserving deletion, computed health, last touch, weekly hours, deadline, progress, and streak |
-| Tasks | Focused first release implemented | Active All/Inbox/project/tag scopes, separate Completed and 30-day Trash scopes, dated smart lists with collapsed completed work, optional project association, nested subtasks, optional due dates, completion cascade, derived subtree/project progress, click-through details with editable notes/title and recoverable subtree deletion, project-detail creation and controls, and CLI operations |
-| Today | Implemented foundation | Computed daily entries and total, recommendation selection, real start/stop timer |
-| Analytics | Implemented foundation | Week/month/quarter/year totals, domain allocation, rhythm heatmap, trends, composition, production/consumption, deep-work counts |
-| Almanac | Read-only foundation | Computed streaks, current challenge, and configured milestones |
-| Reading | Implemented foundation | Cover-led Kanban, complete five-status library, tags and tag filtering, details, paginated Open Library search/import with exact ISBN lookup, status movement, queue ordering, and confirmed permanent deletion |
-| Data source | Implemented, demo-derived | macOS Application Support contains the active copy seeded from the legacy demo-derived store; `data/lifeos.demo.json` remains deterministic |
-| Persistence | Implemented | Validation, short cross-process lock, atomic replacement, one local `.bak`, and optional latest/daily/monthly Google Drive snapshots |
-| CLI | Implemented | Read projects/stats/recommendation, log time, start/stop/status a timer, and configure/inspect cloud snapshots |
-| Codex rail | Implemented | Current ChatGPT account, workspace-scoped tasks, removable project/book composer context, streaming items, stop, approvals, and user questions |
-| Voice | Intentionally unavailable | Installed app-server does not expose desktop dictation under subscription authentication; no fallback is allowed |
-| Full management UI | Deferred | Project deletion is implemented; project creation/general editing, time-entry edit/delete, settings UI, imports/exports, and almanac search remain deferred |
-| Native desktop app | Development shell implemented | `/Applications/LifeOS Dev.app` is source-backed, ad-hoc signed, starts/stops the current Node service, and can refresh that service in place from its app menu; self-contained distribution is deferred |
+| Interface | Rebuilt (V2 Editorial in two inks, 2026-10) | Vanilla ES-module app (`public/app/`) with keyed DOM morphing, day/night/system editions, accent and density, a masthead with sections, pins and a live day strip, configurable start screen, ⌘K palette, natural-language quick capture, one menu system, keyboard map, Undo toasts, and responsive layouts down to phone width |
+| Command layer and MCP | Implemented | 81 commands with zod schemas; `POST /api/run/<name>`, `lifeos run`, `createLifeOS()` SDK and `scripts/lifeos-mcp.mjs` expose the same surface; `ui.*` commands drive the open window |
+| Activity and undo | Implemented | Journal of exact record patches per change (`lifeos.json.history.jsonl`) with actor/source, conflict-checked undo/redo in the app (⌘Z), CLI and MCP |
+| Project dashboard | Implemented | Status-grouped list and three-column board with drag, project pages with in-place editing (name, subtitle, next action, note, domain, categories, priority, deadline, weekly plan, progress), creation, pins, focus timer, sessions and week history |
+| Tasks | Implemented | Inbox, Today, Upcoming, project, tag and saved-view lists; Completed and 30-day Trash; nested subtasks; grouping/sorting; drag reorder/nest/move; keyboard navigation, multi-select and bulk edits; detail sheet with every field; natural-language capture |
+| Web capture | Implemented and live-tested in Brave | Manifest V3 extension and on-demand native helper; captures are journaled like other writes |
+| Today | Implemented | Day ring, live focus timer with editable project/type/description, recommendations, today's tasks, editable day log, week bars, attention, coming up, reading now and challenge |
+| Insights | Implemented | Range KPIs, domains vs plan, composition, rhythm heatmap, project trends, categories, and an editable, filterable time log |
+| Almanac | Implemented | Year in numbers, challenge set/edit/clear, streaks, searchable milestone timeline with add/edit/delete |
+| Reading | Implemented | Cover-led shelf, sortable library, book sheet with tags/date read/edit, Open Library search and manual add |
+| Creation | Implemented | Five-lane board and list, Markdown editor with split preview and auto-save, dated Shorts linked to tasks |
+| Settings | Implemented | General, appearance, masthead, planning (daily plan, deep target, health thresholds, domains, weekly plan, categories), saved views, agents & MCP setup, data & backups, keyboard |
+| Data source | Implemented, demo-derived | macOS Application Support contains the active copy; `data/lifeos.demo.json` remains deterministic |
+| Persistence | Implemented | Validation, cross-process lock, atomic replacement, one local `.bak`, optional Google Drive snapshots, workspace sidecar and change journal beside the store |
+| Agent rail | Implemented | Codex and Claude Code side by side: conversations, streaming, tool steps, stop, approvals and questions routed to the person, attached record context; Activity tab |
+| Voice | Intentionally unavailable | No subscription-authenticated dictation path exists; no fallback is allowed |
+| Native desktop app | Development shell implemented | `/Applications/LifeOS Dev.app` is source-backed and refreshes the workspace service in place; self-contained distribution is deferred |
 
 The public repository does not record the current personal-store contents,
 backup destination, Codex account, or Codex task history. Its deterministic
@@ -93,10 +102,15 @@ a chronological diary; keep it as a current-state handoff.
 ```text
 Browser or LifeOS Dev.app WKWebView at http://127.0.0.1:<port>
   |
-  |-- GET/POST JSON + Server-Sent Events
+  |-- POST /api/run/<command> + GET /api/state + Server-Sent Events
   v
 scripts/dev-server.mjs
-  |-- state/log/session/task routes -----> src/lifeos-data.mjs
+  |-- /api/run, /api/commands ----------> src/commands/ (registry, zod schemas)
+  |                                           |-- journaled writes: operationContext -> mutateStore
+  |                                           |                       -> lifeos.json.history.jsonl
+  |                                           |-- workspace: lifeos.json.workspace.json
+  |                                           `-- ui.*: SSE `ui` events to the open window
+  |-- state/history routes -------------> src/lifeos-data.mjs, src/lifeos-history.mjs
   |                                           |-- validates and derives state
   |                                           `-- reads/writes platform Application Support/lifeos.json
   |-- book search -----------------------> src/book-catalog.mjs
@@ -105,10 +119,22 @@ scripts/dev-server.mjs
   |-- Codex routes ----------------------> src/codex-app-server.mjs
   |                                           `-- child process:
   |                                               installed codex app-server --stdio
+  |-- Claude routes ---------------------> src/claude-code-agent.mjs
+  |                                           `-- child process per conversation:
+  |                                               installed claude -p (stream-json)
+  |                                               + LifeOS MCP server
   |
-  `-- static files ----------------------> public/
+  `-- static files ----------------------> public/ (index.html, app/, styles/)
 
-cli/lifeos.mjs --------------------------> src/lifeos-data.mjs
+cli/lifeos.mjs, src/sdk.mjs -------------> src/commands/ (same registry)
+scripts/lifeos-mcp.mjs (stdio MCP) ------> src/commands/ (every command as a tool)
+
+scripts/tasks-mcp-server.mjs (separate authenticated loopback MCP)
+  `-- src/tasks-mcp*.mjs -> src/task-service.mjs -> src/lifeos-data.mjs
+
+workers/tasks-demo/worker.mjs (separate synthetic-only HTTPS MCP proof)
+  `-- Workers OAuth Provider + OAuth KV -> src/tasks-mcp.mjs -> demo-tasks.mjs
+      (no personal store, task database, app assets, or Mac proxy)
 
 filesystem change to the active Application Support lifeos.json
   `-- fs.watch -> SSE lifeos event -> browser refetches derived state
@@ -134,13 +160,13 @@ There are four important boundaries:
 1. **Persisted facts** live in the platform Application Support `lifeos.json`.
 2. **Derived state** is recalculated by `src/lifeos-data.mjs`; the browser does
    not own dashboard totals.
-3. **Data operations** should go through the CLI or local JSON routes instead of
-   ad hoc file edits whenever possible.
-4. **AI transport** is only the installed Codex app-server. The browser never
-   talks to an AI service directly.
+3. **Data operations** go through named commands (UI, CLI, SDK, HTTP or MCP);
+   every write is journaled with its source and actor and can be undone.
+4. **AI transport** is only the installed, signed-in Codex app-server and
+   Claude Code CLI. The browser never talks to an AI service directly.
 
 Do not open `public/index.html` with a `file://` URL for normal use. The page
-depends on `/api/...` routes, SSE, root-relative assets, and the Codex bridge.
+depends on `/api/...` routes, SSE, root-relative assets, and the agent bridges.
 Run `npm run dev` and use the printed loopback URL.
 
 ## 5. Repository map
@@ -157,20 +183,36 @@ Run `npm run dev` and use the printed loopback URL.
 | `src/lifeos-storage.mjs` | Platform paths, first-run migration, Drive discovery/configuration, snapshot writing, and backup status |
 | `src/book-catalog.mjs` | Paginated Open Library search, exact ISBN detection, normalized metadata and covers, and best-effort work-detail enrichment |
 | `src/book-cover-cache.mjs` | Bounded medium-size local cover caching for saved Open Library books |
+| `src/commands/` | The command registry: one zod-validated command per capability (core, tasks, projects, time, reading, creation, planning, workspace, history, ui) |
+| `src/lifeos-history.mjs` | Change journal: patch diffing, append/coalesce/compaction, conflict-checked revert |
+| `src/lifeos-manage.mjs` | Project, time-entry, domain, category, settings, milestone, challenge and book-detail management operations |
+| `src/lifeos-workspace.mjs` | Workspace sidecar: start screen, theme, density, section order, saved views, pins |
+| `src/sdk.mjs` | `createLifeOS()` — the command layer as a JavaScript API (in-process or against the running app) |
+| `scripts/lifeos-mcp.mjs` and `.mcp.json` | Full stdio MCP server (every command as a tool) and its project registration |
 | `src/codex-app-server.mjs` | JSON-RPC bridge to the installed Codex executable |
-| `cli/lifeos.mjs` | Stable, token-efficient operational interface for Codex and humans |
-| `scripts/dev-server.mjs` | Local static server, JSON routes, SSE, file watcher, and Codex relay |
+| `src/claude-code-agent.mjs` | Bridge to the installed `claude` CLI (stream-json control protocol), translated to the Codex item shapes |
+| `cli/lifeos.mjs` | Operational interface for humans and agents: `run`, `commands`, `describe`, `overview`, `activity`, `undo`, plus focused verbs |
+| `scripts/dev-server.mjs` | Local static server, command/state/history routes, SSE, file watcher, agent relays and UI channel |
+| `scripts/check-syntax.mjs` | Syntax-checks every shipped JavaScript file for `npm run check` |
+| `extensions/lifeos-capture/` | Unpacked Brave extension, fixed public identity, popup/worker/icons, and installation guide |
+| `scripts/capture-native-host.mjs` and `scripts/install-capture-host.mjs` | One-message native capture bridge and local macOS release installation with Brave registration |
+| `public/web-links.js` and `src/task-web-links.mjs` | Safe links derived from task notes and desktop opening of an exact saved HTTP(S) URL |
 | `scripts/desktop.mjs` | Cross-platform Tauri command wrapper and APFS cache target selection for macOS builds |
 | `scripts/create-demo-data.mjs` | Deterministically generates demo data; can intentionally reset the active store |
-| `public/index.html` | Minimal browser entry point |
-| `public/app.js` | Shared browser state, page routing/event orchestration, API calls, and streamed Codex item handling |
-| `public/tasks.js` | Task scopes, nested tree rendering, progress presentation, accessible controls, and project-detail task panel |
-| `public/reading.js` | Reading Kanban/library rendering and catalog/detail presentation |
-| `public/styles.css` | V2 Editorial visual system and responsive layouts |
-| `public/reading.css` | Cover-led Reading workspace, database rows, Kanban cards, and detail overlay |
-| `public/tasks.css` | TickTick-inspired task workspace, responsive scope rail, task tree, quick-add forms, and project task panel |
+| `public/index.html` | Minimal entry: fonts, `public/styles/*.css`, `public/app/main.js` |
+| `public/app/main.js` | Shell (masthead with sections and day strip, contents page, sheet, rail), delegated events, keyboard map, SSE handlers, presence |
+| `public/app/{store,api,router,dom,actions,menus,commands-ui,task-model,nlp,format,icons,agent-context,rail}.js` | Client state and batched rendering, command calls with optimistic updates/rollback, path routing, templates and DOM morphing, user intents, menus, palette actions and shortcuts, task scopes/grouping, capture parsing, formatting, icons, record context for agents, and the agent/Activity rail |
+| `public/app/ui/` | Menu, dialog, pickers (date/priority/project/tags), capture, palette, toast and pointer drag-and-drop primitives |
+| `public/app/components/` and `public/app/screens/` | Task list/sheet components and the Today, Tasks, Projects, Creation, Reading, Insights, Almanac and Settings screens |
+| `public/styles/` | Design tokens and themes (`base.css`), shell, components and screens |
+| `public/fonts/` | Self-hosted Newsreader, IBM Plex Sans and JetBrains Mono (OFL) |
+| `src/creation-markdown.mjs` and `scripts/build-creation-markdown.mjs` | Local sanitized Markdown preview entry and reproducible browser bundle |
+| `tests/creation.test.mjs` | Idea migration, validation, conflicts, scheduling/Trash, cloud/offline atomicity and UI projection tests |
+| `tests/commands.test.mjs` | Command layer, journal/undo/redo, workspace, views, validation and MCP |
+| `tests/ui.test.mjs` and `tests/ui-harness.mjs` | Interface rendered in Node from derived state: scopes, grouping, drop targets, rows, sheets, screens, context, capture parsing, escaping, optimistic updates |
+| `tests/e2e/` and `scripts/e2e.mjs` | Browser end-to-end suite (Playwright, Chromium): one isolated demo store and server per test, the daily flows, and the runner that installs the pinned browser into the LifeOS cache |
+| `tests/claude-code-agent.test.mjs` | Claude bridge against a protocol-faithful fake CLI: streaming, approvals, decline, transcript reload |
 | `tests/lifeos-data.test.mjs` | Data derivation, range, write safety, project matching, timer, and timezone tests |
-| `tests/tasks-ui.test.mjs` | Task scopes, nesting, progress, native controls, and project-detail integration rendering |
 | `tests/lifeos-storage.test.mjs` | Platform data paths, Google Drive root discovery, and versioned snapshot tests |
 | `tests/book-catalog.test.mjs` | Open Library normalization, pagination, exact ISBN lookup, enrichment, and offline-fallback tests |
 | `tests/codex-app-server.test.mjs` | Executable discovery, approval relay, and voice-boundary tests |
@@ -185,10 +227,12 @@ are not runtime dependencies.
 
 Requirements:
 
-- Node.js 20 or newer;
+- Node.js 22 or newer (required by Wrangler/workerd development tooling);
 - the Codex desktop app or Codex CLI installed and signed in with a ChatGPT
   account for the rail;
-- `npm install` once for the pinned Tauri CLI development dependency;
+- `npm install` once for the pinned development dependencies (Tauri CLI,
+  Playwright); the first `npm run check` also downloads the pinned Chromium for
+  the browser tests;
 - Rust 1.86 or newer to rebuild the desktop shell. Cargo is configured to select
   dependencies compatible with the installed compiler.
 
@@ -206,9 +250,12 @@ npm run desktop:build
 ```
 
 `scripts/desktop.mjs` places Cargo build products in
-`~/Library/Caches/LifeOS/cargo-target` on macOS. The repository is on an external
+`/Volumes/sisyphus/Library/Caches/LifeOS/cargo-target` on macOS, falling back to
+`~/Library/Caches/LifeOS/cargo-target` when sisyphus isn't mounted (`CARGO_TARGET_DIR`
+overrides both). The repository is on an external
 volume that produces `._*` AppleDouble metadata; keeping build-script permission
-files on APFS prevents Tauri from attempting to parse those sidecars. The built
+files on APFS prevents Tauri from attempting to parse those sidecars. Sisyphus is
+APFS and keeps the build off the small internal disk. The built
 app is ad-hoc signed and the current bundle is about 8.1 MB.
 
 Browser-only start:
@@ -222,22 +269,23 @@ npm run dev
 The server tries `PORT` or port 3000, then increments through nearby ports when
 one is occupied. It binds to `127.0.0.1`, prints the actual URL, serves assets
 with `cache-control: no-store`, watches the data directory, and does not start
-the Codex child process until the browser requests Codex bootstrap data.
+an agent child process until the rail requests that agent's bootstrap data.
 
 At browser startup:
 
-1. `public/app.js` reads `tab` and `range` from the URL.
-2. It fetches `/api/state`, which reads and validates the store and computes a
-   fresh view model.
-3. It defaults to the configured Projects tab when no URL override exists.
-4. It opens `/api/events` for LifeOS and Codex updates.
-5. It requests `/api/codex/bootstrap` asynchronously, so a Codex failure does
-   not prevent the dashboard from rendering.
-6. It restores the last selected LifeOS Codex task from browser `localStorage`,
-   or selects the most recent workspace task.
+1. The server injects the workspace theme and density into `index.html`, so the
+   first paint already has the right colors.
+2. `public/app/main.js` fetches `/api/state` (derived state, workspace, store
+   mtime) and routes from the path; with no section it opens the workspace's
+   start screen (Projects by default).
+3. It opens `/api/events` for data, journal, workspace, UI-control and agent
+   events.
+4. The rail bootstraps the selected agent asynchronously (`/api/codex/bootstrap`
+   or `/api/claude/bootstrap`), so an agent failure never blocks the app, and
+   reopens that agent's last LifeOS conversation from `localStorage`.
 
 `SIGINT` and `SIGTERM` close data watchers and event streams, stop the Codex
-child process, and shut down the HTTP server.
+and Claude child processes, and shut down the HTTP server.
 
 The Tauri shell resolves `LIFEOS_WORKSPACE` or its compile-time repository path,
 finds `LIFEOS_NODE` or a standard absolute Node installation, starts the server
@@ -249,10 +297,65 @@ the current path and query, and then stops the preceding child. A failed startup
 leaves the existing server and window intact. Concurrent refresh requests are
 coalesced. The shell does not bundle Node or copy the browser application.
 
+### Brave webpage capture
+
+Run `npm run capture:install` on macOS, then load
+`~/Library/Application Support/LifeOS/browser-capture/extensions/lifeos-capture`
+unpacked in Brave. The installer copies an explicit helper runtime and the
+extension into Application Support without personal data or development packages.
+The small extension uses only `activeTab`
+and `nativeMessaging`. Its popup starts saving immediately; a service worker owns
+the write so closing the popup does not cancel it. No hosted service, API key,
+page scraping, content script, broad host permission, or polling is involved.
+The popup shows status, page title, source link and Open LifeOS; metadata chips
+and routine explanatory text are omitted. Real errors and backup warnings remain.
+
+Brave launches `scripts/capture-native-host.mjs` through a per-user, executable
+launcher for each capture, then the helper exits. Its native host registration
+uses `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/` because
+Brave overrides macOS helper discovery to Chrome's locations; registering under
+Brave's profile directory fails. It allows only the extension's fixed ID. The
+launcher pins the installed runtime and configured data directory using absolute,
+shell-quoted paths. Rerun the installer after source updates or a data-directory
+move, then reload the extension. Capture needs Node and the local store, but not
+Atlas, the desktop app's dynamic HTTP port, or an open app window. Open LifeOS
+still launches the source-backed desktop app, which needs its workspace.
+
+`captureWebPage` creates the task and an exact-named Web Articles project in one
+locked transaction, using the common task constructor. Existing domains are
+reused (learning, research, personal, general, then the first configured domain).
+No schema change is needed: the full URL stays in ordinary task Notes. Priority
+is low, tags are empty, and due date uses `meta.timezone`. An exact URL match in
+non-trashed task notes returns the existing task, preserving edits and completion;
+Trash allows a fresh capture. Removing that URL removes the duplicate identity.
+HTTP(S) is required and embedded credentials are rejected.
+
+Task details derive clickable links from saved notes. Browser sessions use normal
+anchors. The macOS shell routes these clicks through a same-origin-only
+`POST /api/tasks/open-link`; the server verifies the exact URL still belongs to
+the non-trashed task before opening it in the system browser. This is necessary
+because the existing WKWebView does not handle new-window links. Backup exceptions
+after a successful local transaction are reported as warnings, including an
+invalid backup configuration. Native captures bound optional backup I/O to two
+seconds and report a local-save success plus a backup warning on timeout. Optional
+snapshot work runs in a short-lived child that is terminated at the deadline, so
+blocked cloud filesystem calls cannot leave the capture helper running. The local
+store and recovery copy are complete before that child starts. Timed-out cloud
+work may be incomplete.
+Ordinary app and CLI writes retain their existing backup behavior.
+
+See [the installation guide](extensions/lifeos-capture/README.md). Native protocol,
+data integrity, duplicate, failure, and rendered popup/task checks use isolated
+fixtures. A real Brave toolbar capture and duplicate retry are now verified after
+the user loaded the extension. The installed runtime also passes framed ping and
+capture tests in an isolated directory. Loading the new Application Support
+extension folder and verifying persistence across a full Brave restart remain
+manual steps; the browser-control policy still blocks the extension manager.
+
 ## 7. Persisted data model
 
-The active store is a single JSON object. `schemaVersion` is currently 10, with
-explicit compatibility migrations from versions 2 through 9; there is no
+The active store is a single JSON object. `schemaVersion` is currently 11, with
+explicit compatibility migrations from versions 2 through 10; there is no
 general migration framework yet.
 
 ### `meta`
@@ -415,6 +518,37 @@ surface that shows all five statuses and the all-time finished collection, and
 can filter by tag. Both views mutate the same record through narrow local
 routes. Permanent deletion removes exactly one local book by ID after a named
 browser confirmation and removes its deterministic cached cover.
+
+### `creation.ideas[]`
+
+Schema version 11 adds a local idea collection; older stores migrate to an empty
+`creation.ideas` without changing existing records. Each idea has a unique `id`,
+`title` (1–300 characters), `markdown` (up to 200,000 characters), `type` (1–40
+characters), `status`, nullable calendar `date`, finite `sortOrder`, `createdAt`,
+`updatedAt`, and nullable `taskId`. States are `to_do`, `next_up`, `doing`, `done`,
+and `dropped`. Built-in types are `short` and `long_video`; custom type labels
+are supported. All counts, filters and sorts derive from the idea collection.
+
+A dated Short outside Dropped creates one Inbox task, tagged Creation and Shorts,
+inside the same locked transaction. The idea holds the link; scripts and Markdown
+never enter task notes or cloud task documents. Later title/date changes update
+that task while retaining notes, priority, tags, project and subtree identity.
+Moving an idea to Done completes its non-trashed task subtree; leaving Done reopens
+only its linked task. Removing the date, changing away from Short, or dropping the
+idea moves the linked subtree to recoverable Trash. Re-scheduling restores the
+same task/subtree, restoring trashed ancestors and reopening completed ancestors
+as required by the task contract. Ordinary body edits do not rewrite task fields
+or restore a task manually put in Trash. Edits made directly in Tasks do not
+change the source idea; Creation metadata changes flow toward the linked task.
+A stale link after task purging is allowed and replaced on a later scheduling edit.
+
+Idea edits require `expectedUpdatedAt`; stale editors retain their draft and must
+reload before overwriting a newer save. Browser-created IDs make create retries
+idempotent. Task-affecting changes use the existing online coordinator when cloud
+authority is active: an offline failure leaves both records unchanged. Markdown
+edits remain local and can save offline unless a pending cloud transaction blocks
+all local writes. Creation currently has browser/HTTP operations; no CLI command
+or idea deletion endpoint is exposed.
 
 ### `timeEntries[]`
 
@@ -681,38 +815,148 @@ Direct manual edits do not acquire the lock. Prefer the CLI. If a bulk import
 must edit JSON, stop the server or use the data module's mutation path, validate
 the entire result, and retain an out-of-repository backup first.
 
-## 10. Local HTTP and event interface
+## 10. Command layer, local HTTP and events
 
-`scripts/dev-server.mjs` exposes these loopback-only routes:
+The separate task-only MCP server is documented in
+[`docs/tasks-mcp.md`](docs/tasks-mcp.md). `npm run mcp:tasks` requires a private
+out-of-workspace authentication file and an existing store. It defaults to
+read-only, binds to `127.0.0.1:3010`, and serves stateless Streamable HTTP at
+`/mcp`. It exposes list/search/get plus optionally create/edit/complete/Trash/
+restore, never permanent deletion, `/api/state`, or the Codex rail. Reads use
+`readStore(..., { initialize: false })`; multi-field `editTask` uses one locked
+transaction with optional `ifUpdatedAt` concurrency protection. OAuth resource
+metadata and JWT/owner/scope verification prepare approved HTTPS forwarding;
+no real-task remote deployment, task access grant, plugin installation, or
+migration has occurred. The existing local JSON remains the task authority.
+
+`workers/tasks-demo/` implements the deployed Cloudflare Free demo with three
+compile-time synthetic tasks and only list/search/get. It uses current Workers
+OAuth Provider 1.x, CIMD public clients, S256 PKCE, browser-bound consent/state,
+canonical resource audiences, an exact numeric GitHub-owner allowlist and
+per-request `tasks:read` checks. GitHub is used for public identity only;
+upstream tokens are not stored. MCP access lasts one hour, with no refresh
+tokens or remembered consent. It has no D1 binding, assets or connection to the
+Mac. Wrangler dry-run and mocked workerd OAuth/MCP tests pass. Existing-account
+Cloudflare sign-in and Workers Free were verified. Direct owner approval enabled
+Wrangler's account/user read, Workers scripts/KV write and offline grant;
+`whoami` verified encrypted credential storage with its key in macOS Keychain.
+Separate direct approval enabled creation of one isolated OAuth KV namespace
+and deployment of only the synthetic Worker. All 13 live HTTPS boundary checks
+passed: metadata advertises the canonical resource, CIMD and S256; missing/invalid
+tokens, hostile Origin, queries, methods, oversized bodies and unrelated routes
+are rejected. Demo owner sign-in remains unconfigured (503). The final private
+setup has since been directly approved, as described below. The synthetic
+Worker remains unlinked; private acceptance is described below. Actual
+destination/configuration and verification evidence remain outside Git. See the
+runbook for exact access needs.
+
+The owner subsequently approved private task storage and full editing. The
+final implementation in `workers/tasks/` uses the shared OAuth boundary
+`src/tasks-worker.mjs` and a private D1 task-only JSON row with a revision.
+`src/cloud-task-service.mjs` implements primary reads and conditional revision
+writes/retries, retaining IDs/content and subtree lifecycle semantics. A full
+byte-identical local backup and task-only staged artifact were verified outside
+Git. Direct typed approval covered exact
+Wrangler `d1:write`, a dedicated GitHub public-identity app, the final ChatGPT
+read/write/renewable grant and online task edits/cached reads. The exact six
+Wrangler scopes were verified, the private D1 database was created, and
+the private Worker deployed on Free. The GitHub app is registered with the
+exact HTTPS callback and public client ID configured. The user generated and
+submitted the secret directly, completed owner OAuth and connected the private
+LifeOS Tasks plugin. ChatGPT discovered all eight authenticated tools. A fresh
+full backup preceded guarded import and activation of all 37 existing tasks.
+Post-activation reads verified every task field and unrelated local records
+unchanged. The first direct Mercury call preceded activation and returned an
+uninitialized-store error. Its direct retry after activation succeeded in the
+main conversation, returning 37 real tasks at revision 2. Routine task reads
+can now use the installed plugin without a Codex thread. Mercury also created,
+read, edited with `ifUpdatedAt`, verified and moved one clearly labeled temporary
+task to recoverable Trash, reaching revision 5. Original task content was not
+edited. Keep that temporary task recoverable; do not permanently purge it.
+Read-only follow-up verified the installed native helper and desktop projection
+matched revision 5, with the test task retained in Trash, all 37 originals
+unchanged, unrelated records preserved and no pending recovery journal.
+All 13 private live HTTPS boundary checks passed, with no public task data.
+Skip linking the read-only demo plugin.
+
+`npm run tasks:cloud` supplies private backup/fence/import/activation and cloud
+task operations through the existing encrypted Wrangler credentials. The
+archive-only cutover was rejected because it would pause desktop editing and
+capture. Its replacement is the opt-in `src/task-online.mjs` adapter at the
+shared store boundary: desktop/CLI/capture keep their existing task actions
+against the same cloud authority as Mercury, with atomic local projections and
+backups. Cached reads remain available offline; task edits/capture require
+internet. Unrelated local records remain local and writable offline, except
+while an interrupted cloud transaction needs recovery. Revision/stale checks
+prevent overwrite, and a private local journal recovers cloud success before
+local disk failure, including capture's local project creation. Permanent task
+removal is blocked in cloud mode. The online adapter is active.
+
+The guarded cutover rechecks the task digest, refuses concurrent local edits,
+imports only into an empty staged cloud row, and activates an `online` authority
+marker with the exact private connection. Refresh the installed capture runtime
+and stop old workspace writers for the brief migration; editing resumes through
+the adapter afterward. The first local transport invokes Wrangler for each
+query, requiring this checkout/Node and approved D1 administration access. Live
+fictional acceptance on an isolated table verified 0.9–1.2 second reads and
+about 2 second edit/capture domain saves. A Node preloader keeps SQL out of the
+OS command line while using Wrangler's ordinary query API; its `--file` bulk
+import path cannot return SELECT/CAS rows. The refreshed installed native
+helper's read-only ping verified the real task store, and the installed Tasks
+screen shows shared cloud storage. Mercury's isolated temporary task verifies
+production create/edit/Trash access. Live refresh-token rotation remains
+unverified. See
+[`docs/tasks-cloud.md`](docs/tasks-cloud.md) for offline/recovery limits,
+completed grants, main-conversation acceptance evidence and rollback.
+
+### Command layer
+
+`src/commands/registry.mjs` holds every capability as `defineCommand({ name,
+title, kind: read|write|ui, description, input: zod schema, run, label })`.
+`runCommand(name, input, { source, actor, ui })` validates input, runs the
+command inside an `operationContext`, and returns `{ result, state?,
+operationId, label }`. Writes go through `mutateStore`, which diffs the store
+and appends one journal entry (exact before/after record patches, label,
+source such as `app`/`cli`/`mcp`/`sdk`/`capture`, and actor). `history.undo`
+reverts a patch only if the touched records still match (`HistoryConflictError`
+otherwise); under the online task authority, undoing a task creation moves it to
+Trash instead of deleting it. `history.redo` reapplies the most recent undo.
+Workspace changes journal a `workspace` patch and revert the same way.
+
+`ui.*` commands (`ui.view`, `ui.navigate`, `ui.open`, `ui.toast`, `ui.capture`,
+`ui.palette`) reach the running window: outside the server process they are
+forwarded using `lifeos.json.server.json` (pid and port), and the server
+broadcasts them as SSE `ui` events. Windows report what they show through
+`POST /api/ui/presence`, which `ui.view` returns.
+
+The same registry is exposed as:
+
+- **HTTP**: `POST /api/run/<name>` (JSON body; `?state=1` adds derived state),
+  `GET /api/commands` (schemas plus the MCP launch command).
+- **CLI**: `lifeos run <name> [JSON | --field value]`, `commands`, `describe`.
+- **SDK**: `createLifeOS({ actor })` from `src/sdk.mjs`, e.g.
+  `lifeos.tasks.create({...})`.
+- **MCP**: `node scripts/lifeos-mcp.mjs` (stdio; `.mcp.json` registers it), one
+  tool per command, actor taken from the client name or `LIFEOS_ACTOR`.
+
+### Routes
+
+`scripts/dev-server.mjs` exposes these loopback-only routes. Every route under
+`/api/` checks Host and Origin (DNS-rebinding and cross-site protection) and
+POSTs require `content-type: application/json`.
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /api/state?range=week|month|quarter|year` | Return a newly derived dashboard state |
-| `POST /api/log` | Create a time entry and return updated state |
-| `POST /api/session/start` | Persist a running session and return updated state |
-| `POST /api/session/stop` | Stop, log elapsed time, and return updated state |
-| `POST /api/projects/status` | Move one project to one of the six workflow statuses |
-| `POST /api/projects/delete` | Permanently remove one exact project while preserving its tracked-time history |
-| `POST /api/tasks/create` | Create an Inbox/project root task or inherited-project subtask |
-| `POST /api/tasks/update` | Update one task's title and multiline notes |
-| `POST /api/tasks/trash` | Move one exact task and its descendants to recoverable Trash |
-| `POST /api/tasks/restore` | Restore one trashed subtree and any trashed ancestors needed to make it reachable |
-| `POST /api/tasks/delete` | Permanently delete one exact trashed task and its descendants |
-| `POST /api/tasks/completion` | Complete a task and its descendants, or reopen one task |
-| `POST /api/tasks/project` | Assign one root task tree to a project or Inbox |
-| `POST /api/tasks/priority` | Set one task's priority to none, low, medium, or high |
-| `POST /api/tasks/tags` | Replace one task's normalized, deduplicated tag set |
-| `POST /api/tasks/schedule` | Set or clear one task's due date, start time, or duration |
-| `POST /api/tasks/reorder` | Place one task among its siblings and optionally re-parent its subtree |
-| `POST /api/tasks/duplicate` | Copy one task and its subtree directly after the original |
-| `GET /api/books/search?q=...&page=...` | Perform one explicit, 20-result Open Library search page and return normalized temporary results plus pagination metadata |
-| `POST /api/reading/books/import` | Enrich and persist one selected catalog result |
-| `POST /api/reading/books/status` | Move one local book to another reading status |
-| `POST /api/reading/books/reorder` | Position one book within a status or move it to an exact Kanban position |
-| `POST /api/reading/books/tags` | Replace one local book's normalized tag set |
-| `POST /api/reading/books/finished-date` | Set or clear the past date read for one finished book |
-| `POST /api/reading/books/delete` | Permanently remove one exact local book by ID |
-| `GET /api/events` | SSE stream for data and Codex updates; heartbeat every 20 seconds |
+| `POST /api/run/<command>` | Run any command; returns `{ result, operationId, label, state? }` |
+| `GET /api/commands` | Every command with its JSON Schema, plus the MCP launch command |
+| `GET /api/history?limit=n` | Recent journal entries for Activity |
+| `POST /api/ui/presence` | The window reports its route, title and selection |
+| `GET /api/reading/books/<id>/cover` | Cached cover for a saved Open Library book |
+| `POST /api/tasks/open-link` | Desktop shell opens an exact saved task URL |
+| `GET /api/claude/bootstrap` | Installed `claude` executable, login status, rail conversations, pending requests |
+| `POST /api/claude/thread/start`, `thread/read`, `turn/start`, `turn/interrupt`, `request/respond` | Same shapes as the Codex routes, for Claude Code |
+| `GET /api/state?range=week|month|quarter|year` | Return newly derived state with the workspace and store mtime |
+| `GET /api/events` | SSE stream: `lifeos` (data, with mtime), `history`, `workspace`, `ui`, `codex`, `claude`; heartbeat every 20 seconds |
 | `GET /api/codex/bootstrap` | Connect, read account, list workspace tasks, and return voice/pending-request state |
 | `POST /api/codex/thread/start` | Start a new LifeOS-scoped Codex task |
 | `POST /api/codex/thread/read` | Read a task with turns |
@@ -720,20 +964,31 @@ the entire result, and retain an out-of-repository backup first.
 | `POST /api/codex/turn/interrupt` | Stop an in-progress turn |
 | `POST /api/codex/request/respond` | Answer an approval or `request_user_input` request |
 
-Request bodies are JSON and limited to 256 KiB. Known client validation errors
-return 400; other errors return 500 with a JSON message. Static serving prevents
+Request bodies are JSON (1 MiB for commands, 256 KiB elsewhere). Validation
+errors return 400 with the command's message; other errors return 500 with a
+JSON message. Static serving prevents
 path traversal and falls back to `index.html` for extensionless browser paths.
 
-There is no HTTP authentication, CSRF protection, TLS, or remote-access design.
+There is no HTTP authentication, TLS, or remote-access design; Host/Origin
+checks are the only request guard.
 Loopback binding is therefore a security boundary, not an incidental detail. Do
 not change it to `0.0.0.0` without designing authentication and threat controls.
 
 ## 11. CLI contract
 
-The CLI is the preferred path for ordinary Codex operations because it provides
-a stable, compact interface without requiring source inspection.
+The CLI is a compact path for agents and people that requires no source
+inspection. `run` reaches every command; the focused verbs below remain for
+common operations.
 
 ```bash
+npm run lifeos -- overview [--json]
+npm run lifeos -- commands [group] [--json]
+npm run lifeos -- describe tasks.create
+npm run lifeos -- run tasks.create --title "Draft Act III" --projectId portia --dueDate 2026-09-01
+npm run lifeos -- run views.create '{"name":"This week","filter":{"due":"next7"}}'
+npm run lifeos -- activity --limit 20
+npm run lifeos -- undo [operationId]
+npm run lifeos -- redo
 npm run lifeos -- projects --health
 npm run lifeos -- projects categorize --project "Portia" --category "Infinitamente"
 npm run lifeos -- projects status --project "Vulcano" --status done
@@ -789,231 +1044,159 @@ and `--trash` expose the separate lifecycle scopes. `tasks trash` is recoverable
 task already in Trash. The CLI has no reorder command; manual order is a browser
 gesture with keyboard and context-menu equivalents.
 
-The CLI currently supports focused project status changes, category assignment,
-and exact deletion with preserved category history. It still has no project
-creation/general editing, time-entry delete/edit, domain settings, import,
-export, or restore command. Store-path overrides are runtime environment
+Through `run`, the CLI can do everything the app can: project creation and
+editing, time-entry correction and deletion, domains, categories, settings,
+milestones, challenges, saved views, workspace arrangement and undo. Import,
+export and restore remain unimplemented. Store-path overrides are runtime environment
 configuration rather than persisted domain settings.
 
 ## 12. Browser interface and control state
 
-The interface follows the selected **V2 Editorial** direction: warm paper,
-serif masthead, thin rules, compact information, restrained domain color, and a
-persistent Codex rail on wide screens. It becomes a single column with the rail
-below the page on narrow screens.
+The interface follows the **V2 Editorial** direction, rebuilt in October 2026
+as an almanac printed in two inks: ink for everything, and rubric (vermilion,
+or the chosen accent) only for what needs the person — today, now, overdue,
+critical, the active place. Warm paper with a faint grain is the day edition;
+cream ink on blue-black is the night edition. Newsreader carries everything
+read (titles, tasks, notes, figures), IBM Plex Sans the controls, and JetBrains
+Mono the small-capital labels and numbers. Rules and space separate things
+instead of boxes; only slips that lie on top (menus, palette, dialogs) and
+idea index cards are boxed. Domain colors stay as thin swatches. Legibility
+has a floor: no text below 10 px, labels at 11 px, informational text in
+`--ink-3` (at least 5:1 against the paper in both editions), and `--ink-4`
+only for placeholders, decoration and deliberately quiet states. It is a
+dependency-free set of ES modules under `public/app/` and stylesheets under
+`public/styles/`.
 
-### Tasks
+### Architecture
 
-- First-class navigation sits between Today and Projects while Projects remains
-  the default first screen.
-- A TickTick-inspired scope rail switches among All tasks, the Today and
-  Next 7 days smart lists, Inbox, every project, every active tag in use,
-  Completed, and Trash. Active scopes show only open, non-trashed work. Smart
-  lists and tag scopes are derived in the browser from task due dates, status,
-  and tags; they are never persisted. Non-default `taskScope` is URL state and
-  supports browser history.
-- Smart lists render one flat, dated list because a due-date horizon cuts across
-  the hierarchy. Matching completed tasks remain available in a deliberately
-  quiet native disclosure that is collapsed on every render. Completed and Trash
-  keep a nested projection, treating a matching child as a local root whenever
-  its parent belongs to another lifecycle scope.
-- Quick add accepts a title, Inbox/project association, optional due date, and
-  priority. The title also parses `#tag` and `!high|!medium|!low` tokens so a
-  labelled task can be captured in one keystroke run.
-- One task occupies one line. Title, tags, notes marker, subtree ratio, due
-  state, and list all sit on that line; the checkbox is tinted by priority and a
-  flag repeats it so priority is never carried by color alone. Compact and
-  Comfortable densities are a stored view preference, not schema.
-- Priority uses its own `--priority-high|medium|low` red/yellow/blue tokens
-  rather than the `--critical`/`--attention`/`--accent` health colors, so a
-  change to project-health semantics cannot silently restyle priority.
-- The **View** popover holds group-by (none, priority, due date, list, tag),
-  sort-by (custom order, priority, due date, title, date created), and density.
-  Preferences persist in `localStorage` under
-  `lifeos.tasks.view`, not in the portable store.
-- Manual drag reordering is offered only under custom order with no grouping,
-  because any other arrangement would discard the drop position. The View
-  popover states which case is active.
-- Dragging moves a row among its siblings, nests it under the row above when
-  dragged right, or reassigns it when dropped on a sidebar list or tag. Depth is
-  projected from the pointer's horizontal travel and clamped between the
-  neighbours, exactly as the reading board projects its column drops.
-- Every gesture has a non-gesture equivalent. Right-click, the row's `⋯` button,
-  Shift+F10, and the Menu key all open the same context menu: due date, priority,
-  open details, add subtask, move to list, tags, duplicate, and Move to Trash.
-  Trashed work instead offers details, Restore, and Delete forever. Manual
-  ordering is deliberately absent from that menu because dragging covers it;
-  a focused row still reorders and indents with Control or Option and the arrow
-  keys, which is the accessible path. Option is offered because macOS reserves
-  Control-Arrow.
-- Clicking a task row or its title opens a TickTick-inspired right detail sheet.
-  Title and multiline notes are editable there; explicit Save, Command/Ctrl+Enter,
-  and closing a dirty sheet all persist through the narrow task-update route.
-  List, due date, priority, and tags are separate immediate controls, each on its
-  own narrow route, so a metadata change never waits on a dirty text draft.
-- The detail footer exposes recoverable Move to Trash. A named Cancel-first
-  confirmation states how many descendants will move and explains 30-day
-  retention. Trash details are read-only apart from Restore and a second,
-  explicitly permanent Delete forever confirmation.
-- Root list selects reassign the whole subtree. Child list labels are
-  inherited and intentionally not independently editable.
-- Each project card shows its task ratio when tasks exist. Project details show
-  the same derived summary, a compact nested list, add/completion/subtask
-  controls, and an **Open Tasks** route into the filtered workspace. The project
-  panel is intentionally not reorderable; ordering belongs to the Tasks
-  workspace.
-- Multi-select bulk editing, saved custom filters, recurring-task behavior, and
-  full scheduling details remain deliberately deferred.
+- `store.js` holds the derived server state (with the workspace), browser
+  preferences (`localStorage` key `lifeos.ui.v2`) and ephemeral UI state.
+  Renders batch into one animation frame, backed by a short timer so a hidden
+  window still applies agent changes.
+- Screens return `html` templates (interpolations escaped unless they are
+  templates themselves); `dom.js` `morph` patches the live DOM, keyed by
+  `data-key`, preserving focus, caret, scroll, open `<details>`
+  (`data-keep-open`) and stable subtrees (`data-morph-key`).
+- `api.js` `run(name, input, { optimistic, pending, undo, quiet })` applies an
+  optimistic state, posts the command, adopts the returned state, rolls back on
+  failure, and shows an Undo toast labeled by the journal. SSE `lifeos` events
+  newer than the last known store mtime trigger a refetch.
+- `main.js` owns one delegated layer for clicks (`data-action`), inputs,
+  submits, pointer drags (`data-draggable`), context menus, double-click rename
+  and the keyboard map. The current screen's actions win over shared ones.
+- Paths route sections: `/today`, `/tasks?list=…`, `/projects/<id>`,
+  `/creation/<id>`, `/reading?view=library`, `/insights`, `/almanac`,
+  `/settings/<page>`. Old `?tab=` links redirect.
 
-### Projects
+### Shell
 
-- Default first screen.
-- The default List is the complete portfolio, grouped by workflow status; empty
-  groups stay out of the normal page.
-- One-click focus presets show All, Doing, Next up plus Doing, or Done. A custom
-  filter combines any of the six statuses. The view and focus persist locally and
-  are URL-backed for navigation.
-- The List has no organize toggle. Every entry is always draggable, and the
-  statuses missing from the resting page — empty groups plus groups filtered out
-  of the current focus — are rendered as collapsed lanes that expand into drop
-  targets once a drag actually begins, then collapse again when it ends. A latent
-  lane carrying filtered-out projects says how many it is hiding instead of listing
-  them, so the reveal is a fixed, predictable amount of movement. The grabbed card
-  is pinned through both the expand and the collapse: the scroller absorbs the
-  height change so the card stays under the pointer.
-- Pressing a card is deliberately inert. The reveal is bound to pointer movement
-  past a threshold that clears ordinary click drift — never to press duration —
-  and a press that never becomes a drag does no DOM work at all, so click-to-open
-  stays the plain, immediate behavior of a list entry. Escape cancels a drag in
-  flight, and a Control + Left/Right keyboard move reveals the same lanes briefly
-  so the destination is visible; that move now works without any mode.
-- Dragging deliberately animates nothing that costs layout. The lanes reach full
-  height in the frame the drag starts and the scroller absorbs that growth in the
-  same frame, so only opacity and transform animate afterwards. Pointer events are
-  coalesced into one `requestAnimationFrame` pass, because a pointer reports far
-  more often than the screen redraws and both the drag preview and the drop hit
-  test force layout. Drop targets must never move themselves under the cursor: a
-  hovered lane changes tint and ring only, since a transform would shift its own
-  hit box and make the highlight oscillate at boundaries. The release re-runs the
-  hit test synchronously so a drop lands where the pointer is, not where the last
-  frame drew it.
-- The drag preview is the card lifted off the page, not a label trailing the
-  cursor. It keeps the grab offset, so the point the pointer took hold of stays
-  under the pointer, and its content box is sized and placed against the original's
-  content box rather than its border box — the preview adds padding and a border
-  that the list entry does not have. Its width is therefore the card's real width
-  and never clamped, because a narrower preview rewraps the text and stops reading
-  as the same card. A drag preview must also cancel its transitions: it is a clone,
-  so it inherits the source card's `transform` transition, and its first transform
-  then animates it in from the fixed origin at the top-left of the viewport and lags
-  it behind the pointer for the rest of the drag.
+- Masthead: a dateline (weekday, date, week, issue number, live connection),
+  the italic title, and tools — the running timer (stop, change project,
+  discard) or a Focus control, Search (⌘K), New (menu of every capture kind)
+  and the rail toggle. Under a double rule, the sections in workspace order
+  with live counts (overdue, Inbox, critical projects, reading, ideas in
+  progress), pinned projects/views/tags, the night/day edition toggle and
+  settings. Along the bottom edge runs the day strip: today from 06:00 (or the
+  first entry) to midnight, each logged entry a block in its activity's ink,
+  the running timer growing in rubric, and a rubric hairline at now. ⌘\
+  condenses the masthead to one line; under 820 px it becomes a compact bar and
+  the sections open as a numbered contents page.
+- Detail sheet (tasks, books) opens under the masthead, beside the content when
+  the main column has room and over it with a scrim otherwise (container
+  query). J/K step through the list while it is open; Esc closes.
+- ⌘K palette: navigation, every create action, records (projects, tasks, books,
+  ideas) with → for their action menus, saved views, settings, theme, undo,
+  backups, and "Ask Codex/Claude" with the typed text.
+- Quick capture (N, L, T, or the New menu): task, log time, timer, idea,
+  project, book and milestone, with inline token highlighting and chips for
+  dates/times (English and Portuguese), `!priority`, `#tags`, `@project`,
+  durations and `~activity`, `@`/`#` autocomplete, field pickers, ⇧↵ to add
+  another and ⌘↵ to add and open.
+- One menu system (row ⋯, right-click, Shift+F10) with submenus, search, chips
+  and keyboard navigation; pickers for dates (typed phrases, calendar, time),
+  priority, project and tags.
+- Toasts confirm each change with Undo (⌘Z) and Redo (⇧⌘Z).
 
-### Version marker
+### Screens
 
-- The masthead hangs a small build marker beside the wordmark, injected into
-  `index.html` by the server from the newest mtime among the browser sources
-  actually on disk. It exists so a stale window and a current one cannot report the
-  same build; the app does not hot-reload browser source, so **LifeOS Dev → Refresh
-  LifeOS** is what advances it.
-- The alternate Kanban shows exactly Next up, Doing, and Done; To-do and Dropped
-  remain available in the list and project detail without cluttering the board;
-  Paused is likewise deliberately absent.
-- List entries and board cards open the same project detail overlay. The detail
-  status control exposes all six statuses and describes their meaning.
-- Reusable categories appear as compact labels on project cards and details.
-- Task counts on cards and the task panel in project details come from the
-  shared task collection; projects do not embed their own task arrays.
-- Status moves are optimistic and roll back if persistence fails. When a detail
-  change moves a project outside the active List focus, the detail explains why
-  and a recovery message offers both Show and Undo.
-- Every project detail view has a compact Codex control that attaches the exact
-  project snapshot to the rail composer without sending it.
-- Project deletion appears only in the open detail and requires a named warning.
-  The browser route automatically retains tracked time as category-only history;
-  deletion is rejected while the project backs the active challenge.
-- Health, last touch, current-week hours, due distance, streak, and progress are
-  computed or sourced from the active store.
-
-### Today
-
-- Shows granular entries for the configured local date.
-- Shows total against `defaultDailyPlanHours`.
-- Recommendation controls: alternate, dismiss for this visit, restore, and
-  begin.
-- Begin persists `activeSession`; stop creates a real elapsed entry.
-- There is no generic manual-log form or entry editing yet.
-
-### Reading
-
-- Kanban shows exactly Next up, Reading, and Finished; To read and Dropped are
-  intentionally absent. Finished is labeled with the configured current year
-  and includes only books whose Date read falls in that year.
-- Library shows all books with five status filters, a tag filter, and a local
-  text filter. Every visible column heading sorts its field and toggles between
-  ascending and descending order; unavailable values remain last.
-- Both views show covers and open the same detail overlay with description,
-  identifiers, edition metadata, and catalog attribution.
-- Both views display tags. The detail overlay adds or removes tags and places
-  permanent deletion behind a warning that names the book and describes the
-  removed local data.
-- Finished Library rows and finished-book details show an editable Date read
-  field backed by `finishedAt`; changing it persists through a narrow validated
-  route and the same atomic store-write path as other Reading mutations.
-- Compact Kanban cards use pointer dragging to change status and exact queue
-  position, with Control + Arrow keys as the keyboard equivalent. Visible
-  status selects remain in Library and book details, where the column context
-  is absent. These changes persist through narrow routes and atomic store writes.
-- Every book detail view has a compact Codex control that attaches the exact
-  book record to the rail composer without sending it.
-- Catalog search occurs only on explicit submission. ISBN-shaped input becomes
-  an exact ISBN query; title and author searches retain relevance ordering. The
-  first 20 normalized results are shown with total-match context, and each next
-  20-result page requires an explicit Load more action. Optional work
-  descriptions are fetched best-effort, and only a selected book is stored.
-- Search results use remote medium-size previews. A saved Open Library book is
-  served through a same-origin URL that downloads the medium cover at most once,
-  stores it in `reading-covers/` beside the active JSON store, and returns it with
-  immutable browser-cache headers. Missing covers receive a local typographic
-  fallback. Once cached, saved covers and records remain available offline.
-
-### Analytics
-
-- Range controls update both URL state and derived backend state.
-- Week, month, quarter, and year use the same source entries.
-- Charts are HTML/CSS generated; there is no charting dependency.
-
-### Almanac
-
-- Read-only streak, challenge, and milestone presentation.
-- There is no search, filtering, creation, or edit workflow.
+- **Today** is the front page: the lede sets the top recommendation as the
+  headline (project in rubric italic, health and reasons beneath, start,
+  another, not now; the reasons are written out, e.g. "last worked 6 days
+  ago · due in 3 days · 1 open task") or, while a timer runs, a large clock with editable
+  project, description and type; beside it the tally of the day against the
+  plan with deep minutes and an activity bar. Below: today's tasks with quick
+  add, the day's ledger of entries (editable), and a column with week bars,
+  needs attention, coming up (tasks, deadlines, dated ideas; tasks can be
+  pulled forward to today from there), reading now and the challenge.
+- **Tasks**: lists pane (Inbox, Today, Upcoming, All, saved views, projects,
+  tags, Completed, Trash) with counts; filter; view options (group by none,
+  priority, due date, list, tag; sort by custom, priority, due, title, created);
+  quick add with natural language; rows with priority checkbox and flag,
+  subtasks, notes marker, tags, list, duration and due pill; collapsible
+  subtrees; completed fold (a task you complete stays in place, crossed off in
+  rubric, for 1.4 s before it moves there). Drag reorders and nests (custom order, no grouping)
+  or drops onto a list (move, date today, tag, complete, trash) or a group lane
+  that names one value. Keyboard: J/K/arrows, ↵ open, Space complete, X and ⇧
+  select, D/P/M/# pickers, S subtask, 0–3 priority, ⌫ Trash, ⌘D duplicate,
+  ⌥↑↓ reorder, Tab/⇧Tab nest. Two or more selected show a bulk bar (complete,
+  date, priority, move, tag, Trash). The sheet edits title, list, due/time,
+  estimate, priority, tags, notes (with link chips) and subtasks. Saved views
+  combine projects, tags, priorities, due window, status and text.
+- **Projects**: focus presets, sort, list grouped by status (empty or hidden
+  statuses appear as drop lanes while dragging) and a Next up/Doing/Done board.
+  Cards show domain, health, next action, weekly hours against plan, tasks,
+  deadline, streak, progress and an eight-week sparkline. The project page edits
+  name, subtitle, next action and note in place, and status, domain,
+  categories, priority, deadline, weekly plan and progress; it hosts tasks,
+  sessions, week history, milestones, focus timer, pin and agent context.
+- **Creation**: type chips, search, sort, five-lane board with inline add, list
+  table, and the idea editor (status, type, date, linked task, formatting bar,
+  edit/split/preview, auto-save, ⌘S, conflict recovery and download).
+- **Reading**: shelf (Next up, Reading, finished this year) and a sortable,
+  filterable library; book sheet with status, date read, tags, edit details,
+  agent context and removal; Open Library search dialog and manual add.
+- **Insights**: range KPIs, domains vs plan, composition and making vs taking,
+  rhythm heatmap, project trends, categories, and the time log with filter,
+  type filter and per-entry edit/delete.
+- **Almanac**: year in numbers, challenge set/edit/clear, streaks, and a
+  searchable milestone timeline with add, edit and delete.
+- **Settings**: general (name, tagline, time zone, start screen), appearance
+  (theme, accent, density), masthead (section order, visibility, pins), planning (daily
+  plan, deep-work target, health thresholds, domains with weekly hours,
+  categories), saved views, agents (MCP setup for Claude Code and Codex, CLI,
+  SDK, HTTP, command reference), data and backups, keyboard.
 
 ### Browser-local state
 
-- `tab`, non-default analytics `range`, non-default Projects `projectView`,
-  non-default Reading `view`, and non-default Tasks `taskScope` live in the query
-  string and support browser history.
-- Recommendation dismissal and rotation are in-memory and reset on reload.
-- The last selected Codex task ID is stored under
-  `lifeos.codex.threadId` in `localStorage`.
-- `Command/Ctrl + K` focuses the chat field.
+- `lifeos.ui.v2` holds the condensed masthead, rail open/tab/agent/width, per-list
+  task view options and collapsed subtrees, project/reading/creation view
+  preferences, the insights range and recent records.
+- `lifeos.codex.threadId` and `lifeos.claude.threadId` remember the open rail
+  conversation per agent.
+- Recommendation rotation and dismissal are in-memory.
 
-Most user-visible record and Codex text is passed through the browser's HTML or
-attribute escaping helpers. This has not had a formal security audit, and a few
-locally sourced values are interpolated into attributes or inline CSS. Treat all
-store, URL, and protocol values as untrusted when adding controls; validate to a
-known set where possible and escape for the exact output context.
+All record text is escaped by the `html` template; Markdown is rendered only
+through the bundled Marked + DOMPurify sanitizer. Treat store, URL and protocol
+values as untrusted when adding controls.
 
-## 13. Codex rail
+## 13. Agent rail
+
+The rail has two tabs: **Agent** (Codex or Claude Code, switchable, each with
+its own conversations) and **Activity** (the change journal with per-entry undo
+and links to the touched records; filters for all, agents, you). Approvals and
+questions from either agent surface the rail and wait for the person.
 
 ### Non-negotiable transport decision
 
-The rail is a front end to the user's installed Codex application and current
-ChatGPT account. It is not an API-based chatbot.
+The rail is a front end to the person's installed agent applications and their
+existing sign-ins: Codex (`codex app-server`, ChatGPT account) and, since
+2026-10-18 at the owner's request, Claude Code (`claude` CLI, Claude login). It
+is not an API-based chatbot.
 
 Never add:
 
-- an OpenAI API key or direct OpenAI API call;
-- an SDK client as an alternate transport;
+- an API key or direct model API call (OpenAI, Anthropic or other);
+- an API SDK client as an alternate transport;
 - terminal-output scraping;
 - Ollama or another local/remote model;
 - Whisper, browser speech recognition, or another dictation substitute.
@@ -1070,6 +1253,38 @@ Keep its integration isolated in `src/codex-app-server.mjs`, verify actual
 protocol behavior after upgrades, and expand protocol tests with every new
 request or notification handled.
 
+### Claude Code
+
+`src/claude-code-agent.mjs` drives the installed `claude` CLI (candidates:
+`CLAUDE_EXECUTABLE`, `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`,
+`~/.claude/local/claude`, `~/.local/bin/claude`) with
+`-p --input-format stream-json --output-format stream-json --verbose
+--include-partial-messages --permission-prompt-tool stdio --permission-mode
+manual --allowedTools mcp__lifeos`, an appended LifeOS system prompt, and an
+`--mcp-config` that starts `scripts/lifeos-mcp.mjs` with `LIFEOS_ACTOR=Claude`
+and the app's `LIFEOS_DATA_DIR`. The child environment drops any embedding
+Claude session's variables (`CLAUDECODE`, `CLAUDE_CODE_*` except the temp dir).
+
+- Login status comes from `claude auth status --json`; without a login the rail
+  says how to sign in (`claude auth login`) and offers Retry. LifeOS never signs
+  in on the person's behalf.
+- `--permission-mode manual` overrides a personal default such as
+  bypassPermissions: only the journaled LifeOS MCP tools run unprompted; shell,
+  file edits and web requests arrive as `can_use_tool` control requests and are
+  shown as approvals (Allow once, Allow for session using Claude's own
+  suggestions, Decline). `AskUserQuestion` is shown as a question form.
+- Conversations started from the rail are indexed in
+  `claude-rail-sessions.json` beside the store (titles only); a new one gets a
+  fixed `--session-id`, later turns `--resume` it, and past turns are rebuilt
+  from Claude's session transcript. A process stays alive while a conversation
+  is active and exits after 15 idle minutes.
+- Stream events are translated to the Codex shapes (`turn/started`,
+  `item/started`, `item/agentMessage/delta`, `item/completed`, `turn/completed`,
+  `serverRequest`, `serverRequest/resolved`), so one renderer serves both.
+- `tests/claude-code-agent.test.mjs` exercises the protocol with a faithful fake
+  CLI. A live signed-in Claude conversation has not been verified here: the CLI
+  login on the development Mac had expired at implementation time.
+
 ### Voice boundary
 
 `CODEX_VOICE_CAPABILITY` is intentionally exported as unavailable, with the
@@ -1088,16 +1303,20 @@ The source data is personal and should remain portable, inspectable, and usable
 without a hosted service. Loopback-only operation also avoids premature account,
 sync, and server-security work.
 
-### Node 20 and web standards
+### Node and web standards
 
 Node supplies filesystem, HTTP, process, and test primitives across macOS,
 Linux, and Windows. Vanilla HTML/CSS/JavaScript avoids a package install, bundle
 step, framework churn, and unnecessary application weight.
 
-Tradeoff: `public/app.js` and `public/styles.css` are already large single files.
-They are acceptable for the present scope, but should be split by responsibility
-when management workflows materially increase complexity—not merely to imitate
-a framework structure.
+The separate task MCP boundary uses the official MCP SDK, and the synthetic
+Worker proof adds Wrangler/workerd development tooling. Those tools require
+Node 22+; they do not replace or bundle the browser-native main app.
+
+The October 2026 rebuild split the interface by responsibility (store, API,
+router, DOM morphing, actions, components, screens, overlays) as plain ES
+modules with no build step; a small `html` template plus keyed `morph` gives
+framework-like rendering without a framework.
 
 ### JSON before a database
 
@@ -1159,11 +1378,23 @@ dashboard instead computes every statistic from entries, projects, and settings.
 This prevents a second, stale truth layer and makes a data edit propagate across
 all views.
 
-### Stable CLI for Codex
+### One command layer for people and agents
 
-Routine operation should cost a few concise commands, not repeated codebase
-exploration. The CLI is therefore both a human interface and a context-control
-mechanism for the Codex rail.
+Agents should be able to do everything the person can, without reading source
+and without a second, divergent API. Defining each capability once — with a
+schema, a description and a human label — and serving it to the UI, CLI, SDK,
+HTTP and MCP makes that true by construction: a new capability added as a
+command appears everywhere at once, and the UI cannot quietly grow abilities
+agents lack. The CLI and MCP descriptions also keep routine agent work cheap in
+context.
+
+### A change journal instead of per-feature undo
+
+Recording exact before/after patches at the single write boundary
+(`mutateStore`) gives every change — from the person, a script or an agent —
+the same Activity entry and the same conflict-safe undo, without per-feature
+inverse operations. Coalescing keeps typing from flooding the journal, and
+conflict checks refuse to undo over a later edit.
 
 ### Server-Sent Events
 
@@ -1171,11 +1402,15 @@ LifeOS needs one-way local notifications for file and Codex events. SSE is
 built into browsers, simple to reconnect, and lighter than a WebSocket stack.
 Mutations remain ordinary HTTP requests.
 
-### Installed Codex app-server
+### Installed Codex app-server and Claude Code CLI
 
 App-server provides the user's current account, persistent tasks, tool activity,
-approvals, and workspace semantics. It satisfies the requirement that LifeOS be
-only a front end to Codex and avoids separate credentials and billing.
+approvals, and workspace semantics. The Claude Code CLI's stream-json control
+protocol offers the same through the person's Claude login: streaming, tool
+steps, permission prompts and resumable sessions. Using the installed apps keeps
+LifeOS a front end with no separate credentials or billing. Driving the CLI
+directly (rather than the Agent SDK) also avoids bundling a second copy of the
+Claude binary.
 
 ### Source-backed Tauri now; self-contained packaging later
 
@@ -1243,11 +1478,12 @@ Recommended import sequence:
 
 ### Ordinary data operation
 
-1. Read with a CLI command, using `--json` when useful.
-2. Log through `lifeos log` or the session commands.
+1. Read with a command (`lifeos overview`, `lifeos run …`, or the MCP tools).
+2. Write through a command; it is journaled and undoable.
 3. Do not inspect or edit browser code for an ordinary log/stat/recommendation
    request.
-4. Confirm the concrete result with a read command.
+4. Confirm the concrete result with a read command, and show it in the window
+   with `ui.open` or `ui.navigate` when useful.
 
 ### Changing a derived statistic
 
@@ -1256,7 +1492,7 @@ Recommended import sequence:
 3. Return it from `buildState`; do not compute a conflicting copy in the UI.
 4. Add a deterministic test proving both the baseline and sensitivity to a
    source-entry change.
-5. Render the returned field in `public/app.js`.
+5. Render the returned field in the relevant `public/app/screens/` module.
 6. Check every range and any aggregate-entry behavior.
 
 ### Changing the schema
@@ -1270,16 +1506,21 @@ Recommended import sequence:
 6. Update UI rendering and empty/error states.
 7. Add fixture-based tests, including invalid references and recovery.
 8. Update this file and `AGENTS.md` if an invariant changes.
+9. Refresh an installed capture helper with `npm run capture:install` after a
+   schema change; its copied runtime must understand the new store version.
 
-### Adding a browser control
+### Adding a capability or browser control
 
-1. Decide whether it is ephemeral UI state or persisted domain state.
-2. For persistence, expose a narrow server/data operation rather than writing
-   files from the browser.
-3. Disable the control while its request is active.
-4. Render a useful inline error on failure.
-5. Ensure data changes flow back through `buildState` and the SSE refresh path.
-6. Verify keyboard behavior, narrow layouts, and empty states.
+1. Decide whether it is ephemeral UI state, a browser preference
+   (`lifeos.ui.v2`), workspace arrangement (sidecar) or persisted domain state.
+2. For persisted state, add a command in `src/commands/` (schema, description,
+   label) backed by a data operation that writes through `mutateStore`. It then
+   reaches the UI, CLI, SDK, HTTP and MCP at once.
+3. In the browser, add an intent in `actions.js` that calls `run()` with an
+   optimistic update where it helps; wire the control with `data-action`.
+4. Offer a keyboard path, a menu entry, and a palette action where relevant.
+5. Verify keyboard behavior, both themes, narrow layouts and empty states, and
+   extend `tests/ui.test.mjs` and `tests/commands.test.mjs`.
 
 ### Changing task behavior
 
@@ -1293,19 +1534,22 @@ Recommended import sequence:
    task-subtree deletion.
 5. Keep browser routes narrow and return the full newly derived state so Tasks
    and Projects stay synchronized.
-6. Extend both data tests and `tests/tasks-ui.test.mjs`, then exercise the live
+6. Extend both data tests and `tests/ui.test.mjs`, then exercise the live
    Tasks and project-detail flows with an isolated `LIFEOS_DATA_DIR` copy.
 7. Treat any future calendar connector as an export boundary; local task writes
    must succeed independently of calendar availability.
 
-### Changing the Codex bridge
+### Changing an agent bridge
 
-1. Preserve installed-app and ChatGPT-account authentication.
+1. Preserve installed-app authentication (ChatGPT account for Codex, Claude
+   login for Claude Code).
 2. Check the live app-server protocol rather than guessing method shapes.
 3. Keep workspace roots and approval routing explicit.
 4. Add protocol tests for each new message type.
 5. Test reconnect, interruption, and pending-request behavior.
 6. Never make voice appear available without a verified no-API path.
+7. For Claude, keep `--permission-mode manual` and the narrow `--allowedTools`;
+   extend the fake-CLI tests for each new message type.
 
 ### Before every commit
 
@@ -1316,7 +1560,7 @@ Recommended import sequence:
 5. Scan staged content for secrets, tokens, credentials, private paths, and
    personal data.
 6. Confirm `.bak`, `.lock`, temporary, and browser-test artifacts are absent.
-7. Use a `codex/` branch for new implementation work unless the user directs a
+7. Use a feature branch for new implementation work unless the user directs a
    different Git workflow.
 
 ## 17. Verification contract
@@ -1327,11 +1571,15 @@ The single verification command is:
 npm run check
 ```
 
-It performs JavaScript syntax checks for the browser, server, data/storage
-modules, Codex bridge, CLI, and desktop launcher; runs Node's built-in test
-suite; then compile-checks the pinned Tauri shell.
+It syntax-checks every shipped JavaScript file (`scripts/check-syntax.mjs`),
+runs Node's built-in test suite, runs the browser end-to-end suite
+(`npm run test:e2e`, below), then compile-checks the pinned Tauri shell.
 
-At this handoff, the suite contains 79 tests covering:
+At this handoff, the Node suite contains 136 tests. Beyond the areas below, it
+covers the command layer, journal, undo/redo, workspace and MCP
+(`tests/commands.test.mjs`), the interface rendered from derived state
+(`tests/ui.test.mjs`) and the Claude bridge (`tests/claude-code-agent.test.mjs`).
+Areas covered:
 
 - duration parsing;
 - demo-derived totals and recommendation;
@@ -1355,8 +1603,8 @@ At this handoff, the suite contains 79 tests covering:
   validation, completion/reopen cascades, subtree/project progress, root
   reassignment, note/title updates, subtree Trash/restore/permanent deletion,
   30-day pruning, cycle rejection, and project-deletion detachment;
-- Tasks workspace scopes, nested/progress rendering, native non-gesture
-  controls, editable detail/deletion rendering, and project-detail task integration;
+- task scopes, due-date lanes and drop targets, accessible rows, the task
+  sheet, project/reading/creation/settings screens, and optimistic updates;
 - reading add/deduplication, status movement, derived counts, queue order,
   normalized tags, exact permanent deletion, manual Date read editing, and the
   configured-timezone current-year Finished projection;
@@ -1367,21 +1615,111 @@ At this handoff, the suite contains 79 tests covering:
 - macOS, Windows, and portable Codex executable lookup;
 - approval exposure to the browser bridge;
 - exact project/book composer context and message composition;
+- Claude stream-json streaming, approval and decline round-trips, and
+  transcript reload;
 - the intentional voice-disabled boundary.
+
+Additional task MCP coverage exercises authenticated loopback HTTP with the
+official SDK client, schema/request bounds and Host/Origin checks, isolated
+task-tree lifecycle operations, atomic/stale edits, concurrent writes, no
+read initialization/pruning, JWT signature/issuer/audience/owner/expiry checks,
+and per-tool write scopes. Real-task local reads were checked without writes;
+this does not establish HTTPS/OAuth account linking or direct Mercury access.
+Five additional workerd tests exercise the synthetic and private Workers through a full
+mocked OAuth/PKCE flow and the official MCP client, other-owner rejection,
+broader upstream-scope rejection, consent escaping/CSRF/single-use state,
+audience/write-scope denial, body/origin bounds, and fail-closed configuration.
+The consent page was visually inspected on a disposable loopback preview.
+Private D1 fixture coverage verifies authenticated creation/editing/completion/
+Trash/restore, read-only write rejection and no public task counts/content.
+Four portable-model tests compare cloud/local lifecycle results and verify
+revision conflicts/validation; four cutover tests verify backup hashes, a
+concurrent-local-edit refusal, task fences, unrelated-record preservation and
+tampered-artifact refusal. Ten adapter tests verify desktop/capture behavior,
+offline reads/unrelated edits, stale/racing writes, interrupted-save and local
+disk recovery, capture deduplication, out-of-band change refusal and retained
+Trash. A pinned Wrangler transport test verifies SELECT/CAS result rows,
+leading-comment SQL and absence of private query content from the OS command
+line. UI changes are checked with synthetic state and the actual stylesheet;
+the active installed Tasks screen was also inspected without personal writes.
+
+The October 2026 interface was also inspected in a browser against an isolated
+demo store regenerated for the current date: every screen in light and dark,
+phone width, quick capture, keyboard navigation and selection, completion and
+undo/redo, Activity, the Codex rail with the signed-in account, the Claude
+sign-in state, and agent control of the open window from the CLI.
+
+### Browser end-to-end tests
+
+`npm run test:e2e` (`scripts/e2e.mjs`) drives the real interface in Chromium
+with Playwright Test (`@playwright/test`, pinned exactly). Eight tests in
+`tests/e2e/*.spec.mjs` cover the daily flows:
+
+- quick capture of "Call the lab tomorrow 3pm !high #film @Vulcano": token
+  highlighting, chips, and the saved project, priority, tag, date and time;
+- the task sheet: the title saved on Enter and notes autosaved after a pause,
+  both surviving a reload;
+- Space to complete (with the subtask cascade), ⌘Z to undo and ⇧⌘Z to redo;
+- J/K focus, X and ⇧J selection, a bulk-bar priority change and its one-step
+  undo;
+- ⌘K search opening a task sheet, a project page and a screen;
+- drag-reordering a root task, with the drop line drawn across the list on
+  the target row's edge, and the saved `sortOrder`;
+- a new idea opened with ⌘↵, typed Markdown, autosave, the sanitized preview
+  and a reload;
+- an agent-style CLI write (`lifeos run tasks.create` with `LIFEOS_ACTOR`)
+  appearing live, `lifeos run ui.navigate` steering the window, and the
+  Activity entry naming the agent and undoing the change.
+
+Each test copies `data/lifeos.demo.json` (read only) into a fresh temporary
+`LIFEOS_DATA_DIR`, starts `scripts/dev-server.mjs` on an OS-assigned loopback
+port and points its CLI calls at the same directory, so the personal store,
+the tracked fixture and a running app are never touched. The page may reach
+only its own server: other origins are blocked, book-cover requests answer 404
+(the server would otherwise fetch Open Library) and the Codex and Claude rail
+routes answer 503, so no agent process starts. Assertions read the saved store
+from disk as well as the page, and any uncaught page error fails the test.
+
+The pinned headless Chromium, the per-test stores and failure artifacts live
+outside Git in the LifeOS cache, as `ms-playwright/`, `e2e/stores/` and
+`e2e/results/`: `/Volumes/sisyphus/Library/Caches/LifeOS/` on the development
+Mac, `~/Library/Caches/LifeOS/` on a Mac without that disk, and the ignored
+`.cache/` in the repository elsewhere. `PLAYWRIGHT_BROWSERS_PATH` and
+`LIFEOS_E2E_DIR` override them. The first run downloads Chromium's headless
+shell (about 200 MB); later runs confirm it in under a second. Pass Playwright
+arguments after `--` (`npm run test:e2e -- -g palette`, `--repeat-each 5`);
+`--headed`, `--debug` and `--ui` also fetch the full Chromium. A failure keeps
+a trace (`npx playwright show-trace <path>`), a screenshot and the server log.
+
+The suite is part of `npm run check` because it is quick and has been steady:
+about 5 seconds in parallel (9 on one worker), with every run passing across
+repeated stress runs (each test ten times at ten parallel workers) and no
+retries configured. It needs nothing the Tauri check does not already assume:
+a one-time download into the same cache. If a sandbox cannot launch Chromium
+or write the cache, report the check as blocked at the browser step instead of
+skipping it.
+
+When an interaction changes, update or add a spec. Prefer roles, labels and
+`data-*` hooks to styling classes, poll the saved store with `expect.poll`
+instead of sleeping, and let fading overlays (palette, capture) leave before
+the next key press.
 
 Automated coverage does **not** yet include:
 
-- HTTP route integration;
-- browser rendering and interaction end-to-end tests;
+- general browser-application HTTP route integration beyond the focused MCP
+  and native-capture tests;
+- browser flows beyond the daily set above, WebKit/WKWebView (the desktop
+  shell's engine), phone-width layouts and visual appearance;
 - SSE reconnect/file-watcher behavior;
-- a live signed-in Codex conversation;
+- a live signed-in Codex or Claude conversation;
 - full app-server protocol compatibility;
 - real-data imports;
 - self-contained sidecar packaging, notarization, and updates.
 
 For changes touching those areas, add focused tests where practical and perform
-a manual browser/live integration check. A docs-only change still runs the
-standard check to catch repository drift.
+a manual browser/live integration check. Documentation-only edits need an
+accuracy, link, and diff review; the full standard check remains required before
+committing.
 
 ## 18. Known limitations and deliberate deferrals
 
@@ -1393,34 +1731,42 @@ standard check to catch repository drift.
 
 ### Product workflows not built
 
-- Create projects or edit fields beyond workflow status.
-- Browse, correct, or recoverably delete individual time entries.
-- Manually edit imported reading metadata beyond tags and Date read.
-- Create/edit domains, settings, challenges, or milestones in the UI.
-- Expose task start time/duration, define recurrence, add bulk task editing, or
-  synchronize tasks with an external calendar.
+- Define recurrence or synchronize tasks with an external calendar.
 - Import/export UI and validation report.
-- Searchable or filterable Almanac.
 - Goals and richer deadline management.
+- Configure the backup destination from the UI (the CLI does it explicitly).
 
 ### Technical limitations
 
-- Validation is partial; only the focused version-2-through-9 compatibility steps
+- Validation is partial; only the focused version-2-through-10 compatibility steps
   are implemented, not a general migration framework.
 - Daily/monthly JSON snapshots provide history but not cross-device merge or
   immutable disaster recovery.
 - Timers crossing midnight are logged as one entry on the start date.
 - The file watcher observes the active filename only and is intentionally
   process-local.
-- HTTP endpoints trust local callers and must remain loopback-only.
+- Browser HTTP endpoints trust local callers and must remain loopback-only.
+  The separate task MCP server requires authentication but also binds only to
+  loopback. The separate private remote Worker is deployed, authenticated and
+  connected as a personal plugin; the browser app remains loopback-only.
+- Tasks MCP has no operation-ID deduplication for uncertain create responses,
+  an iPhone client or a general multi-device sync protocol. The private
+  Cloudflare Workers + D1 implementation is the active task authority after
+  direct approval, verified backup and guarded import. Its private OAuth plugin
+  is connected and a direct real-task read by Mercury succeeded in the main
+  conversation. Desktop task reads use a local cache offline; edits require
+  connectivity. The synthetic-only Worker is deployed on
+  Free and has no task database. See the task MCP/cloud runbooks for the staged
+  proof and approval requirements. Actual OAuth/MCP CPU usage has not been measured.
 - Catalog search, temporary cover previews, and the first load of an uncached
   saved cover require internet access. Cached saved covers, reading records, and
   typographic fallbacks remain available offline.
-- The Codex protocol may drift with installed application updates.
-- Browser and server layers lack automated end-to-end coverage.
-- Reading and Tasks rendering/styles are separated, but `public/app.js` still
-  owns their event orchestration and will become a bottleneck if several more
-  CRUD workflows are added without measured modularization.
+- The Codex and Claude Code protocols may drift with installed application
+  updates; the Claude bridge relies on the CLI's stream-json control protocol.
+- Browser end-to-end tests cover the daily flows in Chromium only; WKWebView,
+  phone width, visual appearance and the remaining screens are checked by hand.
+- The journal keeps the most recent changes (compacted around 400 entries); it
+  is an undo and audit aid, not a backup.
 - `LifeOS Dev.app` is source-backed and Mac-only: it depends on the current
   workspace path and installed Node, uses an ad-hoc signature, and has no
   notarization, updater, single-instance guard, or friendly native startup-error window.
@@ -1441,26 +1787,27 @@ standard check to catch repository drift.
 4. Make the smallest deliberate schema/rule revision supported by that evidence.
 5. Refine task scheduling/edit/delete behavior only after real task use reveals
    the needed semantics; keep external calendars downstream of LifeOS.
-6. Add project management.
-7. Add recoverable time-entry management.
-8. Add settings, goals, milestone/challenge editing, import/export, and Almanac
-   search.
-9. Replace the source-backed shell with a self-contained sidecar and add
+6. Sign Claude Code in (`claude auth login`) and verify a live rail
+   conversation, including an approval round-trip.
+7. Add goals and import/export with a validation report, extending the browser
+   end-to-end suite to each new flow.
+8. Replace the source-backed shell with a self-contained sidecar and add
    notarized distribution only after those workflows stabilize.
 
-The first incoming agent should not begin by redesigning the interface or adding
-a database. It should make the real-data transition safe, then let the real
-records determine the next structural change.
+The interface and command layer were rebuilt in October 2026; the next agent
+should not redesign them again or add a database. Make the real-data transition
+safe, then let the real records determine the next structural change.
 
 ## 20. Incoming-agent checklist
 
-Before doing work:
+Use the items relevant to the task; ordinary CLI operations and small edits do
+not require the full implementation checklist:
 
-- [ ] Read `AGENTS.md` and this file.
+- [ ] Read `AGENTS.md` and the relevant sections of this file.
 - [ ] Check Git status and preserve unrelated/user changes.
 - [ ] Confirm whether the Application Support store is still demo-derived or now contains private real data.
 - [ ] Do not run `demo:reset` when real data is present.
-- [ ] Use the CLI first for ordinary operations.
+- [ ] Use commands (MCP, `lifeos run`, CLI verbs) for ordinary operations.
 - [ ] Start through `/Applications/LifeOS Dev.app`, `npm run desktop:dev`, or
       `npm run dev`; never use `file://`.
 - [ ] Keep visible numbers derived from source records.
@@ -1468,11 +1815,12 @@ Before doing work:
       and derive subtree/project progress.
 - [ ] Keep calendar integration absent or one-way from LifeOS until explicit
       synchronization semantics are designed and requested.
-- [ ] Keep Codex on installed app-server and the signed-in account only.
+- [ ] Keep agents on the installed, signed-in Codex app-server and Claude Code CLI only.
 - [ ] Keep approvals and user questions visible to the user.
 - [ ] Keep voice disabled unless the exact permitted capability is verified.
-- [ ] Preserve V2 Editorial and the default useful Projects screen.
-- [ ] Run `npm run check` and proportionate live/browser checks.
+- [ ] Preserve V2 Editorial; add capabilities as commands so agents keep parity.
+- [ ] Run checks for the changed behavior and proportionate live/browser checks;
+      run `npm run check` before committing.
 - [ ] Review and privacy-scan explicit staged paths before any commit or push.
 - [ ] Update this document if the state or architecture changes materially.
 
@@ -1483,7 +1831,8 @@ A change is complete only when:
 - persisted facts have one clear source of truth;
 - every displayed result is derived reproducibly;
 - writes are validated and recoverable in proportion to their risk;
-- the CLI and Codex fast path remain concise;
+- the command layer stays the one path for people and agents, and its
+  descriptions stay concise;
 - no API-key or alternate-model dependency has entered the rail;
 - errors and approvals remain visible rather than silently handled;
 - demo and personal data are not confused;

@@ -184,14 +184,14 @@ test('calendar dates honor the configured timezone', () => {
   assert.equal(dateOnly('2026-08-23T03:00:00Z', 'America/Sao_Paulo'), '2026-08-23');
 });
 
-test('older stores migrate to schema version 10 with Reading, project categories, task metadata, and six project statuses', async () => {
+test('older stores migrate to schema version 11 with Creation, Reading, project categories, task metadata, and six project statuses', async () => {
   const store = await readStore(DEMO_STORE_PATH);
   delete store.reading;
   delete store.tasks;
   store.meta.schemaVersion = 2;
   const migrated = migrateStore(store);
 
-  assert.equal(migrated.meta.schemaVersion, 10);
+  assert.equal(migrated.meta.schemaVersion, 11);
   assert.deepEqual(migrated.reading, { books: [] });
   assert.deepEqual(migrated.tasks, { items: [] });
   assert.doesNotThrow(() => validateStore(migrated));
@@ -200,7 +200,7 @@ test('older stores migrate to schema version 10 with Reading, project categories
   versionThree.meta.schemaVersion = 3;
   for (const book of versionThree.reading.books) delete book.tags;
   const tagged = migrateStore(versionThree);
-  assert.equal(tagged.meta.schemaVersion, 10);
+  assert.equal(tagged.meta.schemaVersion, 11);
   assert.ok(tagged.reading.books.every((book) => Array.isArray(book.tags) && book.tags.length === 0));
 
   const versionFour = await readStore(DEMO_STORE_PATH);
@@ -208,7 +208,7 @@ test('older stores migrate to schema version 10 with Reading, project categories
   for (const project of versionFour.projects) project.status = 'active';
   versionFour.projects.at(-1).status = 'inactive';
   const projectStatuses = migrateStore(versionFour);
-  assert.equal(projectStatuses.meta.schemaVersion, 10);
+  assert.equal(projectStatuses.meta.schemaVersion, 11);
   assert.ok(projectStatuses.projects.slice(0, -1).every((project) => project.status === 'next_up'));
   assert.equal(projectStatuses.projects.at(-1).status, 'dropped');
 
@@ -218,7 +218,7 @@ test('older stores migrate to schema version 10 with Reading, project categories
   for (const project of versionFive.projects) delete project.categoryIds;
   for (const entry of versionFive.timeEntries) delete entry.categoryIds;
   const categorized = migrateStore(versionFive);
-  assert.equal(categorized.meta.schemaVersion, 10);
+  assert.equal(categorized.meta.schemaVersion, 11);
   assert.deepEqual(categorized.categories, {});
   assert.ok(categorized.projects.every((project) => Array.isArray(project.categoryIds)));
   assert.ok(categorized.timeEntries.every((entry) => Array.isArray(entry.categoryIds)));
@@ -227,14 +227,14 @@ test('older stores migrate to schema version 10 with Reading, project categories
   versionSix.meta.schemaVersion = 6;
   delete versionSix.tasks;
   const tasked = migrateStore(versionSix);
-  assert.equal(tasked.meta.schemaVersion, 10);
+  assert.equal(tasked.meta.schemaVersion, 11);
   assert.deepEqual(tasked.tasks, { items: [] });
 
   const versionSeven = await readStore(DEMO_STORE_PATH);
   versionSeven.meta.schemaVersion = 7;
   for (const task of versionSeven.tasks.items) delete task.notes;
   const noted = migrateStore(versionSeven);
-  assert.equal(noted.meta.schemaVersion, 10);
+  assert.equal(noted.meta.schemaVersion, 11);
   assert.ok(noted.tasks.items.every((task) => task.notes === ''));
 
   const versionEight = await readStore(DEMO_STORE_PATH);
@@ -244,7 +244,7 @@ test('older stores migrate to schema version 10 with Reading, project categories
     delete task.tags;
   }
   const prioritized = migrateStore(versionEight);
-  assert.equal(prioritized.meta.schemaVersion, 10);
+  assert.equal(prioritized.meta.schemaVersion, 11);
   assert.ok(prioritized.tasks.items.every((task) => task.priority === 'none'));
   assert.ok(prioritized.tasks.items.every((task) => Array.isArray(task.tags) && task.tags.length === 0));
   assert.doesNotThrow(() => validateStore(prioritized));
@@ -253,7 +253,7 @@ test('older stores migrate to schema version 10 with Reading, project categories
   versionNine.meta.schemaVersion = 9;
   for (const task of versionNine.tasks.items) delete task.trashedAt;
   const recoverable = migrateStore(versionNine);
-  assert.equal(recoverable.meta.schemaVersion, 10);
+  assert.equal(recoverable.meta.schemaVersion, 11);
   assert.ok(recoverable.tasks.items.every((task) => task.trashedAt === null));
   assert.doesNotThrow(() => validateStore(recoverable));
 });

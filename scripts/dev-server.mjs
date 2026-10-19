@@ -1,231 +1,117 @@
 #!/usr/bin/env node
 import { watch } from 'node:fs';
 import { createServer } from 'node:http';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { enrichOpenLibraryBook, searchOpenLibrary } from '../src/book-catalog.mjs';
-import { deleteCachedReadingBookCover, getOrCacheReadingBookCover } from '../src/book-cover-cache.mjs';
+import { getOrCacheReadingBookCover } from '../src/book-cover-cache.mjs';
+import { claudeCodeAgent } from '../src/claude-code-agent.mjs';
 import { CODEX_VOICE_CAPABILITY, codexAppServer } from '../src/codex-app-server.mjs';
+import { CommandError, listCommands, runCommand, serverInfoPath } from '../src/commands/index.mjs';
 import { DEFAULT_STORE_PATH, initializeDefaultStore } from '../src/lifeos-storage.mjs';
-import {
-  addReadingBook,
-  createTask,
-  deleteProject,
-  deleteReadingBook,
-  deleteTask,
-  duplicateTask,
-  getState,
-  logTime,
-  purgeExpiredTaskTrash,
-  readStore,
-  reorderReadingBook,
-  reorderTask,
-  setProjectStatus,
-  setReadingBookStatus,
-  setTaskCompletion,
-  setTaskPriority,
-  setTaskProject,
-  setTaskSchedule,
-  startSession,
-  stopSession,
-  trashTask,
-  updateReadingBookFinishedDate,
-  updateReadingBookTags,
-  updateTask,
-  updateTaskTags,
-  restoreTask,
-} from '../src/lifeos-data.mjs';
+import { getState, purgeExpiredTaskTrash, readStore } from '../src/lifeos-data.mjs';
+import { readHistory } from '../src/lifeos-history.mjs';
+import { readWorkspace } from '../src/lifeos-workspace.mjs';
+import { openSavedTaskLink } from '../src/task-web-links.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const publicDir = path.join(root, 'public');
 const dataDir = path.dirname(DEFAULT_STORE_PATH);
+const storeName = path.basename(DEFAULT_STORE_PATH);
 const preferredPort = Number(process.env.PORT || 3000);
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
 const eventClients = new Set();
 let dataChangeTimer = null;
+let historyChangeTimer = null;
+let workspaceChangeTimer = null;
 let taskTrashCleanupTimer = null;
+let presence = null;
+
+// The app window and agents share one channel: UI commands broadcast here, and
+// windows report what they show so agents can ask (ui.view).
+const uiChannel = {
+  send(event) {
+    if (!eventClients.size) throw new CommandError('No LifeOS window is open to show this.', { status: 409, code: 'no_window' });
+    broadcastEvent('ui', event);
+    return { delivered: eventClients.size, ...event };
+  },
+  presence() {
+    return presence ? { open: eventClients.size > 0, ...presence } : { open: eventClients.size > 0 };
+  },
+};
 
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
+    if (url.pathname.startsWith('/api/')) assertLocalHost(req);
 
     if (url.pathname === '/api/events' && req.method === 'GET') {
       return openEventStream(req, res);
     }
     if (url.pathname === '/api/state' && req.method === 'GET') {
-      return sendJson(res, await getState(undefined, { range: url.searchParams.get('range') || 'week' }));
+      return sendJson(res, await clientState(url.searchParams.get('range') || 'week'));
     }
-    if (url.pathname === '/api/log' && req.method === 'POST') {
-      const body = await readJson(req);
-      return sendJson(res, (await logTime(body)).state);
+    if (url.pathname === '/api/commands' && req.method === 'GET') {
+      return sendJson(res, {
+        commands: listCommands(),
+        mcp: { command: 'node', args: [path.join(root, 'scripts', 'lifeos-mcp.mjs')], cwd: root },
+      });
     }
-    if (url.pathname === '/api/session/start' && req.method === 'POST') {
-      const body = await readJson(req);
-      return sendJson(res, (await startSession(body)).state);
-    }
-    if (url.pathname === '/api/session/stop' && req.method === 'POST') {
-      const body = await readJson(req);
-      return sendJson(res, (await stopSession(body)).state);
-    }
-    if (url.pathname === '/api/projects/status' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.projectId, 'projectId');
-      requireString(body.status, 'status');
-      return sendJson(res, await projectStateAction(() => setProjectStatus(body)));
-    }
-    if (url.pathname === '/api/projects/delete' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.projectId, 'projectId');
-      return sendJson(res, await projectStateAction(() => deleteProject({
-        projectId: body.projectId,
-        preserveHistory: true,
-      })));
-    }
-    if (url.pathname === '/api/tasks/create' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.title, 'title');
-      if (body.projectId !== null && body.projectId !== undefined) requireString(body.projectId, 'projectId');
-      if (body.parentTaskId !== null && body.parentTaskId !== undefined) requireString(body.parentTaskId, 'parentTaskId');
-      if (body.priority !== undefined) requireString(body.priority, 'priority');
-      if (body.tags !== undefined && !Array.isArray(body.tags)) throw new ClientError('tags must be an array.');
-      return sendJson(res, await taskStateAction(() => createTask(body)));
-    }
-    if (url.pathname === '/api/tasks/update' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.taskId, 'taskId');
-      if (body.title !== undefined) requireString(body.title, 'title');
-      if (body.notes !== undefined && typeof body.notes !== 'string') throw new ClientError('notes must be a string.');
-      return sendJson(res, await taskStateAction(() => updateTask(body)));
-    }
-    if (url.pathname === '/api/tasks/trash' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.taskId, 'taskId');
-      return sendJson(res, await taskStateAction(() => trashTask(body)));
-    }
-    if (url.pathname === '/api/tasks/restore' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.taskId, 'taskId');
-      return sendJson(res, await taskStateAction(() => restoreTask(body)));
-    }
-    if (url.pathname === '/api/tasks/delete' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.taskId, 'taskId');
-      return sendJson(res, await taskStateAction(() => deleteTask(body)));
-    }
-    if (url.pathname === '/api/tasks/completion' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.taskId, 'taskId');
-      if (typeof body.completed !== 'boolean') throw new ClientError('completed must be true or false.');
-      return sendJson(res, await taskStateAction(() => setTaskCompletion(body)));
-    }
-    if (url.pathname === '/api/tasks/project' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.taskId, 'taskId');
-      if (body.projectId !== null) requireString(body.projectId, 'projectId');
-      return sendJson(res, await taskStateAction(() => setTaskProject(body)));
-    }
-    if (url.pathname === '/api/tasks/priority' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.taskId, 'taskId');
-      requireString(body.priority, 'priority');
-      return sendJson(res, await taskStateAction(() => setTaskPriority(body)));
-    }
-    if (url.pathname === '/api/tasks/tags' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.taskId, 'taskId');
-      if (!Array.isArray(body.tags)) throw new ClientError('tags must be an array.');
-      return sendJson(res, await taskStateAction(() => updateTaskTags(body)));
-    }
-    if (url.pathname === '/api/tasks/schedule' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.taskId, 'taskId');
-      if (body.dueDate !== null && body.dueDate !== undefined && typeof body.dueDate !== 'string') {
-        throw new ClientError('dueDate must be a YYYY-MM-DD string or null.');
+    const runMatch = url.pathname.match(/^\/api\/run\/([a-zA-Z.]+)$/);
+    if (runMatch && req.method === 'POST') {
+      assertJsonPost(req);
+      const input = await readJson(req, 1024 * 1024);
+      const source = req.headers.origin ? 'app' : String(req.headers['x-lifeos-source'] || 'http');
+      const output = await runCommand(runMatch[1], input, {
+        source,
+        actor: req.headers['x-lifeos-actor'] || null,
+        ui: uiChannel,
+      });
+      const body = { result: output.result, operationId: output.operationId || null, label: output.label || null };
+      if (url.searchParams.get('state') === '1') {
+        if (output.state) body.state = { ...output.state, workspace: await readWorkspace(), storeMtime: await storeMtime() };
+        else if (output.result?.workspace) body.workspace = output.result.workspace;
       }
-      return sendJson(res, await taskStateAction(() => setTaskSchedule(body)));
+      return sendJson(res, body);
     }
-    if (url.pathname === '/api/tasks/reorder' && req.method === 'POST') {
+    if (url.pathname === '/api/ui/presence' && req.method === 'POST') {
+      assertJsonPost(req);
       const body = await readJson(req);
-      requireString(body.taskId, 'taskId');
-      if (body.parentTaskId !== null && body.parentTaskId !== undefined) requireString(body.parentTaskId, 'parentTaskId');
-      if (body.beforeTaskId !== null && body.beforeTaskId !== undefined) requireString(body.beforeTaskId, 'beforeTaskId');
-      return sendJson(res, await taskStateAction(() => reorderTask(body)));
+      presence = sanitizePresence(body);
+      return sendJson(res, { ok: true });
     }
-    if (url.pathname === '/api/tasks/duplicate' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.taskId, 'taskId');
-      return sendJson(res, await taskStateAction(() => duplicateTask(body)));
-    }
-    if (url.pathname === '/api/books/search' && req.method === 'GET') {
-      const query = url.searchParams.get('q') || '';
-      if (!query.trim()) throw new ClientError('Enter a title, author, or ISBN.');
-      const page = Number(url.searchParams.get('page') || 1);
-      if (!Number.isInteger(page) || page < 1) throw new ClientError('Search page must be a positive integer.');
-      return sendJson(res, { provider: 'open_library', ...await searchOpenLibrary(query, { page }) });
+    if (url.pathname === '/api/history' && req.method === 'GET') {
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || 60)));
+      return sendJson(res, { entries: await readHistory(DEFAULT_STORE_PATH, { limit }) });
     }
     const readingCoverMatch = url.pathname.match(/^\/api\/reading\/books\/([^/]+)\/cover$/);
     if (readingCoverMatch && req.method === 'GET') {
       return serveReadingBookCover(req, res, decodeURIComponent(readingCoverMatch[1]));
     }
-    if (url.pathname === '/api/reading/books/import' && req.method === 'POST') {
-      const body = await readJson(req);
-      if (!body.book || typeof body.book !== 'object') throw new ClientError('A catalog book is required.');
-      const book = body.book.source?.provider === 'open_library'
-        ? await enrichOpenLibraryBook(body.book)
-        : body.book;
-      return sendJson(res, await readingStateAction(() => addReadingBook({ book, status: body.status })));
-    }
-    if (url.pathname === '/api/reading/books/status' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.bookId, 'bookId');
-      requireString(body.status, 'status');
-      return sendJson(res, await readingStateAction(() => setReadingBookStatus(body)));
-    }
-    if (url.pathname === '/api/reading/books/reorder' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.bookId, 'bookId');
-      if (body.status !== undefined) {
-        requireString(body.status, 'status');
-        if (body.beforeBookId !== null && body.beforeBookId !== undefined) requireString(body.beforeBookId, 'beforeBookId');
-      } else {
-        requireString(body.direction, 'direction');
+    if (url.pathname === '/api/tasks/open-link' && req.method === 'POST') {
+      assertJsonPost(req);
+      if (!sameOrigin(req.headers.origin)) {
+        res.writeHead(403);
+        return res.end('Open links from LifeOS itself.');
       }
-      return sendJson(res, await readingStateAction(() => reorderReadingBook(body)));
-    }
-    if (url.pathname === '/api/reading/books/tags' && req.method === 'POST') {
       const body = await readJson(req);
-      requireString(body.bookId, 'bookId');
-      if (!Array.isArray(body.tags)) throw new ClientError('tags must be an array.');
-      return sendJson(res, await readingStateAction(() => updateReadingBookTags(body)));
-    }
-    if (url.pathname === '/api/reading/books/finished-date' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.bookId, 'bookId');
-      if (body.date !== null && body.date !== undefined && typeof body.date !== 'string') {
-        throw new ClientError('date must be a YYYY-MM-DD string or null.');
-      }
-      return sendJson(res, await readingStateAction(() => updateReadingBookFinishedDate(body)));
-    }
-    if (url.pathname === '/api/reading/books/delete' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.bookId, 'bookId');
-      const deleted = await readingAction(() => deleteReadingBook(body));
-      await deleteCachedReadingBookCover(deleted.book.id).catch((error) => {
-        console.warn(`LifeOS could not remove a deleted book's cached cover: ${error.message}`);
-      });
-      return sendJson(res, deleted.state);
+      requireString(body.taskId, 'taskId');
+      requireString(body.url, 'url');
+      return sendJson(res, await openSavedTaskLink({ taskId: body.taskId, url: body.url }));
     }
 
     if (url.pathname === '/api/codex/bootstrap' && req.method === 'GET') {
@@ -239,6 +125,7 @@ const server = createServer(async (req, res) => {
         pendingRequests: [...codexAppServer.serverRequests.values()],
       });
     }
+    if (url.pathname.startsWith('/api/codex/') && req.method === 'POST') assertJsonPost(req);
     if (url.pathname === '/api/codex/thread/start' && req.method === 'POST') {
       return sendJson(res, { thread: await codexAppServer.startThread() });
     }
@@ -266,14 +153,60 @@ const server = createServer(async (req, res) => {
       await codexAppServer.respondToServerRequest(body.id, body.result);
       return sendJson(res, { ok: true });
     }
+    // Claude Code: the installed, signed-in `claude` CLI, same shapes as Codex.
+    if (url.pathname === '/api/claude/bootstrap' && req.method === 'GET') {
+      let executable;
+      try {
+        executable = claudeCodeAgent.resolveExecutable();
+      } catch (error) {
+        return sendJson(res, { connection: { status: 'error', detail: error.message }, account: null, threads: [], pendingRequests: [] });
+      }
+      const account = await claudeCodeAgent.account({ refresh: url.searchParams.get('refresh') === '1' });
+      return sendJson(res, {
+        connection: { status: 'connected', executable },
+        account,
+        threads: await claudeCodeAgent.listThreads(),
+        pendingRequests: [...claudeCodeAgent.serverRequests.values()].map((entry) => entry.request),
+      });
+    }
+    if (url.pathname.startsWith('/api/claude/') && req.method === 'POST') assertJsonPost(req);
+    if (url.pathname === '/api/claude/thread/start' && req.method === 'POST') {
+      return sendJson(res, { thread: await claudeCodeAgent.startThread() });
+    }
+    if (url.pathname === '/api/claude/thread/read' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.threadId, 'threadId');
+      return sendJson(res, { thread: await claudeCodeAgent.readThread(body.threadId) });
+    }
+    if (url.pathname === '/api/claude/turn/start' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.threadId, 'threadId');
+      requireString(body.message, 'message');
+      return sendJson(res, { turn: await claudeCodeAgent.startTurn(body.threadId, body.message) });
+    }
+    if (url.pathname === '/api/claude/turn/interrupt' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.threadId, 'threadId');
+      await claudeCodeAgent.interruptTurn(body.threadId);
+      return sendJson(res, { ok: true });
+    }
+    if (url.pathname === '/api/claude/request/respond' && req.method === 'POST') {
+      const body = await readJson(req);
+      requireString(body.id, 'id');
+      await claudeCodeAgent.respondToServerRequest(body.id, body.result);
+      return sendJson(res, { ok: true });
+    }
+    if (url.pathname.startsWith('/api/')) return sendJson(res, { error: 'Not found' }, 404);
     return serveStatic(url.pathname, res);
   } catch (error) {
-    const status = error instanceof ClientError ? 400 : 500;
-    sendJson(res, { error: error.message }, status);
+    const status = error instanceof ClientError ? 400 : error instanceof CommandError ? error.status : error.status || 500;
+    if (status >= 500) console.warn(`LifeOS request failed: ${error.stack || error.message}`);
+    sendJson(res, { error: error.message, code: error.code || null }, status);
   }
 });
 
 codexAppServer.subscribe((event) => broadcastEvent('codex', event));
+claudeCodeAgent.subscribe((event) => broadcastEvent('claude', event));
 
 const initialization = await initializeDefaultStore();
 if (initialization.created) {
@@ -283,18 +216,32 @@ await cleanExpiredTaskTrash();
 taskTrashCleanupTimer = setInterval(() => void cleanExpiredTaskTrash(), 60 * 60 * 1000);
 taskTrashCleanupTimer.unref?.();
 const dataWatcher = watch(dataDir, (_eventType, filename) => {
-  if (String(filename || '') !== 'lifeos.json') return;
-  clearTimeout(dataChangeTimer);
-  dataChangeTimer = setTimeout(() => broadcastEvent('lifeos', { type: 'stateChanged' }), 60);
+  const name = String(filename || '');
+  if (name === storeName) {
+    clearTimeout(dataChangeTimer);
+    dataChangeTimer = setTimeout(async () => broadcastEvent('lifeos', { type: 'stateChanged', mtime: await storeMtime() }), 60);
+  } else if (name === `${storeName}.history.jsonl`) {
+    clearTimeout(historyChangeTimer);
+    historyChangeTimer = setTimeout(() => broadcastEvent('history', { type: 'historyChanged' }), 80);
+  } else if (name === `${storeName}.workspace.json`) {
+    clearTimeout(workspaceChangeTimer);
+    workspaceChangeTimer = setTimeout(async () => {
+      try { broadcastEvent('workspace', { workspace: await readWorkspace() }); } catch { /* next change retries */ }
+    }, 60);
+  }
 });
 
 listen(preferredPort);
 
 function listen(port) {
-  const onListening = () => {
+  const onListening = async () => {
     server.off('error', onError);
     const address = server.address();
     const actualPort = typeof address === 'object' && address ? address.port : port;
+    // Lets the CLI, SDK and MCP server forward UI commands to this window.
+    await writeFile(serverInfoPath(DEFAULT_STORE_PATH), `${JSON.stringify({
+      pid: process.pid, port: actualPort, url: `http://127.0.0.1:${actualPort}`, startedAt: new Date().toISOString(),
+    })}\n`, { mode: 0o600 }).catch((error) => console.warn(`LifeOS could not record its address for agents: ${error.message}`));
     console.log(`LifeOS running at http://127.0.0.1:${actualPort}`);
   };
   const onError = (error) => {
@@ -308,6 +255,30 @@ function listen(port) {
   server.once('listening', onListening);
   server.once('error', onError);
   server.listen(port, '127.0.0.1');
+}
+
+async function clientState(range) {
+  const [state, workspace] = await Promise.all([getState(undefined, { range }), readWorkspace()]);
+  return { ...state, workspace, storeMtime: await storeMtime() };
+}
+
+// Lets a window skip the refetch triggered by its own write.
+async function storeMtime() {
+  try { return (await stat(DEFAULT_STORE_PATH)).mtimeMs; } catch { return 0; }
+}
+
+function sanitizePresence(body) {
+  const text = (value, max = 300) => (typeof value === 'string' ? value.slice(0, max) : null);
+  return {
+    route: text(body.route),
+    title: text(body.title, 120),
+    list: text(body.list),
+    selected: body.selected && typeof body.selected === 'object'
+      ? { kind: text(body.selected.kind, 20), id: text(body.selected.id, 200), title: text(body.selected.title, 300) }
+      : null,
+    multiSelection: Array.isArray(body.multiSelection) ? body.multiSelection.slice(0, 200).map((id) => text(id, 200)) : [],
+    at: new Date().toISOString(),
+  };
 }
 
 function openEventStream(req, res) {
@@ -329,6 +300,29 @@ function openEventStream(req, res) {
 function broadcastEvent(event, payload) {
   const message = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
   for (const client of eventClients) client.write(message);
+}
+
+// Loopback is a boundary only if other origins cannot drive it: refuse foreign
+// Host headers (DNS rebinding) and cross-site browser requests (CSRF).
+function assertLocalHost(req) {
+  const port = server.address()?.port;
+  const host = String(req.headers.host || '');
+  if (![`127.0.0.1:${port}`, `localhost:${port}`, '127.0.0.1', 'localhost'].includes(host)) {
+    throw Object.assign(new ClientError('LifeOS only answers on its loopback address.'), { status: 403 });
+  }
+  if (req.headers.origin && !sameOrigin(req.headers.origin)) {
+    throw Object.assign(new ClientError('Requests from other sites are refused.'), { status: 403 });
+  }
+}
+
+function assertJsonPost(req) {
+  const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (type !== 'application/json') throw new ClientError('Send commands as application/json.');
+}
+
+function sameOrigin(origin) {
+  const port = server.address()?.port;
+  return [`http://127.0.0.1:${port}`, `http://localhost:${port}`].includes(origin);
 }
 
 async function serveStatic(requestPath, res) {
@@ -357,32 +351,55 @@ async function serveStatic(requestPath, res) {
 
   const ext = path.extname(filePath);
   const content = ext === '.html'
-    ? Buffer.from(await withBuildMarker(await readFile(filePath, 'utf8')))
+    ? Buffer.from(await withBootContext(await readFile(filePath, 'utf8')))
     : await readFile(filePath);
   res.writeHead(200, {
     'content-type': MIME[ext] || 'application/octet-stream',
-    'cache-control': 'no-store',
+    'cache-control': ext === '.woff2' ? 'public, max-age=31536000, immutable' : 'no-store',
   });
   res.end(content);
 }
 
-// The marker is derived from the browser sources actually on disk, so a stale page
-// and a current one cannot report the same build.
-async function withBuildMarker(html) {
+// The build marker is derived from the browser sources actually on disk, so a
+// stale page and a current one cannot report the same build. The theme comes
+// from the workspace so the first paint already has the right colors.
+async function withBootContext(html) {
   const build = await assetBuildStamp();
-  return html.replace('</head>', `  <meta name="lifeos-build" content="${build}">\n</head>`);
+  let theme = { mode: 'system', accent: null };
+  let density = 'comfortable';
+  try {
+    const workspace = await readWorkspace();
+    theme = workspace.theme;
+    density = workspace.density;
+  } catch { /* defaults */ }
+  const accent = theme.accent ? ` data-accent="${theme.accent}"` : '';
+  return html
+    .replace('<html lang="en">', `<html lang="en" data-theme-mode="${theme.mode}" data-density="${density}"${accent}>`)
+    .replace('</head>', `  <meta name="lifeos-build" content="${build}">\n</head>`);
 }
 
 async function assetBuildStamp() {
   try {
-    const names = (await readdir(publicDir)).filter((name) => /\.(js|css|html)$/.test(name));
-    const times = await Promise.all(names.map(async (name) => (await stat(path.join(publicDir, name))).mtimeMs));
+    const files = await listSourceFiles(publicDir);
+    const times = await Promise.all(files.map(async (file) => (await stat(file)).mtimeMs));
     const newest = new Date(Math.max(...times, 0));
     const pad = (value) => String(value).padStart(2, '0');
     return `${pad(newest.getMonth() + 1)}${pad(newest.getDate())}.${pad(newest.getHours())}${pad(newest.getMinutes())}`;
   } catch {
     return 'unknown';
   }
+}
+
+async function listSourceFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith('.') || entry.name.startsWith('._')) continue;
+    const full = path.join(directory, entry.name);
+    if (entry.isDirectory() && entry.name !== 'vendor' && entry.name !== 'fonts') files.push(...await listSourceFiles(full));
+    else if (/\.(js|css|html)$/.test(entry.name)) files.push(full);
+  }
+  return files;
 }
 
 function sendJson(res, payload, status = 200) {
@@ -449,32 +466,6 @@ function requireString(value, name) {
   if (typeof value !== 'string' || !value.trim()) throw new ClientError(`${name} is required.`);
 }
 
-async function readingStateAction(action) {
-  return (await readingAction(action)).state;
-}
-
-async function projectStateAction(action) {
-  try {
-    return (await action()).state;
-  } catch (error) {
-    if (/Project not found|Unknown project status|used by the active challenge|still has time history/.test(error.message)) {
-      throw new ClientError(error.message);
-    }
-    throw error;
-  }
-}
-
-async function taskStateAction(action) {
-  try {
-    return (await action()).state;
-  } catch (error) {
-    if (/Task not found|Parent task not found|Project not found|Task position target not found|task title|task notes|task update|task must|task cannot|top-level task|Task completion|Task priority|Task tags|Task due date|Task start time|Task duration|Recurring tasks|start time requires|no more than|in Trash|not in Trash|permanently deleted/.test(error.message)) {
-      throw new ClientError(error.message);
-    }
-    throw error;
-  }
-}
-
 async function cleanExpiredTaskTrash() {
   try {
     const result = await purgeExpiredTaskTrash();
@@ -487,25 +478,22 @@ async function cleanExpiredTaskTrash() {
   }
 }
 
-async function readingAction(action) {
-  try {
-    return await action();
-  } catch (error) {
-    if (/Reading book not found|already in Reading|Unknown reading status|direction must be|Date read|date read can only/.test(error.message)) {
-      throw new ClientError(error.message);
-    }
-    throw error;
-  }
-}
-
 class ClientError extends Error {}
 
 async function shutdown() {
   dataWatcher.close();
   clearTimeout(dataChangeTimer);
+  clearTimeout(historyChangeTimer);
+  clearTimeout(workspaceChangeTimer);
   clearInterval(taskTrashCleanupTimer);
   for (const client of eventClients) client.end();
+  // A refreshed server may already have replaced this record; remove only ours.
+  try {
+    const info = JSON.parse(await readFile(serverInfoPath(DEFAULT_STORE_PATH), 'utf8'));
+    if (info.pid === process.pid) await unlink(serverInfoPath(DEFAULT_STORE_PATH));
+  } catch { /* already gone */ }
   await codexAppServer.stop().catch(() => undefined);
+  await claudeCodeAgent.stop().catch(() => undefined);
   server.close(() => process.exit(0));
 }
 

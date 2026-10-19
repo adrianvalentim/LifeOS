@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { fork } from 'node:child_process';
 import { access, chmod, copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -80,17 +81,50 @@ export async function disableBackupDirectory() {
   return getStorageStatus();
 }
 
-export async function backUpStore(store) {
-  const backupDirectory = await resolveBackupDirectory();
-  if (!backupDirectory) return { configured: false, ok: null };
+export async function backUpStore(store, { timeoutMs = 0 } = {}) {
+  if (timeoutMs > 0) return backUpStoreWithDeadline(store, timeoutMs);
+  let backupDirectory;
   const attemptedAt = new Date().toISOString();
   try {
+    backupDirectory = await resolveBackupDirectory();
+    if (!backupDirectory) return { configured: false, ok: null };
     const result = await writeBackupSnapshot(store, { backupDirectory, attemptedAt });
     await recordBackupStatus({ ok: true, attemptedAt, completedAt: new Date().toISOString(), backupDirectory });
     return { configured: true, ok: true, ...result };
   } catch (error) {
     await recordBackupStatus({ ok: false, attemptedAt, backupDirectory, error: error.message }).catch(() => undefined);
     return { configured: true, ok: false, backupDirectory, error: error.message };
+  }
+}
+
+async function backUpStoreWithDeadline(store, timeoutMs) {
+  const attemptedAt = new Date().toISOString();
+  try {
+    // Filesystem calls to a stalled cloud provider cannot be cancelled reliably
+    // in-process. Isolate only the optional snapshot so the local writer can exit.
+    return await new Promise((resolve, reject) => {
+      const child = fork(new URL('../scripts/capture-backup-worker.mjs', import.meta.url), [], {
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      });
+      let response;
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, timeoutMs);
+      child.once('message', (message) => { response = message; });
+      child.once('error', (error) => { clearTimeout(timer); reject(error); });
+      child.once('exit', () => {
+        clearTimeout(timer);
+        if (timedOut) reject(new Error('Cloud backup took too long. The local save is complete.'));
+        else if (response && typeof response === 'object') resolve(response);
+        else reject(new Error('Cloud backup stopped before completion. The local save is complete.'));
+      });
+      child.send(store, (error) => { if (error) { child.kill(); reject(error); } });
+    });
+  } catch (error) {
+    await recordBackupStatus({ ok: false, attemptedAt, error: error.message }).catch(() => undefined);
+    return { configured: true, ok: false, error: error.message };
   }
 }
 

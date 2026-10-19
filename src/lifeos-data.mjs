@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { extractWebLinks } from '../public/web-links.js';
+import { appendHistory, diffStores, operationContext } from './lifeos-history.mjs';
+import { assertLocalTaskWrite, readTaskAuthority } from './task-authority.mjs';
+import { createOnlineTaskCoordinator, taskRepositoryFor } from './task-online.mjs';
 import {
   DEFAULT_STORE_PATH,
   DEMO_STORE_PATH,
@@ -10,7 +14,8 @@ import {
 } from './lifeos-storage.mjs';
 
 export { DEFAULT_STORE_PATH, DEMO_STORE_PATH, ROOT_DIR } from './lifeos-storage.mjs';
-export const CURRENT_SCHEMA_VERSION = 10;
+export const CURRENT_SCHEMA_VERSION = 11;
+export const CREATION_STATUSES = ['to_do', 'next_up', 'doing', 'done', 'dropped'];
 export const ACTIVITY_TYPES = [
   'deep_work',
   'shallow_work',
@@ -36,9 +41,14 @@ const MAX_TASK_TAGS = 12;
 const DAY_MS = 86_400_000;
 const LOCK_TIMEOUT_MS = 5_000;
 const STALE_LOCK_MS = 30_000;
+const TASK_AUTHORITY = Symbol('task-authority');
+async function attachTaskAuthority(store, storePath, status = {}) {
+  const authority = await readTaskAuthority(storePath);
+  if (authority) Object.defineProperty(store, TASK_AUTHORITY, { value: { source: authority.source, phase: authority.phase, mode: authority.mode, ...status } });
+  return store;
+}
 
-export async function readStore(storePath = DEFAULT_STORE_PATH) {
-  if (isDefaultStorePath(storePath)) await initializeDefaultStore();
+async function readLocalStore(storePath) {
   const raw = await readFile(storePath, 'utf8');
   let store;
   try {
@@ -50,8 +60,30 @@ export async function readStore(storePath = DEFAULT_STORE_PATH) {
   validateStore(migrated);
   return migrated;
 }
+async function onlineCoordinator(storePath, authority) {
+  return createOnlineTaskCoordinator({ storePath, repository: await taskRepositoryFor(storePath, authority),
+    readLocal: () => readLocalStore(storePath), writeLocal: store => writeLocalStore(store, storePath), validateLocal: validateStore });
+}
+export async function readStore(storePath = DEFAULT_STORE_PATH, { initialize = true } = {}) {
+  if (initialize && isDefaultStorePath(storePath)) await initializeDefaultStore();
+  const authority = await readTaskAuthority(storePath);
+  if (authority?.mode === 'online' && authority.phase === 'active') {
+    const release = await acquireStoreLock(storePath);
+    try {
+      const { store, ...status } = await (await onlineCoordinator(storePath, authority)).read();
+      return attachTaskAuthority(store, storePath, status);
+    } finally { await release(); }
+  }
+  return attachTaskAuthority(await readLocalStore(storePath), storePath);
+}
 
 export async function writeStore(store, storePath = DEFAULT_STORE_PATH) {
+  const migrated = migrateStore(store);
+  validateStore(migrated);
+  await assertLocalTaskWrite(storePath, migrated.tasks);
+  return attachTaskAuthority(await writeLocalStore(migrated, storePath), storePath);
+}
+async function writeLocalStore(store, storePath) {
   const migrated = migrateStore(store);
   validateStore(migrated);
   const directory = path.dirname(storePath);
@@ -81,21 +113,60 @@ export async function writeStore(store, storePath = DEFAULT_STORE_PATH) {
   return migrated;
 }
 
-export async function mutateStore(mutator, storePath = DEFAULT_STORE_PATH) {
+export async function mutateStore(mutator, storePath = DEFAULT_STORE_PATH, { backupTimeoutMs = 0 } = {}) {
   if (isDefaultStorePath(storePath)) await initializeDefaultStore();
   const release = await acquireStoreLock(storePath);
   let result;
   let store;
+  // A command runs inside an operation context; its exact record changes are
+  // journaled for Undo and the Activity feed while the lock is still held.
+  const operation = operationContext.getStore();
+  let before = null;
   try {
-    store = await readStore(storePath);
-    result = await mutator(store);
-    store = await writeStore(store, storePath);
+    const authority = await readTaskAuthority(storePath);
+    const onlineTasks = authority?.mode === 'online' && authority.phase === 'active';
+    if (operation) operation.onlineTasks = onlineTasks;
+    const journaled = operation
+      ? async (current) => { before = structuredClone(current); return mutator(current); }
+      : mutator;
+    if (onlineTasks) {
+      const changed = await (await onlineCoordinator(storePath, authority)).mutate(journaled);
+      result = changed.result;
+      store = await attachTaskAuthority(changed.store, storePath, { online: changed.online, revision: changed.revision });
+    } else {
+      store = await attachTaskAuthority(await readLocalStore(storePath), storePath);
+      result = await journaled(store);
+      store = await writeStore(store, storePath);
+    }
+    if (operation && before) {
+      const patch = diffStores(before, store);
+      if (patch) {
+        const label = typeof operation.label === 'function' ? operation.label(result) : operation.label;
+        operation.recordedLabel = label;
+        const entry = await appendHistory(storePath, {
+          command: operation.command,
+          label,
+          source: operation.source || 'app',
+          actor: operation.actor || null,
+          undoOf: operation.undoOf || null,
+          redoOf: operation.redoOf || null,
+          coalesceKey: typeof operation.coalesceKey === 'function' ? operation.coalesceKey(result) : operation.coalesceKey || null,
+          patch,
+        }).catch((error) => {
+          console.warn(`LifeOS could not journal a change for Undo: ${error.message}`);
+          return null;
+        });
+        if (entry) (operation.recorded ||= []).push(entry.id);
+      }
+    }
   } finally {
     await release();
   }
 
   if (!isDefaultStorePath(storePath)) return { result, store, backup: { configured: false, ok: null } };
-  const backup = await backUpStore(store);
+  let backup;
+  try { backup = await backUpStore(store, { timeoutMs: backupTimeoutMs }); }
+  catch (error) { backup = { configured: true, ok: false, error: error.message }; }
   if (backup.ok === false) console.warn(`LifeOS cloud backup failed: ${backup.error}`);
   return { result, store, backup };
 }
@@ -167,6 +238,16 @@ export function migrateStore(input) {
       task.trashedAt = null;
     }
   }
+  if (version < 11 && store.creation === undefined) store.creation = { ideas: [] };
+  // Milestones gained stable IDs for editing. Derived from content and position
+  // so repeated reads agree until the next supported write persists them.
+  if (Array.isArray(store.milestones)) {
+    store.milestones.forEach((milestone, index) => {
+      if (milestone && typeof milestone === 'object' && !milestone.id) {
+        milestone.id = `milestone-${String(milestone.date || 'undated')}-${index + 1}`;
+      }
+    });
+  }
   if (store.meta) store.meta.schemaVersion = CURRENT_SCHEMA_VERSION;
   return store;
 }
@@ -189,6 +270,7 @@ export function validateStore(store) {
   if (!store.tasks || !Array.isArray(store.tasks.items)) {
     throw new Error('LifeOS data requires tasks.items.');
   }
+  validateCreation(store.creation);
 
   const categoryIds = new Set();
   const categoryLabels = new Set();
@@ -754,58 +836,108 @@ export function buildCategoryStats(store, query, options = {}) {
 
 export async function createTask(input, storePath = DEFAULT_STORE_PATH) {
   const now = resolveNow(input.now);
+  const { result: task, store } = await mutateStore((current) => insertTask(current, input, now), storePath);
+  return { task, state: buildValidatedState(store, { now }) };
+}
+
+// Used only inside a store transaction so project creation and capture are atomic.
+function insertTask(current, input, now) {
   const title = cleanTaskTitle(input.title);
   const parentTaskId = input.parentTaskId == null || input.parentTaskId === ''
     ? null
     : String(input.parentTaskId).trim();
   const schedule = normalizeTaskSchedule(input);
-  const { result: task, store } = await mutateStore((current) => {
-    const parent = parentTaskId
-      ? current.tasks.items.find((candidate) => candidate.id === parentTaskId)
+  const parent = parentTaskId
+    ? current.tasks.items.find((candidate) => candidate.id === parentTaskId)
+    : null;
+  if (parentTaskId && !parent) throw new Error(`Parent task not found: ${parentTaskId}`);
+  if (parent?.trashedAt) throw new Error('A task in Trash cannot receive new subtasks.');
+
+  let projectId = normalizeTaskProjectId(current, input.projectId);
+  if (parent) {
+    if (input.projectId !== undefined && projectId !== (parent.projectId || null)) {
+      throw new Error('A subtask must share its parent task\'s project.');
+    }
+    projectId = parent.projectId || null;
+  }
+
+  const timestamp = now.toISOString();
+  const next = {
+    id: input.id || randomUUID(),
+    title,
+    notes: cleanTaskNotes(input.notes),
+    projectId,
+    parentTaskId,
+    status: 'open',
+    priority: cleanTaskPriority(input.priority),
+    tags: cleanTaskTags(input.tags),
+    sortOrder: nextTaskSortOrder(current.tasks.items, parentTaskId),
+    schedule,
+    createdAt: input.createdAt || timestamp,
+    updatedAt: timestamp,
+    completedAt: null,
+    trashedAt: null,
+  };
+  current.tasks.items.push(next);
+  let ancestor = parent;
+  while (ancestor) {
+    if (ancestor.status === 'completed') {
+      ancestor.status = 'open';
+      ancestor.completedAt = null;
+      ancestor.updatedAt = timestamp;
+    }
+    ancestor = ancestor.parentTaskId
+      ? current.tasks.items.find((candidate) => candidate.id === ancestor.parentTaskId)
       : null;
-    if (parentTaskId && !parent) throw new Error(`Parent task not found: ${parentTaskId}`);
-    if (parent?.trashedAt) throw new Error('A task in Trash cannot receive new subtasks.');
+  }
+  return next;
+}
 
-    let projectId = normalizeTaskProjectId(current, input.projectId);
-    if (parent) {
-      if (input.projectId !== undefined && projectId !== (parent.projectId || null)) {
-        throw new Error('A subtask must share its parent task\'s project.');
-      }
-      projectId = parent.projectId || null;
-    }
-
-    const timestamp = now.toISOString();
-    const next = {
-      id: input.id || randomUUID(),
-      title,
-      notes: cleanTaskNotes(input.notes),
-      projectId,
-      parentTaskId,
-      status: 'open',
-      priority: cleanTaskPriority(input.priority),
-      tags: cleanTaskTags(input.tags),
-      sortOrder: nextTaskSortOrder(current.tasks.items, parentTaskId),
-      schedule,
-      createdAt: input.createdAt || timestamp,
-      updatedAt: timestamp,
-      completedAt: null,
-      trashedAt: null,
+export async function captureWebPage(input, storePath = DEFAULT_STORE_PATH) {
+  if (!input || typeof input.url !== 'string' || input.url.length > 16_000
+    || /[\u0000-\u0020\u007F]/u.test(input.url)) {
+    throw new Error('This page does not have a valid web address.');
+  }
+  let url;
+  try { url = new URL(input.url); } catch { throw new Error('This page does not have a valid web address.'); }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) {
+    throw new Error('Open an ordinary HTTP or HTTPS webpage to save it.');
+  }
+  if (input.title !== undefined && typeof input.title !== 'string') throw new Error('Page title must be text.');
+  const now = resolveNow(input.now);
+  const { result, backup } = await mutateStore((current) => {
+    // Keep the user's edits (including project, priority and due date) on a repeat click.
+    const existing = current.tasks.items.find((task) => !task.trashedAt
+      && extractWebLinks(task.notes).some((link) => link.url === url.href));
+    if (existing) return {
+      created: false, task: existing,
+      project: current.projects.find((project) => project.id === existing.projectId) || null,
     };
-    current.tasks.items.push(next);
-    let ancestor = parent;
-    while (ancestor) {
-      if (ancestor.status === 'completed') {
-        ancestor.status = 'open';
-        ancestor.completedAt = null;
-        ancestor.updatedAt = timestamp;
-      }
-      ancestor = ancestor.parentTaskId
-        ? current.tasks.items.find((candidate) => candidate.id === ancestor.parentTaskId)
-        : null;
+
+    const candidates = current.projects.filter((project) => normalizeText(project.name) === 'web articles');
+    if (candidates.length > 1) throw new Error('More than one project is named Web Articles. Rename one in LifeOS before capturing.');
+    let project = candidates[0];
+    if (!project) {
+      const domain = ['learning', 'research', 'personal', 'general'].find((key) => current.domains[key])
+        || Object.keys(current.domains)[0];
+      if (!domain) throw new Error('LifeOS needs a domain before creating Web Articles.');
+      const timestamp = now.toISOString();
+      project = {
+        id: current.projects.some((item) => item.id === 'web-articles') ? randomUUID() : 'web-articles',
+        name: 'Web Articles', subtitle: 'Saved pages to read', domain, status: 'to_do',
+        priority: 1, plannedHours: 0, deadline: null, progress: null, note: '', categoryIds: [],
+        createdAt: timestamp, statusChangedAt: timestamp,
+      };
+      current.projects.push(project);
     }
-    return next;
-  }, storePath);
-  return { task, state: buildValidatedState(store, { now }) };
+    const task = insertTask(current, {
+      title: input.title?.trim() || url.hostname,
+      notes: url.href, projectId: project.id, priority: 'low', tags: [],
+      dueDate: dateOnly(now, current.meta.timezone),
+    }, now);
+    return { created: true, task, project };
+  }, storePath, { backupTimeoutMs: 2_000 });
+  return { ...result, url: url.href, backup };
 }
 
 export async function updateTask(input, storePath = DEFAULT_STORE_PATH) {
@@ -817,12 +949,44 @@ export async function updateTask(input, storePath = DEFAULT_STORE_PATH) {
     const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
     if (!existing) throw new Error(`Task not found: ${input.taskId}`);
     requireUntrashedTask(existing, 'edited');
+    if (input.ifUpdatedAt !== undefined && existing.updatedAt !== input.ifUpdatedAt) throw new Error('Task changed since it was read. Get the task again before editing.');
     const title = Object.hasOwn(input, 'title') ? cleanTaskTitle(input.title) : existing.title;
     const notes = Object.hasOwn(input, 'notes') ? cleanTaskNotes(input.notes) : existing.notes;
     if (existing.title !== title || existing.notes !== notes) {
       existing.title = title;
       existing.notes = notes;
       existing.updatedAt = now.toISOString();
+    }
+    return existing;
+  }, storePath);
+  return { task, state: buildValidatedState(store, { now }) };
+}
+
+// One locked transaction for a task integration's multi-field edit. Keep the
+// browser's narrow update routes unchanged and never persist derived state.
+export async function editTask(input, storePath = DEFAULT_STORE_PATH) {
+  const fields = ['title', 'notes', 'priority', 'tags', 'dueDate', 'startTime', 'durationMinutes'];
+  if (!fields.some((key) => Object.hasOwn(input, key))) throw new Error('A task edit requires at least one field.');
+  const now = resolveNow(input.now);
+  const { result: task, store } = await mutateStore((current) => {
+    const existing = current.tasks.items.find((candidate) => candidate.id === input.taskId);
+    if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+    requireUntrashedTask(existing, 'edited');
+    if (input.ifUpdatedAt !== undefined && existing.updatedAt !== input.ifUpdatedAt) {
+      throw new Error('Task changed since it was read. Get the task again before editing.');
+    }
+    const patch = {};
+    if (Object.hasOwn(input, 'title')) patch.title = cleanTaskTitle(input.title);
+    if (Object.hasOwn(input, 'notes')) patch.notes = cleanTaskNotes(input.notes);
+    if (Object.hasOwn(input, 'priority')) patch.priority = cleanTaskPriority(input.priority, { required: true });
+    if (Object.hasOwn(input, 'tags')) patch.tags = cleanTaskTags(input.tags);
+    if (['dueDate', 'startTime', 'durationMinutes'].some((key) => Object.hasOwn(input, key))) {
+      patch.schedule = normalizeTaskSchedule({ ...existing.schedule, ...Object.fromEntries(
+        ['dueDate', 'startTime', 'durationMinutes'].filter((key) => Object.hasOwn(input, key)).map((key) => [key, input[key]]),
+      ) });
+    }
+    if (Object.entries(patch).some(([key, value]) => JSON.stringify(value) !== JSON.stringify(existing[key]))) {
+      Object.assign(existing, patch, { updatedAt: now.toISOString() });
     }
     return existing;
   }, storePath);
@@ -912,6 +1076,9 @@ export async function deleteTask(input, storePath = DEFAULT_STORE_PATH) {
 export async function purgeExpiredTaskTrash(input = {}, storePath = DEFAULT_STORE_PATH) {
   const now = resolveNow(input.now);
   const snapshot = await readStore(storePath);
+  // Remote task records are retained. Expired Trash stays hidden by derived
+  // state/MCP; this integration never permanently removes cloud records.
+  if (snapshot[TASK_AUTHORITY]?.mode === 'online') return { purgedCount: 0, state: buildValidatedState(snapshot, { now }) };
   if (!expiredTaskTrashIds(snapshot.tasks.items, now).size) {
     return { purgedCount: 0, state: buildValidatedState(snapshot, { now }) };
   }
@@ -1124,6 +1291,328 @@ export async function duplicateTask(input, storePath = DEFAULT_STORE_PATH) {
     return { task: root, copiedCount: copies.length };
   }, storePath);
   return { ...result, state: buildValidatedState(store, { now }) };
+}
+
+function creationFields(input) {
+  const title = String(input.title ?? '').trim();
+  if (!title || title.length > 300) throw new Error('Idea title must contain 1 to 300 characters.');
+  const markdown = input.markdown ?? '';
+  if (typeof markdown !== 'string' || markdown.length > 200_000) throw new Error('Idea Markdown must be text no longer than 200000 characters.');
+  const status = input.status ?? 'to_do';
+  if (!CREATION_STATUSES.includes(status)) throw new Error('Unknown idea status.');
+  let type = String(input.type ?? 'short').replace(/\s+/g, ' ').trim();
+  if (/^shorts?$/i.test(type)) type = 'short';
+  if (/^(long[_ ]vide[oó]|long[_ ]v[ií]deo)$/i.test(type)) type = 'long_video';
+  if (!type || type.length > 40) throw new Error('Idea type must contain 1 to 40 characters.');
+  const date = requireOptionalDateOnly(input.date, 'Idea date');
+  return { title, markdown, status, type, date };
+}
+
+function validateCreation(creation) {
+  if (!creation || !Array.isArray(creation.ideas)) throw new Error('LifeOS data requires creation.ideas.');
+  const ids = new Set();
+  const taskIds = new Set();
+  for (const idea of creation.ideas) {
+    if (!idea || typeof idea.id !== 'string' || !idea.id || ids.has(idea.id)) throw new Error('Invalid or duplicate idea ID.');
+    const fields = creationFields(idea);
+    for (const key of Object.keys(fields)) {
+      if (idea[key] !== fields[key]) throw new Error(`Idea ${idea.id} has invalid ${key}.`);
+    }
+    if (!Number.isFinite(idea.sortOrder)) throw new Error('Idea needs a finite sortOrder.');
+    validateTaskTimestamp(idea.createdAt, 'Idea createdAt');
+    validateTaskTimestamp(idea.updatedAt, 'Idea updatedAt');
+    if (idea.taskId !== null && (typeof idea.taskId !== 'string' || !idea.taskId || taskIds.has(idea.taskId))) throw new Error('Invalid or duplicate idea task link.');
+    if (idea.taskId) taskIds.add(idea.taskId);
+    ids.add(idea.id);
+  }
+}
+
+// Only title, date, type and status flow into the task collection. Scripts stay
+// local even when Tasks uses its cloud authority. Body edits never rewrite tasks.
+function syncCreationTask(current, idea, previous, now) {
+  const scheduled = idea.type === 'short' && idea.date && idea.status !== 'dropped';
+  const wasScheduled = previous?.type === 'short' && previous.date && previous.status !== 'dropped';
+  let task = current.tasks.items.find((item) => item.id === idea.taskId);
+  let restored = false;
+  const timestamp = now.toISOString();
+  if (!scheduled) {
+    if (wasScheduled && task && !task.trashedAt) {
+      for (const item of [task, ...taskDescendants(current.tasks.items, task.id)]) {
+        item.trashedAt = timestamp;
+        item.updatedAt = timestamp;
+      }
+    }
+    return;
+  }
+  if (previous && ['title', 'date', 'type', 'status'].every((key) => idea[key] === previous[key])) return;
+  if (!task) {
+    task = insertTask(current, { title: idea.title, dueDate: idea.date, tags: ['Creation', 'Shorts'] }, now);
+    idea.taskId = task.id;
+  } else if (task.trashedAt && !wasScheduled) {
+    restored = true;
+    // Re-scheduling recovers the original task identity, its subtree and parents.
+    const targets = [task, ...taskDescendants(current.tasks.items, task.id)];
+    let parent = current.tasks.items.find((item) => item.id === task.parentTaskId);
+    while (parent?.trashedAt) {
+      targets.push(parent);
+      parent = current.tasks.items.find((item) => item.id === parent.parentTaskId);
+    }
+    for (const item of targets) { item.trashedAt = null; item.updatedAt = timestamp; }
+    for (const item of targets) {
+      if (item.status !== 'open') continue;
+      let ancestor = current.tasks.items.find((candidate) => candidate.id === item.parentTaskId);
+      while (ancestor) {
+        ancestor.status = 'open'; ancestor.completedAt = null; ancestor.updatedAt = timestamp;
+        ancestor = current.tasks.items.find((candidate) => candidate.id === ancestor.parentTaskId);
+      }
+    }
+  }
+  task.title = idea.title;
+  task.schedule.dueDate = idea.date;
+  if (!previous || !wasScheduled || previous.status !== idea.status) {
+    const completed = idea.status === 'done';
+    for (const item of completed
+      ? [task, ...taskDescendants(current.tasks.items, task.id).filter((child) => !child.trashedAt)]
+      : [task]) {
+      item.status = completed ? 'completed' : 'open';
+      item.completedAt = completed ? timestamp : null;
+      item.updatedAt = timestamp;
+    }
+  }
+  if (restored && task.status === 'open') {
+    let ancestor = current.tasks.items.find((item) => item.id === task.parentTaskId);
+    while (ancestor) {
+      if (ancestor.status === 'completed') {
+        ancestor.status = 'open'; ancestor.completedAt = null; ancestor.updatedAt = timestamp;
+      }
+      ancestor = current.tasks.items.find((item) => item.id === ancestor.parentTaskId);
+    }
+  }
+  task.updatedAt = timestamp;
+}
+
+export async function createCreationIdea(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const id = input.id || randomUUID();
+  if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new Error('Invalid idea ID.');
+  const { result: idea, store } = await mutateStore((current) => {
+    const existing = current.creation.ideas.find((item) => item.id === id);
+    if (existing) return existing;
+    const fields = creationFields(input);
+    const next = { ...fields, id, taskId: null,
+      sortOrder: Math.max(0, ...current.creation.ideas.map((item) => item.sortOrder)) + 1,
+      createdAt: now.toISOString(), updatedAt: now.toISOString() };
+    syncCreationTask(current, next, null, now);
+    current.creation.ideas.push(next);
+    return next;
+  }, storePath);
+  return { idea, state: buildValidatedState(store, { now }) };
+}
+
+export async function updateCreationIdea(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const { result: idea, store } = await mutateStore((current) => {
+    const existing = current.creation.ideas.find((item) => item.id === input.ideaId);
+    if (!existing) throw new Error('Idea not found.');
+    if (!input.expectedUpdatedAt || input.expectedUpdatedAt !== existing.updatedAt) {
+      throw new Error('This idea changed elsewhere. Your draft is kept here; reload the saved version before trying again.');
+    }
+    const previous = structuredClone(existing);
+    const fields = creationFields({ ...existing, ...Object.fromEntries(
+      ['title', 'markdown', 'status', 'type', 'date'].filter((key) => Object.hasOwn(input, key)).map((key) => [key, input[key]]),
+    ) });
+    Object.assign(existing, fields);
+    // Monotonic versions prevent two quick writes from sharing a conflict token.
+    existing.updatedAt = new Date(Math.max(now.getTime(), new Date(previous.updatedAt).getTime() + 1)).toISOString();
+    syncCreationTask(current, existing, previous, now);
+    return existing;
+  }, storePath);
+  return { idea, state: buildValidatedState(store, { now }) };
+}
+
+// Removes one idea. Its linked dated-Short task (if any) moves to recoverable
+// Trash with its subtree; the Markdown is kept only in the Undo journal.
+export async function deleteCreationIdea(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const { result, store } = await mutateStore((current) => {
+    const index = current.creation.ideas.findIndex((item) => item.id === input.ideaId);
+    if (index < 0) throw new Error('Idea not found.');
+    const [idea] = current.creation.ideas.splice(index, 1);
+    const task = idea.taskId ? current.tasks.items.find((item) => item.id === idea.taskId) : null;
+    let trashedCount = 0;
+    if (task && !task.trashedAt) {
+      const timestamp = now.toISOString();
+      for (const item of [task, ...taskDescendants(current.tasks.items, task.id)]) {
+        if (item.trashedAt) continue;
+        item.trashedAt = timestamp;
+        item.updatedAt = timestamp;
+        trashedCount += 1;
+      }
+    }
+    return { idea, trashedCount };
+  }, storePath);
+  return { ...result, state: buildValidatedState(store, { now }) };
+}
+
+// Places an idea at an exact board position, optionally changing its status.
+// A status change follows the same linked-task rules as an ordinary edit.
+export async function moveCreationIdea(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const beforeIdeaId = input.beforeIdeaId == null || input.beforeIdeaId === '' ? null : String(input.beforeIdeaId);
+  const { result: idea, store } = await mutateStore((current) => {
+    const existing = current.creation.ideas.find((item) => item.id === input.ideaId);
+    if (!existing) throw new Error('Idea not found.');
+    const status = input.status === undefined ? existing.status : input.status;
+    if (!CREATION_STATUSES.includes(status)) throw new Error('Unknown idea status.');
+    if (status !== existing.status) {
+      const previous = structuredClone(existing);
+      existing.status = status;
+      existing.updatedAt = new Date(Math.max(now.getTime(), new Date(previous.updatedAt).getTime() + 1)).toISOString();
+      syncCreationTask(current, existing, previous, now);
+    }
+    const siblings = current.creation.ideas
+      .filter((item) => item.status === status && item.id !== existing.id)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+    const target = beforeIdeaId === null ? siblings.length : siblings.findIndex((item) => item.id === beforeIdeaId);
+    if (target < 0) throw new Error('Idea position target not found.');
+    siblings.splice(target, 0, existing);
+    // Keep orders globally unique and increasing so other columns are untouched.
+    const orders = siblings.map((item) => item.sortOrder).sort((a, b) => a - b);
+    const unique = orders.every((value, index) => index === 0 || value > orders[index - 1]);
+    if (unique) siblings.forEach((item, index) => { item.sortOrder = orders[index]; });
+    else {
+      let next = Math.max(0, ...current.creation.ideas.map((item) => item.sortOrder)) + 1;
+      for (const item of siblings) item.sortOrder = next++;
+    }
+    return existing;
+  }, storePath);
+  return { idea, state: buildValidatedState(store, { now }) };
+}
+
+const BULK_TASK_ACTIONS = ['complete', 'reopen', 'trash', 'restore', 'priority', 'due', 'move', 'addTag', 'removeTag'];
+
+// One transaction (and one Undo step) for a multi-select edit.
+export async function bulkUpdateTasks(input, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const action = String(input.action || '');
+  if (!BULK_TASK_ACTIONS.includes(action)) throw new Error(`Bulk task action must be one of ${BULK_TASK_ACTIONS.join(', ')}.`);
+  const ids = [...new Set(Array.isArray(input.taskIds) ? input.taskIds.map(String) : [])];
+  if (!ids.length || ids.length > 500) throw new Error('Choose between 1 and 500 tasks.');
+  const { result, store } = await mutateStore((current) => {
+    const timestamp = now.toISOString();
+    const byId = new Map(current.tasks.items.map((task) => [task.id, task]));
+    const selected = ids.map((id) => {
+      const task = byId.get(id);
+      if (!task) throw new Error(`Task not found: ${id}`);
+      return task;
+    });
+    const touched = new Set();
+    const touch = (task) => { task.updatedAt = timestamp; touched.add(task.id); };
+    for (const task of selected) {
+      if (action === 'restore') {
+        if (!task.trashedAt) continue;
+        for (const item of [task, ...taskDescendants(current.tasks.items, task.id)]) {
+          if (!item.trashedAt) continue;
+          item.trashedAt = null; touch(item);
+        }
+        let ancestor = task.parentTaskId ? byId.get(task.parentTaskId) : null;
+        while (ancestor) {
+          if (ancestor.trashedAt) { ancestor.trashedAt = null; touch(ancestor); }
+          if (task.status === 'open' && ancestor.status === 'completed') {
+            ancestor.status = 'open'; ancestor.completedAt = null; touch(ancestor);
+          }
+          ancestor = ancestor.parentTaskId ? byId.get(ancestor.parentTaskId) : null;
+        }
+        continue;
+      }
+      if (task.trashedAt) continue; // Other actions skip work already in Trash.
+      if (action === 'complete' || action === 'reopen') {
+        const completed = action === 'complete';
+        const targets = completed
+          ? [task, ...taskDescendants(current.tasks.items, task.id).filter((item) => !item.trashedAt)]
+          : [task];
+        for (const item of targets) {
+          const status = completed ? 'completed' : 'open';
+          if (item.status === status) continue;
+          item.status = status;
+          item.completedAt = completed ? timestamp : null;
+          touch(item);
+        }
+      } else if (action === 'trash') {
+        for (const item of [task, ...taskDescendants(current.tasks.items, task.id)]) {
+          if (item.trashedAt) continue;
+          item.trashedAt = timestamp; touch(item);
+        }
+      } else if (action === 'priority') {
+        const priority = cleanTaskPriority(input.value, { required: true });
+        if (task.priority !== priority) { task.priority = priority; touch(task); }
+      } else if (action === 'due') {
+        const schedule = normalizeTaskSchedule({ ...task.schedule, dueDate: input.value ?? null,
+          startTime: input.value ? task.schedule.startTime : null });
+        if (JSON.stringify(schedule) !== JSON.stringify(task.schedule)) { task.schedule = schedule; touch(task); }
+      } else if (action === 'move') {
+        if (task.parentTaskId) continue; // Subtasks follow their parent's list.
+        const projectId = normalizeTaskProjectId(current, input.value);
+        for (const item of [task, ...taskDescendants(current.tasks.items, task.id)]) {
+          if ((item.projectId || null) === projectId) continue;
+          item.projectId = projectId; touch(item);
+        }
+      } else if (action === 'addTag' || action === 'removeTag') {
+        const tag = String(input.value ?? '').trim();
+        if (!normalizeText(tag)) throw new Error('A tag is required.');
+        const tags = action === 'addTag'
+          ? cleanTaskTags([...task.tags, tag])
+          : task.tags.filter((item) => normalizeText(item) !== normalizeText(tag));
+        if (tags.join('\u0000') !== task.tags.join('\u0000')) { task.tags = tags; touch(task); }
+      }
+    }
+    return { action, selectedCount: selected.length, affectedCount: touched.size };
+  }, storePath);
+  return { ...result, state: buildValidatedState(store, { now }) };
+}
+
+// Discards the running timer without logging time.
+export async function cancelSession(input = {}, storePath = DEFAULT_STORE_PATH) {
+  const { result: session, store } = await mutateStore((current) => {
+    if (!current.activeSession) throw new Error('There is no active LifeOS session to cancel.');
+    const session = current.activeSession;
+    current.activeSession = null;
+    return session;
+  }, storePath);
+  return { session, state: buildValidatedState(store, { now: input.now }) };
+}
+
+// Edits the running timer: switch project, activity, description or start time.
+export async function updateSession(input = {}, storePath = DEFAULT_STORE_PATH) {
+  const now = resolveNow(input.now);
+  const { result: session, store } = await mutateStore((current) => {
+    const session = current.activeSession;
+    if (!session) throw new Error('There is no active LifeOS session to edit.');
+    if (Object.hasOwn(input, 'projectId') || Object.hasOwn(input, 'project')) {
+      const project = input.projectId === null || input.project === null
+        ? null
+        : resolveProjectForEntry(current, { projectId: input.projectId, project: input.project });
+      session.projectId = project?.id || null;
+      if (project) delete session.domain;
+    }
+    if (Object.hasOwn(input, 'activityType')) {
+      if (!ACTIVITY_TYPES.includes(input.activityType)) throw new Error(`Unknown activity type: ${input.activityType}`);
+      session.activityType = input.activityType;
+    }
+    if (Object.hasOwn(input, 'description')) {
+      const description = String(input.description || '').trim().slice(0, 500);
+      session.description = description || session.description;
+    }
+    if (Object.hasOwn(input, 'startedAt')) {
+      const startedAt = new Date(input.startedAt);
+      if (Number.isNaN(startedAt.getTime()) || startedAt.getTime() > now.getTime()) {
+        throw new Error('A timer start must be a valid time that is not in the future.');
+      }
+      session.startedAt = startedAt.toISOString();
+    }
+    return session;
+  }, storePath);
+  return { session, state: buildValidatedState(store, { now }) };
 }
 
 export async function addReadingBook(input, storePath = DEFAULT_STORE_PATH) {
@@ -1341,7 +1830,7 @@ export function rhythmHeatmap(store, todayValue) {
 export function buildState(store, options = {}) {
   const copy = migrateStore(store);
   validateStore(copy);
-  return buildValidatedState(copy, options);
+  return buildValidatedState(copy, { ...options, taskAuthority: store[TASK_AUTHORITY] || options.taskAuthority });
 }
 
 function buildValidatedState(copy, options = {}) {
@@ -1351,6 +1840,7 @@ function buildValidatedState(copy, options = {}) {
   const currentWeekBounds = rangeBounds('week', today);
   const selectedBounds = rangeBounds(activeRange, today);
   const tasks = hydrateTasks(copy.tasks, copy.projects, { now });
+  if (copy[TASK_AUTHORITY] || options.taskAuthority) tasks.authority = copy[TASK_AUTHORITY] || options.taskAuthority;
   const projects = hydrateProjects(copy, {
     now,
     currentWeekBounds,
@@ -1876,6 +2366,8 @@ function compareTaskOrder(a, b) {
 }
 
 function resolveProjectForEntry(store, input) {
+  // An explicit null means general work: never infer a project from the text.
+  if (Object.hasOwn(input, 'projectId') && input.projectId === null && !input.project) return null;
   if (input.projectId) {
     const project = store.projects.find((candidate) => candidate.id === input.projectId);
     if (!project) throw new Error(`Project not found: ${input.projectId}`);
@@ -2016,7 +2508,7 @@ function buildRecommendations(projects) {
       confidence: round2(Math.min(0.95, 0.62 + score / 240)),
       rank: index + 1,
       action,
-      reasonShort: `${project.lastTouchedLabel} - ${dueText}`,
+      reasonShort: `${project.lastTouchedLabel} · ${dueText}`,
       reasonLong: `${project.name} is currently the highest-value intervention at this rank: ${project.lastTouchedLabel}, ${dueText}, and ${formatHours(project.weekHours)} logged against a ${formatHours(project.plannedHours)} weekly plan.`,
     };
   });
@@ -2193,7 +2685,7 @@ function dayOfYear(dateValue) {
   return Math.floor((parseDateOnly(dateValue) - Date.UTC(year, 0, 1)) / DAY_MS) + 1;
 }
 
-async function acquireStoreLock(storePath) {
+export async function acquireStoreLock(storePath) {
   const lockPath = `${storePath}.lock`;
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -2228,3 +2720,30 @@ function round1(value) {
 function round2(value) {
   return Math.round(Number(value || 0) * 100) / 100;
 }
+
+// Shared validation and derivation helpers for the management operations and
+// command layer. They are the same rules the persisted model already enforces.
+export {
+  buildValidatedState,
+  cleanHttpsUrl,
+  cleanIdentifier,
+  cleanReadingList,
+  cleanReadingTags,
+  cleanReadingText,
+  cleanTaskNotes,
+  cleanTaskPriority,
+  cleanTaskTags,
+  cleanTaskTitle,
+  ensureCategory,
+  entryTimestamp,
+  filterEntries,
+  normalizeReadingCandidate,
+  rangeBounds,
+  rangeLabels,
+  requireOptionalDateOnly,
+  requireOptionalTime,
+  resolveNow,
+  resolveProjectForEntry,
+  taskDescendants,
+  TASK_AUTHORITY,
+};

@@ -1,30 +1,25 @@
 #!/usr/bin/env node
 import {
+  DEFAULT_STORE_PATH,
   ACTIVITY_TYPES,
-  addProjectCategory,
   buildCategoryStats,
   buildState,
-  createTask,
-  deleteProject,
-  deleteTask,
   findProject,
   formatHours,
   formatMinutes,
   getState,
-  logTime,
   readStore,
   requireProject,
   requireTask,
-  restoreTask,
-  setProjectStatus,
-  setTaskCompletion,
-  setTaskPriority,
-  setTaskProject,
-  startSession,
-  stopSession,
-  trashTask,
-  updateTaskTags,
 } from '../src/lifeos-data.mjs';
+import { readTaskAuthority } from '../src/task-authority.mjs';
+import { describeCommand, getCommand, listCommands, runCommand } from '../src/commands/index.mjs';
+
+const ACTOR = process.env.LIFEOS_ACTOR || null;
+const SOURCE = process.env.LIFEOS_SOURCE === 'codex' ? 'codex' : 'cli';
+// Every CLI write goes through the shared command layer, so it is validated,
+// journaled for Undo and visible in the app's Activity feed.
+const run = async (name, input) => (await runCommand(name, input, { source: SOURCE, actor: ACTOR }));
 
 const args = process.argv.slice(2);
 const command = args[0] || 'help';
@@ -46,6 +41,20 @@ try {
     await sessionCommand(args.slice(1));
   } else if (command === 'storage') {
     await storageCommand(args.slice(1));
+  } else if (command === 'run') {
+    await runGenericCommand(args.slice(1));
+  } else if (command === 'commands') {
+    commandsCommand(args.slice(1));
+  } else if (command === 'describe') {
+    describeGenericCommand(args.slice(1));
+  } else if (command === 'overview') {
+    await overviewCommand(args.slice(1));
+  } else if (command === 'undo' || command === 'redo') {
+    await undoCommand(command, args.slice(1));
+  } else if (command === 'activity') {
+    await activityCommand(args.slice(1));
+  } else if (command === 'mcp') {
+    await import('../scripts/lifeos-mcp.mjs');
   } else {
     throw new Error(`Unknown command: ${command}`);
   }
@@ -58,6 +67,14 @@ function printHelp() {
   console.log(`LifeOS
 
 Usage:
+  lifeos overview [--json]                       Compact digest of today
+  lifeos run <command> [JSON | --field value ...] Run any LifeOS command (prints JSON)
+  lifeos commands [group] [--json]               List every command
+  lifeos describe <command>                      Show a command's input schema
+  lifeos activity [--limit 20] [--json]          Recent changes by you and agents
+  lifeos undo [operationId] | lifeos redo        Revert or reapply a change
+  lifeos mcp                                     Start the full LifeOS MCP server (stdio)
+
   lifeos projects [--health] [--json]
   lifeos projects categorize --project "Portia" --category "Infinitamente"
   lifeos projects status --project "Vulcano" --status done
@@ -88,6 +105,8 @@ Activity types:
 }
 
 async function tasksCommand(flags) {
+  const authority = await readTaskAuthority(DEFAULT_STORE_PATH);
+  if (authority && !(authority.mode === 'online' && authority.phase === 'active')) throw new Error('Task storage transfer is pending. Try again after activation.');
   const action = flags[0]?.startsWith('--') || !flags[0] ? 'list' : flags[0];
   const parsed = parseFlags(action === 'list' ? flags : flags.slice(1));
 
@@ -99,18 +118,18 @@ async function tasksCommand(flags) {
     const projectId = parsed.project
       ? resolveTaskProject(store, parsed.project)
       : parent?.projectId;
-    const result = await createTask({
+    const { result } = await run('tasks.create', clean({
       title,
       parentTaskId: parent?.id,
-      projectId,
+      ...(projectId !== undefined ? { projectId } : {}),
       dueDate: parsed.due,
       startTime: parsed.start,
-      durationMinutes: parsed.duration,
+      durationMinutes: parsed.duration === undefined ? undefined : Number(parsed.duration),
       priority: parsed.priority,
       tags: parsed.tag,
-    });
+    }));
     const project = result.task.projectId
-      ? result.state.projects.find((candidate) => candidate.id === result.task.projectId)?.name
+      ? store.projects.find((candidate) => candidate.id === result.task.projectId)?.name
       : 'Inbox';
     console.log(`Added task: ${result.task.title} - ${project}${parent ? ` under ${parent.title}` : ''}.`);
     return;
@@ -121,33 +140,33 @@ async function tasksCommand(flags) {
     const store = await readStore();
     const task = requireTask(store, parsed.task);
     if (action === 'trash') {
-      const result = await trashTask({ taskId: task.id });
+      const { result } = await run('tasks.trash', { taskId: task.id });
       console.log(`Moved ${result.task.title}${result.trashedCount > 1 ? ` and ${result.trashedCount - 1} subtasks` : ''} to Trash.`);
       return;
     }
     if (action === 'restore') {
-      const result = await restoreTask({ taskId: task.id });
+      const { result } = await run('tasks.restore', { taskId: task.id });
       console.log(`Restored ${result.task.title}${result.restoredCount > 1 ? ` and ${result.restoredCount - 1} related tasks` : ''}.`);
       return;
     }
     if (action === 'delete') {
-      const result = await deleteTask({ taskId: task.id });
+      const { result } = await run('tasks.deleteForever', { taskId: task.id });
       console.log(`Permanently deleted ${result.task.title}${result.deletedCount > 1 ? ` and ${result.deletedCount - 1} subtasks` : ''}.`);
       return;
     }
     if (action === 'assign') {
       if (!parsed.project) throw new Error('tasks assign requires --project (use inbox for no project).');
       const projectId = resolveTaskProject(store, parsed.project);
-      const result = await setTaskProject({ taskId: task.id, projectId });
+      const { result } = await run('tasks.move', { taskId: task.id, projectId });
       const project = projectId
-        ? result.state.projects.find((candidate) => candidate.id === projectId)?.name
+        ? store.projects.find((candidate) => candidate.id === projectId)?.name
         : 'Inbox';
       console.log(`Assigned ${result.task.title} to ${project}.`);
       return;
     }
     if (action === 'priority') {
       if (!parsed.priority) throw new Error('tasks priority requires --priority (high, medium, low, or none).');
-      const result = await setTaskPriority({ taskId: task.id, priority: parsed.priority });
+      const { result } = await run('tasks.update', { taskId: task.id, priority: parsed.priority });
       console.log(`${result.task.title} is ${result.task.priority} priority.`);
       return;
     }
@@ -155,11 +174,11 @@ async function tasksCommand(flags) {
       if (!parsed.clear && !parsed.tag?.length) {
         throw new Error('tasks tag requires --tag (repeatable) or --clear.');
       }
-      const result = await updateTaskTags({ taskId: task.id, tags: parsed.clear ? [] : parsed.tag });
+      const { result } = await run('tasks.update', { taskId: task.id, tags: parsed.clear ? [] : parsed.tag });
       console.log(`${result.task.title} is tagged ${result.task.tags.length ? result.task.tags.join(', ') : '(none)'}.`);
       return;
     }
-    const result = await setTaskCompletion({ taskId: task.id, completed: action === 'complete' });
+    const { result } = await run('tasks.complete', { taskId: task.id, completed: action === 'complete' });
     console.log(`${result.task.title} is ${result.task.status}.${result.affectedCount > 1 ? ` Updated ${result.affectedCount} tasks including subtasks.` : ''}`);
     return;
   }
@@ -253,21 +272,21 @@ async function projectsCommand(flags) {
     const project = requireProject(store, parsed.project);
     if (action === 'categorize') {
       if (!parsed.category) throw new Error('projects categorize requires --category.');
-      const result = await addProjectCategory({ projectId: project.id, category: parsed.category });
+      const { result } = await run('projects.addCategory', { projectId: project.id, category: parsed.category });
       console.log(`Categorized ${result.project.name} as ${result.category.label}.`);
       return;
     }
     if (action === 'status') {
       if (!parsed.status) throw new Error('projects status requires --status.');
-      const result = await setProjectStatus({ projectId: project.id, status: parsed.status });
+      const { result } = await run('projects.setStatus', { projectId: project.id, status: parsed.status });
       console.log(`${result.project.name} is ${result.project.status}.`);
       return;
     }
     if (action === 'delete') {
-      const result = await deleteProject({
+      const { result } = await run('projects.delete', clean({
         projectId: project.id,
         preserveCategory: parsed['preserve-category'],
-      });
+      }));
       const preserved = result.preservedEntryCount
         ? ` Preserved ${result.preservedEntryCount} time entries${result.preservedCategory ? ` under ${result.preservedCategory.label}` : ''}.`
         : '';
@@ -353,19 +372,18 @@ async function logCommand(flags) {
   const parsed = parseFlags(flags);
   const rawInput = parsed._.join(' ').trim();
   const duration = parsed.duration ? Number(parsed.duration) : null;
-  const result = await logTime({
+  const { result } = await run('time.log', clean({
     project: parsed.project,
-    durationMinutes: duration,
+    durationMinutes: duration || undefined,
     activityType: parsed.type,
-    description: parsed.desc || rawInput,
+    description: parsed.desc || rawInput || undefined,
     rawInput: rawInput || parsed.desc,
     date: parsed.date,
     time: parsed.time,
-    source: 'cli',
-  });
+  }));
 
   const project = result.entry.projectId
-    ? result.state.projects.find((candidate) => candidate.id === result.entry.projectId)?.name
+    ? (await readStore()).projects.find((candidate) => candidate.id === result.entry.projectId)?.name
     : 'Inbox';
   console.log(`Logged ${formatMinutes(result.entry.durationMinutes)} ${result.entry.activityType} - ${project}`);
 }
@@ -374,20 +392,19 @@ async function sessionCommand(flags) {
   const action = flags[0] || 'status';
   const parsed = parseFlags(flags.slice(1));
   if (action === 'start') {
-    const result = await startSession({
+    const { result } = await run('timer.start', clean({
       project: parsed.project,
       activityType: parsed.type,
       description: parsed.desc,
-      rawInput: flags.join(' '),
-    });
+    }));
     const project = result.session.projectId
-      ? result.state.projects.find((candidate) => candidate.id === result.session.projectId)?.name
+      ? (await readStore()).projects.find((candidate) => candidate.id === result.session.projectId)?.name
       : 'Inbox';
     console.log(`Started ${result.session.activityType} - ${project}`);
     return;
   }
   if (action === 'stop') {
-    const result = await stopSession();
+    const { result } = await run('timer.stop', {});
     console.log(`Stopped and logged ${formatMinutes(result.entry.durationMinutes)} ${result.entry.activityType}`);
     return;
   }
@@ -423,4 +440,113 @@ function parseFlags(values) {
     i += 1;
   }
   return parsed;
+}
+
+function clean(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== null && item !== ''));
+}
+
+// `lifeos run tasks.create '{"title":"Draft"}'` or
+// `lifeos run tasks.create --title Draft --project Portia --tags a --tags b`.
+async function runGenericCommand(values) {
+  const name = values[0];
+  if (!name) throw new Error('lifeos run needs a command name. Try: lifeos commands');
+  const command = getCommand(name);
+  if (!command) throw new Error(`Unknown command: ${name}. Try: lifeos commands`);
+  const rest = values.slice(1);
+  let input = {};
+  if (rest[0] && !rest[0].startsWith('--')) {
+    try { input = JSON.parse(rest[0]); } catch { throw new Error('The first argument after the command must be a JSON object, or use --field value flags.'); }
+    rest.shift();
+  }
+  const schema = describeCommand(command).inputSchema?.properties || {};
+  for (let index = 0; index < rest.length; index += 1) {
+    const flag = rest[index];
+    if (!flag.startsWith('--')) throw new Error(`Unexpected argument: ${flag}`);
+    const key = flag.slice(2);
+    const property = schema[key] || {};
+    const types = [property.type, ...(property.anyOf || []).map((option) => option.type)].filter(Boolean);
+    const next = rest[index + 1];
+    if (types.includes('boolean') && (next === undefined || next.startsWith('--'))) { input[key] = true; continue; }
+    index += 1;
+    let value = next;
+    if (value === 'null' && types.includes('null')) value = null;
+    else if (types.includes('number') || types.includes('integer')) value = Number(value);
+    else if (types.includes('boolean')) value = value === 'true';
+    else if (types.includes('object')) value = JSON.parse(value);
+    if (types.includes('array')) input[key] = [...(input[key] || []), value];
+    else input[key] = value;
+  }
+  const output = await run(name, input);
+  const { state: _state, ...printable } = output;
+  console.log(JSON.stringify(printable, null, 2));
+}
+
+function commandsCommand(values) {
+  const parsed = parseFlags(values);
+  const group = parsed._[0];
+  const commands = listCommands().filter((command) => !group || command.group === group);
+  if (parsed.json) {
+    console.log(JSON.stringify(commands, null, 2));
+    return;
+  }
+  let current = '';
+  for (const command of commands) {
+    if (command.group !== current) {
+      current = command.group;
+      console.log(`\n${current}`);
+    }
+    const marks = [command.kind === 'read' ? 'read' : command.kind === 'ui' ? 'ui' : 'write', command.destructive ? 'destructive' : ''].filter(Boolean).join(', ');
+    console.log(`  ${command.name.padEnd(26)} ${command.title} (${marks})`);
+  }
+  console.log('\nRun one with: lifeos run <command> --field value   ·   Schema: lifeos describe <command>');
+}
+
+function describeGenericCommand(values) {
+  const command = values[0] && getCommand(values[0]);
+  if (!command) throw new Error(`Unknown command: ${values[0] || '(none)'}. Try: lifeos commands`);
+  console.log(JSON.stringify(describeCommand(command), null, 2));
+}
+
+async function overviewCommand(values) {
+  const { result } = await run('overview', {});
+  if (values.includes('--json')) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log(`${result.today} · week ${result.week}`);
+  if (result.timer) console.log(`Timer: ${result.timer.project || 'General'} — ${result.timer.description} (${result.timer.elapsedMinutes}m)`);
+  console.log(`Today: ${result.todayLogged.label} logged of ${result.todayLogged.planHours}h planned · this week ${result.thisWeek.label}`);
+  if (result.recommendation) console.log(`Next: ${result.recommendation.project} — ${result.recommendation.action}`);
+  console.log(`Projects: ${result.projects.active} active, ${result.projects.critical} critical`);
+  console.log(`Tasks: ${result.tasks.open} open, ${result.tasks.overdue.length} overdue, ${result.tasks.dueToday.length} due today, ${result.tasks.inbox} in Inbox`);
+  for (const task of [...result.tasks.overdue, ...result.tasks.dueToday].slice(0, 10)) {
+    console.log(`  [ ] ${task.title} — ${task.project}${task.dueDate ? ` (due ${task.dueDate})` : ''}`);
+  }
+  if (result.reading.reading.length) console.log(`Reading: ${result.reading.reading.map((book) => book.title).join(', ')}`);
+}
+
+async function undoCommand(action, values) {
+  const output = action === 'undo'
+    ? await run('history.undo', values[0] ? { operationId: values[0] } : {})
+    : await run('history.redo', {});
+  console.log(output.label || (action === 'undo' ? 'Undone.' : 'Redone.'));
+}
+
+async function activityCommand(values) {
+  const parsed = parseFlags(values);
+  const { result } = await run('history.list', { limit: Number(parsed.limit || 20) });
+  if (parsed.json) {
+    console.log(JSON.stringify(result.entries, null, 2));
+    return;
+  }
+  if (!result.entries.length) {
+    console.log('No recorded changes yet.');
+    return;
+  }
+  for (const entry of result.entries) {
+    const when = new Date(entry.at).toLocaleString();
+    const who = entry.actor ? `${entry.source}:${entry.actor}` : entry.source;
+    console.log(`${when.padEnd(22)} ${who.padEnd(16)} ${entry.undoneBy ? '(undone) ' : ''}${entry.label}  [${entry.id}]`);
+  }
 }
