@@ -110,7 +110,10 @@ body.is-dragging-task .task-group.is-latent .task-drop-hint { display: block; }
 .drop-line { position: absolute; right: 0; height: 2px; background: var(--accent); pointer-events: none; z-index: 5; }
 .drop-line.card-line { left: 0; right: 0; }
 .drop-line::before { content: ''; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--accent); background: var(--paper); }
-.drag-preview { position: fixed; z-index: 1000; pointer-events: none; margin: 0 !important; background: var(--raised) !important; box-shadow: var(--shadow-pop) !important; border-radius: var(--r-1) !important; opacity: 0.96; transform: rotate(-1deg) scale(1.02); transition: transform 0.12s; }
+/* Position is the individual `translate` property (set by dnd.js), so the lift's scale and tilt pivot on the grab point instead of scaling the offset. Cards set their own position, hence !important. */
+.drag-preview { position: fixed !important; top: 0; left: 0; z-index: 1000; pointer-events: none; margin: 0 !important; background: var(--raised) !important; box-shadow: var(--shadow-pop) !important; border-radius: var(--r-1) !important; opacity: 0.96; scale: 1; rotate: 0deg; transition: scale 0.2s cubic-bezier(0.2, 1.4, 0.4, 1), rotate 0.2s cubic-bezier(0.2, 1.4, 0.4, 1) !important; }
+.drag-preview.is-lifted { scale: 1.035; rotate: 0.8deg; }
+.is-settling { visibility: hidden !important; }
 body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select: none; }
 
 .quick-add {

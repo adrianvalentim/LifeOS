@@ -43,7 +43,7 @@ export function render_() {
   const counts = Object.fromEntries(ORDER.map((status) => [status, state.projects.filter((project) => project.status === status).length]));
   const active = state.projects.filter((project) => ACTIVE.has(project.status));
   const critical = active.filter((project) => project.health === 'critical').length;
-  return html`<div class="screen projects-screen scroll-y">
+  return html`<div class="${cx('screen projects-screen scroll-y', view === 'board' && 'has-board')}">
     <header class="page-head wide">
       <div class="page-title">
         <div>

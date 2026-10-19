@@ -2,11 +2,19 @@
 // inert; a drag starts only after real movement (or a long press on touch), so
 // clicks stay clicks. The preview is the card itself, lifted, keeping the grab
 // offset. Targets are found under the pointer; nearby scroll areas auto-scroll.
+// A card's title link is a handle like the rest of the card: the browser's own
+// link drag is cancelled so it can't take over the gesture (it would cancel the
+// pointer, then navigate or error when dropped).
+// The card lifts when picked up and glides into its new slot on drop (or back
+// to where it was when cancelled); reduced motion skips both.
 
 const THRESHOLD = 5;
 const TOUCH_HOLD = 320;
 const EDGE = 64;
+const SETTLE_MS = 240;
 let active = null;
+
+const reduceMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export function isDragging() {
   return Boolean(active?.started);
@@ -24,7 +32,7 @@ export function isDragging() {
  */
 export function beginDrag(event, options) {
   if (event.button !== 0 || active) return;
-  if (event.target.closest('button, input, textarea, select, a, [contenteditable="true"], [data-no-drag]')) return;
+  if (event.target.closest('button, input, textarea, select, [contenteditable="true"], [data-no-drag]')) return;
   const rect = options.source.getBoundingClientRect();
   active = {
     ...options,
@@ -49,6 +57,11 @@ export function beginDrag(event, options) {
   window.addEventListener('pointerup', onPointerUp);
   window.addEventListener('pointercancel', cancel);
   window.addEventListener('keydown', onKeyDown, true);
+  window.addEventListener('dragstart', onNativeDrag, true);
+}
+
+function onNativeDrag(event) {
+  event.preventDefault();
 }
 
 function start() {
@@ -58,13 +71,18 @@ function start() {
   preview.classList.add('drag-preview');
   preview.removeAttribute('id');
   preview.style.width = `${active.width}px`;
-  preview.style.transition = 'none';
+  // Scale and tilt pivot on the grab point, so the card stays under the pointer.
+  preview.style.transformOrigin = `${active.offsetX}px ${active.offsetY}px`;
   document.body.append(preview);
   active.preview = preview;
   source.classList.add('is-drag-source');
   document.body.classList.add('is-dragging');
   window.getSelection()?.removeAllRanges();
   position();
+  if (!reduceMotion()) {
+    preview.getBoundingClientRect(); // commit the resting style so the lift transitions
+    preview.classList.add('is-lifted');
+  }
   active.onStart?.(info());
 }
 
@@ -79,7 +97,7 @@ function info() {
 
 function position() {
   if (!active?.preview) return;
-  active.preview.style.transform = `translate3d(${Math.round(active.x - active.offsetX)}px, ${Math.round(active.y - active.offsetY)}px, 0) rotate(0.6deg)`;
+  active.preview.style.translate = `${Math.round(active.x - active.offsetX)}px ${Math.round(active.y - active.offsetY)}px`;
 }
 
 function onPointerMove(event) {
@@ -140,13 +158,16 @@ function onPointerUp(event) {
   if (!active.started) { cleanup(); return; }
   active.x = event.clientX;
   active.y = event.clientY;
+  position();
   const handler = active.onDrop;
   const final = info();
+  const landing = detach();
   // Swallow the click that follows a drag.
   window.addEventListener('click', swallow, { capture: true, once: true });
   setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 50);
   cleanup();
   handler?.(final);
+  settle(landing, true);
 }
 
 function swallow(event) {
@@ -166,8 +187,67 @@ function cancel() {
   if (!active) return;
   const handler = active.onCancel;
   const started = active.started;
+  const landing = started ? detach() : null;
   cleanup();
-  if (started) handler?.();
+  if (started) { handler?.(); settle(landing, false); }
+}
+
+// Takes the lifted card out of the drag so it can outlive it while it settles.
+function detach() {
+  const { preview, source } = active;
+  active.preview = null;
+  active.source = null; // keeps its faded look until the card lands
+  if (!preview) return null;
+  return { preview, source, key: source.getAttribute('data-key'), from: source.getBoundingClientRect() };
+}
+
+const slotOf = ({ source, key }) => {
+  const found = key ? document.querySelector(`[data-key="${CSS.escape(key)}"]`) : source;
+  return found?.isConnected ? found : null;
+};
+
+// Glides the lifted card into the slot its card now has. After a drop the
+// render that moves the card lands a moment later, so wait for it (a card
+// dropped where it was never moves).
+function settle(landing, wait) {
+  if (!landing) return;
+  const { preview, from } = landing;
+  if (reduceMotion()) { preview.remove(); landing.source.classList.remove('is-drag-source'); return; }
+  let tries = 0;
+  const look = () => {
+    const slot = slotOf(landing);
+    const rect = slot?.getBoundingClientRect();
+    const moved = !slot || !rect.width || Math.abs(rect.left - from.left) > 1 || Math.abs(rect.top - from.top) > 1;
+    if (wait && !moved && ++tries < 8) { setTimeout(look, 16); return; }
+    land(landing, slot, rect);
+  };
+  look();
+}
+
+function land({ preview, source }, slot, rect) {
+  let finished = false;
+  const done = () => {
+    if (finished) return;
+    finished = true;
+    preview.remove();
+    source.classList.remove('is-drag-source');
+    slot?.classList.remove('is-settling', 'is-drag-source');
+  };
+  if (!slot || !rect.width) {
+    // The card left the board (completed, trashed, moved to another screen).
+    preview.animate([{ opacity: 0.96 }, { opacity: 0 }], { duration: 140, fill: 'forwards' });
+    setTimeout(done, 160);
+    return;
+  }
+  const now = getComputedStyle(preview);
+  preview.animate([
+    { translate: now.translate, scale: now.scale, rotate: now.rotate, width: now.width },
+    { translate: `${Math.round(rect.left)}px ${Math.round(rect.top)}px`, scale: '1', rotate: '0deg', width: `${rect.width}px` },
+  ], { duration: SETTLE_MS, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', fill: 'forwards' });
+  // The real card stays hidden under the flying one (a re-render resets its class).
+  const hold = () => { if (finished) return; slot.classList.add('is-settling'); setTimeout(hold, 16); };
+  hold();
+  setTimeout(done, SETTLE_MS + 40);
 }
 
 function cleanup() {
@@ -182,5 +262,6 @@ function cleanup() {
   window.removeEventListener('pointerup', onPointerUp);
   window.removeEventListener('pointercancel', cancel);
   window.removeEventListener('keydown', onKeyDown, true);
+  window.removeEventListener('dragstart', onNativeDrag, true);
   active = null;
 }
