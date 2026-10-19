@@ -2,6 +2,9 @@
 // inert; a drag starts only after real movement (or a long press on touch), so
 // clicks stay clicks. The preview is the card itself, lifted, keeping the grab
 // offset. Targets are found under the pointer; nearby scroll areas auto-scroll.
+// A card's title link is a handle like the rest of the card: the browser's own
+// link drag is cancelled so it can't take over the gesture (it would cancel the
+// pointer, then navigate or error when dropped).
 
 const THRESHOLD = 5;
 const TOUCH_HOLD = 320;
@@ -24,7 +27,7 @@ export function isDragging() {
  */
 export function beginDrag(event, options) {
   if (event.button !== 0 || active) return;
-  if (event.target.closest('button, input, textarea, select, a, [contenteditable="true"], [data-no-drag]')) return;
+  if (event.target.closest('button, input, textarea, select, [contenteditable="true"], [data-no-drag]')) return;
   const rect = options.source.getBoundingClientRect();
   active = {
     ...options,
@@ -49,6 +52,11 @@ export function beginDrag(event, options) {
   window.addEventListener('pointerup', onPointerUp);
   window.addEventListener('pointercancel', cancel);
   window.addEventListener('keydown', onKeyDown, true);
+  window.addEventListener('dragstart', onNativeDrag, true);
+}
+
+function onNativeDrag(event) {
+  event.preventDefault();
 }
 
 function start() {
@@ -182,5 +190,6 @@ function cleanup() {
   window.removeEventListener('pointerup', onPointerUp);
   window.removeEventListener('pointercancel', cancel);
   window.removeEventListener('keydown', onKeyDown, true);
+  window.removeEventListener('dragstart', onNativeDrag, true);
   active = null;
 }
