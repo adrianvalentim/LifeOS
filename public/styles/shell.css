@@ -92,18 +92,19 @@ body.is-resizing { cursor: col-resize; user-select: none; }
 .nav-link.is-drop-target { color: var(--accent-text); background: var(--accent-soft); }
 .sections-sep { align-self: center; padding: 0 6px; color: var(--ink-4); font-family: var(--font-serif); }
 
-/* The day strip: today on one hairline, hours as ticks. */
-.ribbon { grid-area: ribbon; position: relative; height: 20px; border-bottom: 1px solid var(--rule-3); }
-.ribbon-hour { position: absolute; bottom: 0; width: 1px; height: 3px; background: var(--rule-3); }
-.ribbon-hour.is-major { height: 5px; background: var(--ink-4); }
-.ribbon-hour.is-major::after { content: attr(data-label); position: absolute; left: 3px; bottom: 8px; font-family: var(--font-mono); font-size: 10px; line-height: 1; letter-spacing: 0.04em; color: var(--ink-3); }
-.ribbon-block { position: absolute; bottom: 0; height: 5px; background: var(--type, var(--ink-3)); }
+/* The day strip, set like a ruler: today's blocks stand on a baseline, the
+   hours hang beneath it, and a gap keeps it clear of the section underline. */
+.ribbon { grid-area: ribbon; position: relative; height: 23px; margin-top: 7px; }
+.ribbon::before { content: ''; position: absolute; left: 0; right: 0; top: 9px; height: 1px; background: var(--rule-3); }
+.ribbon-hour { position: absolute; top: 10px; width: 1px; height: 3px; background: var(--rule-3); }
+.ribbon-hour.is-major { height: 6px; background: var(--ink-4); }
+.ribbon-hour.is-major::after { content: attr(data-label); position: absolute; left: 4px; top: 1px; font-family: var(--font-mono); font-size: 10px; line-height: 1; letter-spacing: 0.04em; color: var(--ink-3); }
+.ribbon-block { position: absolute; top: 3px; height: 6px; background: var(--type, var(--ink-3)); transition: top 0.15s var(--ease), height 0.15s var(--ease); }
 .ribbon-block.is-live { background: var(--accent); animation: breathe 2.4s ease-in-out infinite; }
-.ribbon-now { position: absolute; bottom: -1px; width: 1.5px; height: 19px; margin-left: -0.5px; background: var(--accent); }
-.ribbon-now::before { content: ''; position: absolute; top: -2px; left: -2px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
-.ribbon:hover .ribbon-block { height: 7px; }
+.ribbon:hover .ribbon-block { top: 0; height: 9px; }
 .ribbon-block[title] { cursor: help; }
-.ribbon-block { transition: height 0.15s var(--ease); }
+.ribbon-now { position: absolute; top: 0; width: 1.5px; height: 17px; margin-left: -0.75px; background: var(--accent); }
+.ribbon-now::before { content: ''; position: absolute; top: -2px; left: -2px; width: 5.5px; height: 5.5px; border-radius: 50%; background: var(--accent); }
 
 /* Condensed: one line — title, sections, tools. */
 .app.is-condensed .masthead { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: 'title nav tools' 'ribbon ribbon ribbon'; align-items: center; }
@@ -325,7 +326,7 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   .mast-new span { display: none; }
   .mast-new { width: 29px; padding: 0; }
   .mast-search { border-color: transparent; }
-  .ribbon { margin: 0 -10px; }
+  .ribbon { margin: 4px -10px 0; }
   .screen.scroll-y { padding: 20px 16px 80px; }
   .sheet { width: 100%; }
   .page-head.wide { margin-bottom: 18px; padding-bottom: 12px; }
