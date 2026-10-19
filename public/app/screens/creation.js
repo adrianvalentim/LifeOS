@@ -39,7 +39,7 @@ export function render_() {
   const types = [...new Set(['short', 'long_video', ...ideas.map((idea) => idea.type)])];
   const visible = visibleIdeas();
   const view = store.ui.route.params.get('view') === 'list' ? 'list' : store.ui.route.params.get('view') === 'board' ? 'board' : prefs.view;
-  return html`<div class="screen creation-screen scroll-y">
+  return html`<div class="${cx('screen creation-screen scroll-y', ideas.length && view === 'board' && 'has-board')}">
     <header class="page-head wide">
       <div class="page-title"><div><h1 class="display-sm">Creation</h1><p>${plural(ideas.length, 'idea')} · ${ideas.filter((idea) => idea.status === 'doing').length} in progress · ${ideas.filter((idea) => idea.status === 'done').length} done</p></div></div>
       <div class="page-tools">

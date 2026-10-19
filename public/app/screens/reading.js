@@ -46,7 +46,7 @@ export function render_() {
   const books = state.reading.books;
   const year = state.meta.today.slice(0, 4);
   const finishedThisYear = books.filter((book) => finishedInYear(book, year, state.meta.timezone)).length;
-  return html`<div class="screen reading-screen scroll-y">
+  return html`<div class="${cx('screen reading-screen scroll-y', view !== 'library' && 'has-board')}">
     <header class="page-head wide">
       <div class="page-title"><div><h1 class="display-sm">Reading</h1><p>${state.reading.summary.byStatus.reading} reading now · ${finishedThisYear} finished in ${year} · ${plural(books.length, 'book')} in the library</p></div></div>
       <div class="page-tools">

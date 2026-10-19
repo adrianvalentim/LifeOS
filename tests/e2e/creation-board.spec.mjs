@@ -49,6 +49,35 @@ test('dragging an idea card by its title moves it between columns and reorders w
   expect(consoleErrors.filter((text) => !text.includes('503'))).toEqual([]);
 });
 
+test('the whole column is a drop target, down to the bottom of the pane', async ({ app, page }) => {
+  for (const title of TITLES) await app.cli(['run', 'creation.create', '--title', title, '--type', 'short']);
+  await app.goto('/creation');
+  const column = (status) => page.locator(`[data-idea-drop="${status}"]`);
+  const titles = async (status) => column(status).locator('.idea-title').allTextContents();
+  const viewport = page.viewportSize();
+
+  // Even a nearly empty column reaches the bottom of the pane.
+  const doing = await column('doing').boundingBox();
+  expect(doing.y + doing.height).toBeGreaterThan(viewport.height - 4);
+
+  // Drop an idea far below the cards: in an empty column, then at the end of a populated one.
+  const drag = async (title, to) => {
+    const box = await page.locator('.idea-card', { hasText: title }).locator('.idea-title').boundingBox();
+    await page.mouse.move(box.x + 10, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 22, box.y + box.height / 2, { steps: 3 });
+    await page.mouse.move(to.x, to.y, { steps: 12 });
+    await page.mouse.up();
+  };
+  await drag('Kepler planets', { x: doing.x + doing.width / 2, y: viewport.height - 30 });
+  await expect.poll(() => titles('doing')).toEqual(['Kepler planets']);
+
+  const before = await titles('to_do');
+  const todo = await column('to_do').boundingBox();
+  await drag(before[0], { x: todo.x + todo.width / 2, y: viewport.height - 30 });
+  await expect.poll(() => titles('to_do')).toEqual([...before.slice(1), before[0]]);
+});
+
 test('dragging a project card by its name changes its status', async ({ app, page }) => {
   await app.goto('/projects?view=board');
   const card = page.locator('.project-card', { hasText: 'Substack' }).first();
