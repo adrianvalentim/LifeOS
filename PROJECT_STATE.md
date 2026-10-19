@@ -206,7 +206,8 @@ Run `npm run dev` and use the printed loopback URL.
 | `public/app/components/` and `public/app/screens/` | Task list/sheet components and the Today, Tasks, Projects, Creation, Reading, Insights, Almanac and Settings screens |
 | `public/styles/` | Design tokens and themes (`base.css`), shell, components and screens |
 | `public/fonts/` | Self-hosted Newsreader, IBM Plex Sans and JetBrains Mono (OFL) |
-| `src/creation-markdown.mjs` and `scripts/build-creation-markdown.mjs` | Local sanitized Markdown preview entry and reproducible browser bundle |
+| `src/creation-markdown.mjs` and `scripts/build-creation-markdown.mjs` | Local sanitized Markdown renderer (agent rail messages) and reproducible browser bundle |
+| `src/creation-editor.mjs` and `scripts/build-creation-editor.mjs` | The Creation idea editor (Tiptap over Markdown) and its reproducible browser bundle, `public/vendor/creation-editor.js` (`npm run build:editor` after changing the entry or the pinned `@tiptap/*` versions) |
 | `tests/creation.test.mjs` | Idea migration, validation, conflicts, scheduling/Trash, cloud/offline atomicity and UI projection tests |
 | `tests/commands.test.mjs` | Command layer, journal/undo/redo, workspace, views, validation and MCP |
 | `tests/ui.test.mjs` and `tests/ui-harness.mjs` | Interface rendered in Node from derived state: scopes, grouping, drop targets, rows, sheets, screens, context, capture parsing, escaping, optimistic updates |
@@ -549,6 +550,41 @@ authority is active: an offline failure leaves both records unchanged. Markdown
 edits remain local and can save offline unless a pending cloud transaction blocks
 all local writes. Creation currently has browser/HTTP operations; no CLI command
 or idea deletion endpoint is exposed.
+
+#### The idea editor
+
+The body is edited inline, Notion-style: Markdown is rendered where it is typed
+(`# ` makes a heading, `**x**` bold, `[ ] ` a checklist, `- `, `1. `, `> `, ` ``` `,
+tables, links, images) and `markdown` stays the stored form, so agents, the CLI
+and the HTTP command layer read and write plain Markdown. The editor is
+`@tiptap/core` with the official `@tiptap/markdown` extension (marked-based),
+pinned in `devDependencies` and bundled to `public/vendor/creation-editor.js`;
+it loads lazily the first time an idea opens. **Write** is the default mode;
+**Markdown** is the same text as source in a textarea (`creation.editorMode`:
+`visual` | `source`; older values mean `visual`).
+
+Preserving the person's text is the rule:
+
+- Opening an idea never writes. Nothing is saved until the person edits, and the
+  first edit re-serializes the document (list markers, spacing and table padding
+  are normalized; empty paragraphs are kept as blank lines or `&nbsp;`).
+- On open, the editor serializes what it parsed and compares Marked's rendering
+  of both. If they differ (raw HTML, loose lists and anything else the schema
+  cannot hold) the idea opens in **Markdown** mode with a note, and **Write** is
+  disabled for it, so no content is dropped.
+- Text escaping is narrowed (`escapeText`): underscores inside words, `*` between
+  spaces and brackets that cannot form a link stay unescaped, so `snake_case`
+  and `[Música sobe]` are stored as typed; anything that could read back as
+  Markdown (including text that starts like a heading, list item or quote) is
+  escaped. A randomized round-trip test guards this.
+- An agent's or another window's save replaces the content of a clean editor
+  (keeping the caret); a dirty editor keeps its draft and the usual conflict
+  recovery applies. The editor is destroyed with its screen and mounted again by
+  the screen's `mount()` hook, which runs after each paint; its host carries
+  `data-morph-ignore` so DOM morphing never touches it.
+- ⌘Z inside the editor is the editor's own undo; Activity undo is untouched.
+  ⌘K adds or edits a link (through `formDialog`); ⌘/Ctrl-click follows a link.
+  Pasted plain text that looks like Markdown is inserted as formatting.
 
 ### `timeEntries[]`
 
@@ -1151,7 +1187,8 @@ dependency-free set of ES modules under `public/app/` and stylesheets under
   sessions, week history, milestones, focus timer, pin and agent context.
 - **Creation**: type chips, search, sort, five-lane board with inline add, list
   table, and the idea editor (status, type, date, linked task, formatting bar,
-  edit/split/preview, auto-save, ⌘S, conflict recovery and download).
+  an inline editor, a Markdown source mode, auto-save, ⌘S, conflict recovery and
+  download). See "The idea editor" below.
 - **Reading**: shelf (Next up, Reading, finished this year) and a sortable,
   filterable library; book sheet with status, date read, tags, edit details,
   agent context and removal; Open Library search dialog and manual add.
@@ -1176,7 +1213,8 @@ dependency-free set of ES modules under `public/app/` and stylesheets under
 - Recommendation rotation and dismissal are in-memory.
 
 All record text is escaped by the `html` template; Markdown is rendered only
-through the bundled Marked + DOMPurify sanitizer. Treat store, URL and protocol
+through the bundled Marked + DOMPurify sanitizer, or by the idea editor, whose
+ProseMirror schema cannot hold raw HTML. Treat store, URL and protocol
 values as untrusted when adding controls.
 
 ## 13. Agent rail
@@ -1665,8 +1703,14 @@ with Playwright Test (`@playwright/test`, pinned exactly). Eight tests in
 - ⌘K search opening a task sheet, a project page and a screen;
 - drag-reordering a root task, with the drop line drawn across the list on
   the target row's edge, and the saved `sortOrder`;
-- a new idea opened with ⌘↵, typed Markdown, autosave, the sanitized preview
-  and a reload;
+- a new idea opened with ⌘↵, Markdown shortcuts typed into the inline editor,
+  autosave as plain Markdown and a reload;
+- the idea editor's contract: opening never rewrites an idea, unfaithful
+  Markdown opens as source, Write/Markdown modes, shortcuts and the link
+  dialog, live agent edits, pasted Markdown, local ⌘Z, and a randomized
+  escaping round trip;
+- dragging cards by their title, full-height column drop zones and the
+  lift/glide animation on the Creation, Projects and Reading boards;
 - an agent-style CLI write (`lifeos run tasks.create` with `LIFEOS_ACTOR`)
   appearing live, `lifeos run ui.navigate` steering the window, and the
   Activity entry naming the agent and undoing the change.

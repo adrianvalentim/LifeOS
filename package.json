@@ -19,7 +19,8 @@
     "mcp:demo:test": "node --test tests/tasks-worker.test.mjs",
     "tasks:cloud": "node scripts/tasks-cloud.mjs",
     "mcp:private:check": "WRANGLER_WRITE_LOGS=false WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --config workers/tasks/wrangler.jsonc",
-    "build:markdown": "node scripts/build-creation-markdown.mjs"
+    "build:markdown": "node scripts/build-creation-markdown.mjs",
+    "build:editor": "node scripts/build-creation-editor.mjs"
   },
   "bin": {
     "lifeos": "./cli/lifeos.mjs"
@@ -31,6 +32,15 @@
     "@modelcontextprotocol/client": "2.3.1",
     "@playwright/test": "1.63.0",
     "@tauri-apps/cli": "^2.11.4",
+    "@tiptap/core": "3.32.0",
+    "@tiptap/extension-image": "3.32.0",
+    "@tiptap/extension-table": "3.32.0",
+    "@tiptap/extension-task-item": "3.32.0",
+    "@tiptap/extension-task-list": "3.32.0",
+    "@tiptap/extensions": "3.32.0",
+    "@tiptap/markdown": "3.32.0",
+    "@tiptap/pm": "3.32.0",
+    "@tiptap/starter-kit": "3.32.0",
     "esbuild": "0.28.2",
     "miniflare": "5.20261006.1-alpha",
     "wrangler": "4.149.0"
