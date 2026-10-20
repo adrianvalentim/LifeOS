@@ -96,8 +96,7 @@ function renderBoard(focus, sort) {
         <div class="board-cards">${projects.map((project) => renderProjectCard(project, { compact: true }))}${projects.length ? '' : html`<p class="board-empty">Drag a project here</p>`}</div>
       </section>`;
     })}
-  </div>
-  ${focus === 'all' ? html`<p class="list-foot">The board shows Next up, Doing and Done. Choose a focus above to see other statuses.</p>` : ''}`;
+  </div>`;
 }
 
 function sparkline(values, { width = 88, height = 22 } = {}) {
