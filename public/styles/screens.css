@@ -153,6 +153,8 @@ body.is-dragging-project .project-group.is-latent.is-empty { display: block; }
 .pc-domain { font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
 .pc-head .health-badge, .pc-head .row-more { margin-left: auto; }
 .pc-head .row-more { margin-right: -4px; }
+/* Board cards run flush to their column, so the button must not hang past it (that made the whole board scroll sideways). */
+.board-column .pc-head .row-more { margin-right: 0; }
 .pc-head .health-badge + .row-more { margin-left: 2px; }
 .pc-name { font-family: var(--font-serif); font-size: 24px; font-weight: 450; line-height: 1.08; letter-spacing: -0.018em; transition: color 0.12s; }
 .pc-sub { margin-top: -2px; font-family: var(--font-serif); font-style: italic; font-size: 14.5px; color: var(--ink-3); }

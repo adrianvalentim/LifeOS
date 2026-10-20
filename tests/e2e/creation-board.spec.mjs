@@ -152,3 +152,24 @@ test('Esc brings a dragged card back, and reduced motion drops it without animat
   await expect(page.locator('.drag-preview')).toHaveCount(0);
   await expect.poll(async () => (await app.store()).creation.ideas.find((idea) => idea.title === 'Kepler planets').status).toBe('next_up');
 });
+
+test('the Projects board gets the whole width, with no footnote and no stray scrollbars', async ({ app, page }) => {
+  for (const [name, status] of [['Vulcano', 'done'], ['Aurora Store', 'doing'], ['The Long Now', 'doing']]) await app.cli(['run', 'projects.setStatus', '--project', name, '--status', status]);
+  await page.setViewportSize({ width: 1585, height: 984 });
+  await app.goto('/projects?view=board');
+  await page.evaluate(() => { const prefs = JSON.parse(localStorage.getItem('lifeos.ui.v2') || '{}'); prefs.railOpen = false; localStorage.setItem('lifeos.ui.v2', JSON.stringify(prefs)); });
+  await page.reload();
+  const board = page.locator('.project-board');
+  await expect(board).toBeVisible();
+  await expect(page.getByText('The board shows Next up, Doing and Done')).toHaveCount(0);
+
+  // The cards' "…" buttons used to hang past the last column and make the board scroll both ways.
+  const scroll = await board.evaluate((node) => ({ x: node.scrollWidth - node.clientWidth, y: node.scrollHeight - node.clientHeight }));
+  expect(scroll).toEqual({ x: 0, y: 0 });
+
+  // Narrow page margins, and the board runs down to the bottom of the pane.
+  const box = await board.boundingBox();
+  expect(box.x).toBeLessThanOrEqual(30);
+  expect(1585 - (box.x + box.width)).toBeLessThanOrEqual(30);
+  expect(box.y + box.height).toBeGreaterThan(984 - 8);
+});
