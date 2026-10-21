@@ -260,6 +260,9 @@ export class ClaudeCodeAgent {
     createInterface({ input: child.stdout }).on('line', (line) => this.handleLine(session, line));
     createInterface({ input: child.stderr }).on('line', (line) => { session.stderr.push(line); if (session.stderr.length > 20) session.stderr.shift(); });
     child.on('error', (error) => this.failSession(session, error.message));
+    // A write racing Claude's exit fails with EPIPE. The write's callback and the
+    // exit handler report it; unhandled, it would take the whole server down.
+    child.stdin.on('error', () => undefined);
     child.on('exit', (code, signal) => {
       if (this.sessions.get(threadId) === session) this.sessions.delete(threadId);
       for (const pending of session.control.values()) pending.reject(new Error('Claude Code exited.'));

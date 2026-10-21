@@ -25,7 +25,7 @@ export const test = base.extend({
     delete env.LIFEOS_ACTOR;
     delete env.LIFEOS_SOURCE;
 
-    const server = await startServer(env);
+    let server = await startServer(env);
     // Tests stay offline and exercise LifeOS itself: nothing leaves loopback,
     // book covers (which the server would fetch from Open Library) are
     // missing, and the agent rail's routes, which would start the installed
@@ -59,6 +59,11 @@ export const test = base.extend({
       async state() {
         const response = await fetch(`${server.url}/api/state`);
         return response.json();
+      },
+      /** Kill the server the way a crash would, then start a new one on the same port, as the desktop shell does. */
+      async restartServer() {
+        await server.kill();
+        server = await startServer({ ...env, PORT: new URL(server.url).port });
       },
       /** Run the LifeOS CLI against this store, the way an agent would. */
       async cli(args, { actor } = {}) {
@@ -111,6 +116,12 @@ async function startServer(env) {
       const timer = setTimeout(() => child.kill('SIGKILL'), 3_000);
       await exited;
       clearTimeout(timer);
+    },
+    async kill() {
+      if (child.exitCode !== null) return;
+      const exited = once(child, 'exit');
+      child.kill('SIGKILL');
+      await exited;
     },
   };
 }

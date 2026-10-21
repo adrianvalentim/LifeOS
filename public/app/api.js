@@ -8,7 +8,14 @@ let refreshTimer = 0;
 const eventHandlers = new Map();
 
 export async function request(url, options = {}) {
-  const response = await fetch(url, options);
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (error) {
+    if (error.name === 'AbortError') throw error;
+    // WebKit reports an unreachable server only as "Load failed".
+    throw Object.assign(new Error('LifeOS couldn’t reach its local server. Try again in a moment; if it keeps failing, use Refresh LifeOS (⌘R).'), { cause: error, code: 'unreachable' });
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(body.error || `LifeOS request failed (${response.status}).`);
@@ -117,35 +124,41 @@ export function onEvent(type, handler) {
 export function connectEvents() {
   let source;
   let retry = 1000;
+  let retryTimer = 0;
   const open = () => {
-    source = new EventSource('/api/events');
-    source.addEventListener('ready', () => {
+    clearTimeout(retryTimer);
+    source?.close();
+    const current = new EventSource('/api/events');
+    source = current;
+    current.addEventListener('ready', () => {
       retry = 1000;
       if (store.ui.connection !== 'live') {
-        const wasOffline = store.ui.connection === 'offline';
+        // Records may have changed while the server was away.
+        const wasDown = store.ui.connection !== 'connecting';
         store.ui.connection = 'live';
-        if (wasOffline) scheduleRefresh(0);
+        if (wasDown) scheduleRefresh(0);
         render();
       }
     });
-    source.addEventListener('lifeos', (event) => {
+    current.addEventListener('lifeos', (event) => {
       let payload = {};
       try { payload = JSON.parse(event.data); } catch { /* ignore */ }
       if (payload.mtime && payload.mtime <= lastMtime) return;
       scheduleRefresh();
     });
     for (const type of ['history', 'workspace', 'ui', 'codex', 'claude']) {
-      source.addEventListener(type, (event) => {
+      current.addEventListener(type, (event) => {
         let payload = {};
         try { payload = JSON.parse(event.data); } catch { return; }
         eventHandlers.get(type)?.(payload);
       });
     }
-    source.addEventListener('error', () => {
-      if (source.readyState === EventSource.CLOSED) {
+    current.addEventListener('error', () => {
+      if (source !== current) return;
+      if (current.readyState === EventSource.CLOSED) {
         store.ui.connection = 'offline';
         render();
-        setTimeout(open, retry);
+        retryTimer = setTimeout(open, retry);
         retry = Math.min(retry * 2, 15000);
       } else if (store.ui.connection === 'live') {
         store.ui.connection = 'reconnecting';
@@ -154,6 +167,15 @@ export function connectEvents() {
     });
   };
   open();
+  // A window that sat hidden while its server restarted may wait a long time
+  // for WebKit's own retry; coming back to it reconnects at once.
+  const reconnectNow = () => {
+    if (document.visibilityState !== 'visible' || store.ui.connection === 'live') return;
+    retry = 1000;
+    open();
+  };
+  document.addEventListener('visibilitychange', reconnectNow);
+  window.addEventListener('focus', reconnectNow);
 }
 
 let presenceTimer = 0;

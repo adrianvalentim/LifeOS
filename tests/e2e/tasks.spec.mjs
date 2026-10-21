@@ -137,3 +137,38 @@ test('dragging a task reorders the list and saves the new order', async ({ app, 
   await page.reload();
   await expect.poll(() => rowIds(page)).toEqual([PASSPORT, ACT_THREE, CONFRONTATION, OBSERVATORY, REVIEW_CUT, ESSAY]);
 });
+
+test('adding a task when the server is unreachable says so and keeps the words', async ({ app, page }) => {
+  await app.goto('/projects/portia');
+  const input = page.getByRole('textbox', { name: 'Add a task to Portia' });
+  // A dead server surfaces in WebKit as a bare "Load failed" network error.
+  await page.route('**/api/run/tasks.create*', (route) => route.abort('failed'));
+  await input.fill('Book the sound mix');
+  await input.press('Enter');
+
+  await expect(page.locator('.toast-error')).toContainText('couldn’t reach its local server');
+  await expect(input).toHaveValue('Book the sound mix');
+  expect(await app.task('Book the sound mix')).toBeNull();
+
+  // Once the server answers again, Enter saves the same words.
+  await page.unroute('**/api/run/tasks.create*');
+  await input.press('Enter');
+  await expect.poll(async () => (await app.task('Book the sound mix'))?.projectId).toBe('portia');
+  await expect(input).toHaveValue('');
+});
+
+test('after the server restarts on the same port, the open window reconnects and saves again', async ({ app, page }) => {
+  await app.goto('/projects/portia');
+  const conn = page.locator('.masthead .conn');
+  await app.restartServer();
+  await expect(conn).not.toHaveClass(/is-live/);
+
+  // Coming back to the window reconnects without waiting for the browser's retry.
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(conn).toHaveClass(/is-live/);
+
+  const input = page.getByRole('textbox', { name: 'Add a task to Portia' });
+  await input.fill('Send the cut to the composer');
+  await input.press('Enter');
+  await expect.poll(async () => (await app.task('Send the cut to the composer'))?.projectId).toBe('portia');
+});
