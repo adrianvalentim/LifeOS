@@ -124,15 +124,24 @@ export async function submitQuickAdd(form) {
   store.ui.drafts[id] = '';
   input.value = '';
   render();
-  await act.createTask({
-    title: parsed.title,
-    projectId: parsed.projectId !== null ? parsed.projectId : defaults.projectId ?? null,
-    dueDate: parsed.dueDate || defaults.dueDate || null,
-    startTime: parsed.startTime,
-    priority: parsed.priority || 'none',
-    tags: [...new Set([...(defaults.tags || []), ...parsed.tags])],
-    durationMinutes: parsed.durationMinutes,
-  });
+  try {
+    await act.createTask({
+      title: parsed.title,
+      projectId: parsed.projectId !== null ? parsed.projectId : defaults.projectId ?? null,
+      dueDate: parsed.dueDate || defaults.dueDate || null,
+      startTime: parsed.startTime,
+      priority: parsed.priority || 'none',
+      tags: [...new Set([...(defaults.tags || []), ...parsed.tags])],
+      durationMinutes: parsed.durationMinutes,
+    });
+  } catch {
+    // The toast says why; give the words back so the save can simply be retried.
+    if (store.ui.drafts[id]) return;
+    store.ui.drafts[id] = text;
+    const current = document.querySelector(`[data-quick-input="${id}"]`);
+    if (current && !current.value) current.value = text;
+    render();
+  }
 }
 
 // ——— Interactions ————————————————————————————————————————————————————

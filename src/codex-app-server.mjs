@@ -116,6 +116,10 @@ export class CodexAppServer {
     });
 
     this.child = child;
+    // Unhandled, a failed kill or a write racing Codex's exit (EPIPE) would take
+    // the whole server down; the write's callback and 'close' already report it.
+    child.on('error', (error) => this.emit({ type: 'diagnostic', message: error.message }));
+    child.stdin.on('error', () => undefined);
     const stdout = createInterface({ input: child.stdout, crlfDelay: Infinity });
     stdout.on('line', (line) => this.handleProtocolLine(line));
     const stderr = createInterface({ input: child.stderr, crlfDelay: Infinity });

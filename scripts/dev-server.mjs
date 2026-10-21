@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { watch } from 'node:fs';
+import { appendFileSync, readFileSync, statSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -20,6 +20,7 @@ const publicDir = path.join(root, 'public');
 const dataDir = path.dirname(DEFAULT_STORE_PATH);
 const storeName = path.basename(DEFAULT_STORE_PATH);
 const preferredPort = Number(process.env.PORT || 3000);
+const crashLogPath = `${DEFAULT_STORE_PATH}.server.log`;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -230,6 +231,8 @@ const dataWatcher = watch(dataDir, (_eventType, filename) => {
     }, 60);
   }
 });
+// Losing the watcher only stops live refresh; it must not stop the server.
+dataWatcher.on('error', (error) => console.warn(`LifeOS stopped watching ${dataDir}: ${error.message}`));
 
 listen(preferredPort);
 
@@ -497,5 +500,26 @@ async function shutdown() {
   server.close(() => process.exit(0));
 }
 
+// The desktop shell discards server output, so record why the server stopped
+// before exiting; the shell then restarts it.
+function stopOnFatal(kind, error) {
+  const detail = error?.stack || String(error);
+  console.error(`LifeOS server stopped (${kind}): ${detail}`);
+  try {
+    let size = 0;
+    try { size = statSync(crashLogPath).size; } catch { /* first entry */ }
+    const entry = `${new Date().toISOString()} ${kind} (pid ${process.pid}): ${detail}\n`;
+    if (size > 256 * 1024) writeFileSync(crashLogPath, entry, { mode: 0o600 });
+    else appendFileSync(crashLogPath, entry, { mode: 0o600 });
+  } catch { /* nothing more can be recorded */ }
+  try {
+    const info = JSON.parse(readFileSync(serverInfoPath(DEFAULT_STORE_PATH), 'utf8'));
+    if (info.pid === process.pid) unlinkSync(serverInfoPath(DEFAULT_STORE_PATH));
+  } catch { /* already gone */ }
+  process.exit(1);
+}
+
+process.on('uncaughtException', (error) => stopOnFatal('uncaughtException', error));
+process.on('unhandledRejection', (error) => stopOnFatal('unhandledRejection', error));
 process.once('SIGINT', () => void shutdown());
 process.once('SIGTERM', () => void shutdown());

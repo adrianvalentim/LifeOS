@@ -286,7 +286,13 @@ At browser startup:
    reopens that agent's last LifeOS conversation from `localStorage`.
 
 `SIGINT` and `SIGTERM` close data watchers and event streams, stop the Codex
-and Claude child processes, and shut down the HTTP server.
+and Claude child processes, and shut down the HTTP server. An uncaught
+exception or unhandled rejection appends a timestamped stack to
+`lifeos.json.server.log` beside the store (restarted at 256 KB), removes the
+server's own address record and exits with status 1. The desktop shell discards
+server output, so that log is the only trace of a crash. Rail agent pipes carry
+`error` listeners: a write racing a Codex or Claude exit (`EPIPE`) fails that turn
+instead of the server, and a data-watcher error only stops live refresh.
 
 The Tauri shell resolves `LIFEOS_WORKSPACE` or its compile-time repository path,
 finds `LIFEOS_NODE` or a standard absolute Node installation, starts the server
@@ -296,7 +302,18 @@ fallback. **LifeOS Dev → Refresh LifeOS** (`Command-R`) starts the updated ser
 first, navigates the existing window to its new loopback port while preserving
 the current path and query, and then stops the preceding child. A failed startup
 leaves the existing server and window intact. Concurrent refresh requests are
-coalesced. The shell does not bundle Node or copy the browser application.
+coalesced. The shell checks its server every half second. If the server exits
+unexpectedly, the shell restarts it on the same port, so the open page keeps its
+address, unsaved typing and EventSource reconnection. Only if that port is taken
+does it navigate the window to the new one. A server that ran for less than a
+minute restarts after a delay that doubles each time, up to 30 seconds, and
+restarts never race a refresh. The browser
+reports an unreachable server as such, instead of WebKit's bare "Load failed",
+and the quick-add bar gives back the typed words when a save fails. WebKit may
+hold off its own EventSource retry for a long time in a hidden window, so the
+page reopens the event stream as soon as the window is visible or focused again
+and refetches state after any reconnection. The shell
+does not bundle Node or copy the browser application.
 
 ### Brave webpage capture
 
@@ -1613,7 +1630,7 @@ It syntax-checks every shipped JavaScript file (`scripts/check-syntax.mjs`),
 runs Node's built-in test suite, runs the browser end-to-end suite
 (`npm run test:e2e`, below), then compile-checks the pinned Tauri shell.
 
-At this handoff, the Node suite contains 136 tests. Beyond the areas below, it
+At this handoff, the Node suite contains 137 tests. Beyond the areas below, it
 covers the command layer, journal, undo/redo, workspace and MCP
 (`tests/commands.test.mjs`), the interface rendered from derived state
 (`tests/ui.test.mjs`) and the Claude bridge (`tests/claude-code-agent.test.mjs`).
@@ -1653,8 +1670,8 @@ Areas covered:
 - macOS, Windows, and portable Codex executable lookup;
 - approval exposure to the browser bridge;
 - exact project/book composer context and message composition;
-- Claude stream-json streaming, approval and decline round-trips, and
-  transcript reload;
+- Claude stream-json streaming, approval and decline round-trips, transcript
+  reload, and a Claude exit mid-write that fails the turn, not the server;
 - the intentional voice-disabled boundary.
 
 Additional task MCP coverage exercises authenticated loopback HTTP with the
@@ -1690,7 +1707,7 @@ sign-in state, and agent control of the open window from the CLI.
 ### Browser end-to-end tests
 
 `npm run test:e2e` (`scripts/e2e.mjs`) drives the real interface in Chromium
-with Playwright Test (`@playwright/test`, pinned exactly). Eight tests in
+with Playwright Test (`@playwright/test`, pinned exactly). The tests in
 `tests/e2e/*.spec.mjs` cover the daily flows:
 
 - quick capture of "Call the lab tomorrow 3pm !high #film @Vulcano": token
@@ -1703,6 +1720,10 @@ with Playwright Test (`@playwright/test`, pinned exactly). Eight tests in
 - ⌘K search opening a task sheet, a project page and a screen;
 - drag-reordering a root task, with the drop line drawn across the list on
   the target row's edge, and the saved `sortOrder`;
+- a project task added while the server is unreachable: the error names the
+  lost server, the typed words come back, and Enter saves them once it answers;
+- a server killed and restarted on the same port, as the desktop shell does:
+  the open window goes live again on focus and saves the next task;
 - a new idea opened with ⌘↵, Markdown shortcuts typed into the inline editor,
   autosave as plain Markdown and a reload;
 - the idea editor's contract: opening never rewrites an idea, unfaithful

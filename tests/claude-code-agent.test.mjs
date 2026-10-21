@@ -38,10 +38,22 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 });
 `;
 
-async function setup() {
+// Answers initialize, then dies as soon as the next message starts arriving.
+const CRASHING_CLAUDE = `#!/usr/bin/env node
+if (process.argv[2] === 'auth') { process.stdout.write(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' })); process.exit(0); }
+let initialized = false;
+process.stdin.on('data', (chunk) => {
+  if (initialized) process.exit(1);
+  initialized = true;
+  const message = JSON.parse(chunk.toString().split('\\n')[0]);
+  process.stdout.write(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id, response: {} } }) + '\\n');
+});
+`;
+
+async function setup(script = FAKE_CLAUDE) {
   const dir = await mkdtemp(path.join(tmpdir(), 'lifeos-claude-'));
   const executable = path.join(dir, 'claude');
-  await writeFile(executable, FAKE_CLAUDE);
+  await writeFile(executable, script);
   await chmod(executable, 0o755);
   const agent = new ClaudeCodeAgent({ cwd: dir, executable, indexPath: path.join(dir, 'sessions.json'), env: { ...process.env, CLAUDE_CONFIG_DIR: path.join(dir, 'config') }, mcpServer: null });
   const events = [];
@@ -111,6 +123,16 @@ test('Claude bridge passes the person’s decline back to Claude', async (t) => 
   const done = await waitFor(events, (event) => event.method === 'turn/completed');
   assert.equal(done.params.turn.items.find((item) => item.type === 'commandExecution').status, 'failed');
   assert.equal(done.params.turn.items.at(-1).text, 'Understood.');
+});
+
+test('Claude exiting mid-message fails the turn without taking the server down', async (t) => {
+  const { dir, agent } = await setup(CRASHING_CLAUDE);
+  t.after(async () => { await agent.stop(); await rm(dir, { recursive: true, force: true }); });
+  const thread = await agent.startThread();
+  // Larger than a pipe buffer, so the write is still in flight when Claude exits (EPIPE).
+  await assert.rejects(agent.startTurn(thread.id, 'x'.repeat(2_000_000)));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(agent.sessions.size, 0);
 });
 
 test('Claude bridge reloads past conversations from the session transcript', async (t) => {
