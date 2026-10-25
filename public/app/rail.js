@@ -21,7 +21,7 @@ const PROVIDERS = {
       return account?.type === 'chatgpt' ? account.email || `ChatGPT ${account.planType || ''}`.trim() : null;
     },
     signIn: (agent) => (agent.account
-      ? 'Codex is not using a ChatGPT account. Sign in with the installed Codex app, then press Retry.'
+      ? 'Codex is not using a ChatGPT account. Connect yours: LifeOS opens your browser to sign in through the installed Codex app.'
       : 'Could not reach the installed Codex app. Start Codex or set CODEX_EXECUTABLE, then press Retry.'),
   },
   claude: {
@@ -31,7 +31,7 @@ const PROVIDERS = {
     status: (agent) => (agent.account?.loggedIn ? agent.account.email || (agent.account.subscriptionType ? `Claude ${agent.account.subscriptionType}` : 'Signed in') : null),
     signIn: (agent) => (agent.connection === 'error'
       ? agent.error || 'Claude Code is not installed. Install it or set CLAUDE_EXECUTABLE, then press Retry.'
-      : 'Claude Code is not signed in. Run “claude auth login” in Terminal, then press Retry.'),
+      : 'Claude Code is not signed in. Connect your Claude account: LifeOS opens your browser to sign in; no password or API key passes through it.'),
   },
 };
 
@@ -50,6 +50,7 @@ function makeAgent(provider) {
     error: null,
     started: false,
     stickToBottom: true,
+    login: null,            // { status: 'starting' | 'waiting' | 'failed', url, error } while connecting an account
   };
 }
 
@@ -135,7 +136,7 @@ function renderKey(agent) {
   const last = turns.at(-1);
   const items = last?.items || [];
   const item = items.at(-1);
-  return [agent.provider, agent.connection, ready(agent), thread?.id, turns.length, last?.status, items.length, item?.id, item?.status, String(item?.text || item?.aggregatedOutput || '').length].join('|');
+  return [agent.provider, agent.connection, ready(agent), agent.login?.status, agent.login?.url ? 'url' : '', agent.login?.error, thread?.id, turns.length, last?.status, items.length, item?.id, item?.status, String(item?.text || item?.aggregatedOutput || '').length].join('|');
 }
 
 function renderMessages(agent) {
@@ -145,7 +146,7 @@ function renderMessages(agent) {
   const spec = PROVIDERS[agent.provider];
   let out;
   if (agent.connection === 'connecting' || agent.connection === 'idle') out = welcome(`Connecting to ${spec.name}…`, 'Your signed-in account and LifeOS conversations will appear here.');
-  else if (!ready(agent)) out = welcome(`${spec.name} needs your sign-in`, spec.signIn(agent), { retry: true });
+  else if (!ready(agent)) out = signInPanel(agent);
   else if (!agent.activeThread) out = welcome('Your workspace, with an agent beside it.', `${spec.name} has every LifeOS command and this workspace. Ask it to plan your week, triage the Inbox, log time, or reshape the app.`, { suggestions: true });
   else {
     const items = agent.activeThread.turns?.flatMap((turn) => [...(turn.items || []), ...(turn.status === 'failed' && turn.error?.message ? [{ type: 'turnError', text: turn.error.message }] : [])]) || [];
@@ -168,6 +169,23 @@ function esc(value) {
 
 function welcome(title, body, { suggestions = false, retry = false } = {}) {
   return `<div class="agent-welcome"><div class="agent-mark">${icon('sparkle', { size: 20 })}</div><b>${esc(title)}</b><p>${esc(body)}</p>${retry ? '<button type="button" class="button small" data-action="agent-retry">Retry</button>' : ''}${suggestions ? `<div class="agent-suggestions">${SUGGESTIONS.map((text) => `<button type="button" class="suggestion" data-action="agent-suggest" data-text="${esc(text)}">${esc(text)}</button>`).join('')}</div>` : ''}</div>`;
+}
+
+// Not signed in: connect through the installed app's own browser sign-in (the
+// person types their credentials there, never into LifeOS), or just retry.
+function signInPanel(agent) {
+  const spec = PROVIDERS[agent.provider];
+  const login = agent.login;
+  const canConnect = agent.connection !== 'error';
+  if (login?.status === 'starting' || login?.status === 'waiting') {
+    const code = agent.provider === 'claude'
+      ? `<form class="agent-code" data-login-code-form><label for="agent-login-code">If the browser shows a code instead, paste it here</label><div class="agent-code-row"><input id="agent-login-code" name="code" autocomplete="off" spellcheck="false" aria-label="Sign-in code" placeholder="Code from the browser"><button type="submit" class="button small">Continue</button></div></form>`
+      : '';
+    const note = login.error ? `<p class="agent-login-error" role="alert">${esc(login.error)}</p>` : '';
+    return `<div class="agent-welcome"><b>${login.status === 'starting' ? `Opening ${esc(spec.name)} sign-in…` : 'Finish signing in'}</b><p>Complete the sign-in in your browser. This panel connects by itself as soon as you are done.</p>${note}${code}<div class="agent-actions">${login.url ? '<button type="button" class="button small" data-action="agent-login-open">Open sign-in page again</button>' : ''}<button type="button" class="button small" data-action="agent-login-cancel">Cancel</button></div></div>`;
+  }
+  const failure = login?.status === 'failed' ? `<p class="agent-login-error" role="alert">${esc(login.error || 'Sign-in did not finish.')}</p>` : '';
+  return `<div class="agent-welcome"><b>${esc(spec.name)} needs your sign-in</b><p>${esc(spec.signIn(agent))}</p>${failure}<div class="agent-actions">${canConnect ? `<button type="button" class="button small is-primary" data-action="agent-login-start">Connect ${esc(spec.name)}</button>` : ''}<button type="button" class="button small" data-action="agent-retry">Retry</button></div></div>`;
 }
 
 function stripContext(text) {
@@ -322,6 +340,8 @@ export async function bootstrapAgent(provider, { refresh = false } = {}) {
     agent.account = body.account;
     agent.threads = body.threads || [];
     agent.pendingRequests = body.pendingRequests || [];
+    if (body.login) agent.login = { status: 'waiting', url: body.login.url || null };
+    else if (agent.login?.status !== 'failed') agent.login = null;
     let stored = null;
     try { stored = localStorage.getItem(PROVIDERS[provider].threadKey); } catch { /* optional */ }
     const selected = agent.threads.find((thread) => thread.id === stored);
@@ -331,6 +351,44 @@ export async function bootstrapAgent(provider, { refresh = false } = {}) {
     agent.error = error.message;
   }
   render();
+}
+
+async function startLogin(agent) {
+  agent.login = { status: 'starting', url: null, error: null };
+  render();
+  try {
+    const body = await postJson(api(agent, 'login/start'), {});
+    // An event may already have moved this on (signed in, failed); only fill in what is still pending.
+    if (agent.login?.status === 'starting' || agent.login?.status === 'waiting') agent.login = { status: 'waiting', url: body.login?.url || agent.login?.url || null };
+  } catch (error) {
+    agent.login = { status: 'failed', error: error.message };
+  }
+  render();
+  requestAnimationFrame(() => document.querySelector('#agent-login-code')?.focus());
+}
+
+async function loginAction(agent, action) {
+  try {
+    await postJson(api(agent, `login/${action}`), {});
+  } catch (error) {
+    agent.login = action === 'open' ? { ...agent.login, error: error.message } : { status: 'failed', error: error.message };
+    return render();
+  }
+  if (action === 'cancel') agent.login = null;
+  render();
+}
+
+export async function submitLoginCode(form) {
+  const agent = current();
+  const code = String(new FormData(form).get('code') || '').trim();
+  if (!code) return;
+  try {
+    await postJson(api(agent, 'login/code'), { code });
+    form.querySelector('input')?.setAttribute('disabled', '');
+  } catch (error) {
+    agent.login = { status: 'failed', error: error.message };
+    render();
+  }
 }
 
 async function refreshThreads(agent) {
@@ -480,6 +538,14 @@ export function handleAgentEvent(provider, event) {
     render();
     return;
   }
+  if (event.type === 'login') {
+    if (event.status === 'waiting') agent.login = { status: 'waiting', url: event.url || agent.login?.url || null };
+    else if (event.status === 'failed') agent.login = { status: 'failed', error: event.error };
+    else agent.login = null;
+    if (event.status === 'signedIn') void bootstrapAgent(provider, { refresh: true });
+    render();
+    return;
+  }
   if (event.type === 'serverRequest') {
     if (!agent.pendingRequests.some((item) => item.id === event.request.id)) agent.pendingRequests.push(event.request);
     // A question or approval must reach the person: bring it into view.
@@ -606,6 +672,9 @@ export const railActions = {
     requestAnimationFrame(() => document.querySelector('.composer-input')?.focus());
   },
   'agent-retry': () => bootstrapAgent(providerId(), { refresh: true }),
+  'agent-login-start': () => startLogin(current()),
+  'agent-login-open': () => loginAction(current(), 'open'),
+  'agent-login-cancel': () => loginAction(current(), 'cancel'),
   'agent-new': () => newThread(current()),
   'agent-threads': async (el) => {
     const agent = current();

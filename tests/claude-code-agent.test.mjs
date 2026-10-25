@@ -50,6 +50,30 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
+// A stand-in for `claude auth login`: prints the sign-in page, waits for a code
+// on stdin like the real fallback prompt, and only then records the account.
+const SIGN_IN_CLAUDE = `#!/usr/bin/env node
+const fs = require('node:fs');
+const marker = process.env.FAKE_CLAUDE_SIGNED_IN;
+const args = process.argv.slice(2);
+if (args[0] === 'auth' && args[1] === 'status') {
+  const signedIn = fs.existsSync(marker);
+  process.stdout.write(JSON.stringify(signedIn ? { loggedIn: true, authMethod: 'claude.ai', email: 'person@example.com' } : { loggedIn: false, authMethod: 'none' }));
+  process.exit(signedIn ? 0 : 1);
+}
+if (args[0] === 'auth' && args[1] === 'login') {
+  process.stdout.write('Opening browser to sign in…\\n');
+  process.stdout.write("If the browser didn't open, visit: https://claude.example.com/authorize?code=true\\nPaste code here if prompted > ");
+  process.stdin.once('data', (chunk) => {
+    if (chunk.toString().trim() === 'good-code') { fs.writeFileSync(marker, 'yes'); process.stdout.write('Login successful.\\n'); process.exit(0); }
+    process.stderr.write('Invalid code.\\n');
+    process.exit(1);
+  });
+  return;
+}
+process.exit(2);
+`;
+
 async function setup(script = FAKE_CLAUDE) {
   const dir = await mkdtemp(path.join(tmpdir(), 'lifeos-claude-'));
   const executable = path.join(dir, 'claude');
@@ -58,6 +82,12 @@ async function setup(script = FAKE_CLAUDE) {
   const agent = new ClaudeCodeAgent({ cwd: dir, executable, indexPath: path.join(dir, 'sessions.json'), env: { ...process.env, CLAUDE_CONFIG_DIR: path.join(dir, 'config') }, mcpServer: null });
   const events = [];
   agent.subscribe((event) => events.push(event));
+  return { dir, agent, events };
+}
+
+async function setupSignIn() {
+  const { dir, agent, events } = await setup(SIGN_IN_CLAUDE);
+  agent.env.FAKE_CLAUDE_SIGNED_IN = path.join(dir, 'signed-in');
   return { dir, agent, events };
 }
 
@@ -165,4 +195,53 @@ test('Claude helpers strip an embedding session and describe tool requests', () 
   assert.equal(describeToolUse('Edit', { file_path: '/a/b.js' }), 'Edit /a/b.js');
   assert.equal(projectSlug('/Volumes/atlas/LifeOS'), '-Volumes-atlas-LifeOS');
   assert.deepEqual(parseTranscript('not json\n'), []);
+});
+
+test('Claude sign-in reports the page, takes a pasted code and ends signed in', async (t) => {
+  const { dir, agent, events } = await setupSignIn();
+  t.after(async () => { await agent.stop(); await rm(dir, { recursive: true, force: true }); });
+
+  assert.equal((await agent.account()).loggedIn, false);
+  assert.equal(agent.loginState(), null);
+
+  await agent.startLogin();
+  assert.equal(agent.loginState().status, 'waiting');
+  const page = await waitFor(events, (event) => event.type === 'login' && event.url);
+  assert.equal(page.url, 'https://claude.example.com/authorize?code=true');
+  assert.equal(agent.loginState().url, page.url);
+
+  await agent.submitLoginCode('good-code');
+  const done = await waitFor(events, (event) => event.type === 'login' && event.status === 'signedIn');
+  assert.equal(done.account.email, 'person@example.com');
+  assert.equal(agent.loginState(), null);
+  assert.equal((await agent.account()).loggedIn, true);
+});
+
+test('Claude sign-in surfaces the CLI’s reason when the code is refused', async (t) => {
+  const { dir, agent, events } = await setupSignIn();
+  t.after(async () => { await agent.stop(); await rm(dir, { recursive: true, force: true }); });
+
+  await agent.startLogin();
+  await waitFor(events, (event) => event.type === 'login' && event.url);
+  await assert.rejects(agent.submitLoginCode('two words'), /exactly as the browser shows/);
+  await agent.submitLoginCode('wrong-code');
+  const failed = await waitFor(events, (event) => event.type === 'login' && event.status === 'failed');
+  assert.equal(failed.error, 'Invalid code.');
+  assert.equal(agent.loginState(), null);
+  await assert.rejects(agent.submitLoginCode('good-code'), /No sign-in is waiting/);
+});
+
+test('Claude sign-in can be cancelled and is only started once at a time', async (t) => {
+  const { dir, agent, events } = await setupSignIn();
+  t.after(async () => { await agent.stop(); await rm(dir, { recursive: true, force: true }); });
+
+  await agent.startLogin();
+  const child = agent.login.child;
+  await agent.startLogin();
+  assert.equal(agent.login.child, child, 'a second press reuses the running sign-in');
+
+  agent.cancelLogin();
+  await waitFor(events, (event) => event.type === 'login' && event.status === 'cancelled');
+  assert.equal(agent.loginState(), null);
+  assert.ok(!events.some((event) => event.status === 'failed'));
 });

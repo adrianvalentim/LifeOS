@@ -444,6 +444,7 @@ root.addEventListener('submit', (event) => {
   if (form.matches('[data-quick-add]')) taskList.submitQuickAdd(form);
   else if (form.matches('[data-agent-form]')) rail.sendMessage();
   else if (form.matches('[data-request-form]')) rail.submitRequestForm(form);
+  else if (form.matches('[data-login-code-form]')) rail.submitLoginCode(form);
   else if (form.matches('[data-milestone-add]')) almanacScreen.submitMilestone(form);
   else if (form.matches('[data-category-add]')) settingsScreen.submitCategory(form);
 });

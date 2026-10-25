@@ -114,7 +114,8 @@ without creating a Codex thread for the lookup.
 
 Requirements: Node.js 22 or newer (including the Worker development tools).
 The agent rail additionally uses the Codex desktop app or CLI signed in with a
-ChatGPT account, and/or Claude Code signed in (`claude auth login`).
+ChatGPT account, and/or Claude Code. Either can be signed in from the rail's
+**Connect** button (it opens your browser), or beforehand with `claude auth login`.
 
 ```bash
 npm install
