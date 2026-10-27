@@ -1336,15 +1336,21 @@ Claude session's variables (`CLAUDECODE`, `CLAUDE_CODE_*` except the temp dir).
   signed out but still prints its JSON). Without a login the rail offers
   **Connect Claude** and Retry. Connect runs `claude auth login --claudeai`
   (`POST /api/claude/login/start`): the CLI opens the person's browser and
-  finishes when the browser reaches its local callback; its fallback prompt
-  takes a pasted code, which the rail's code field sends to the CLI's stdin
-  (`login/code`). `login/open` re-opens the page the CLI printed, `login/cancel`
-  ends the process, and a sign-in that is not finished in five minutes is
-  abandoned. Progress reaches the rail as `login` events (`waiting`, `signedIn`,
-  `failed`, `cancelled`), and `bootstrap` carries a pending sign-in so a reload
-  keeps it. The person types credentials only in their own browser; LifeOS never
-  sees a password, token or API key. The Claude Code tab of the Claude desktop
-  app is a separate sign-in: the `claude` CLI the rail drives needs its own.
+  finishes when the browser reaches its local callback. `login/open` re-opens
+  the page the CLI printed, `login/cancel` ends the process, and a sign-in that
+  is not finished in five minutes is abandoned. Progress reaches the rail as
+  `login` events (`waiting`, `signedIn`, `failed`, `cancelled`), and `bootstrap`
+  carries a pending sign-in so a reload keeps it.
+- No part of a Claude sign-in passes through LifeOS. Anthropic's terms require
+  sign-in to complete through its own flow and forbid apps that collect or
+  relay Claude credentials, so the rail has no field for the CLI's fallback
+  code: if the browser shows a code instead of finishing, the rail tells the
+  person to cancel, run `claude auth login` in Terminal, paste the code there
+  and press Retry. The login child's stdin is an open pipe LifeOS never writes,
+  so the CLI keeps waiting for the callback. LifeOS never sees a password, code,
+  token or API key. The Claude Code tab of the Claude desktop app is a separate
+  sign-in that LifeOS must not borrow: the `claude` CLI the rail drives needs
+  its own.
 - `--permission-mode manual` overrides a personal default such as
   bypassPermissions: only the journaled LifeOS MCP tools run unprompted; shell,
   file edits and web requests arrive as `can_use_tool` control requests and are

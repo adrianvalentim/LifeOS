@@ -217,13 +217,8 @@ body.is-resizing { cursor: col-resize; user-select: none; }
 .agent-welcome p { font-family: var(--font-serif); font-size: 15px; line-height: 1.5; color: var(--ink-2); text-wrap: pretty; }
 .agent-mark { display: none; }
 .agent-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
-.agent-login-error { padding-left: 10px; border-left: 2px solid var(--bad); font-size: 14px; color: var(--bad); }
-.agent-code { display: flex; flex-direction: column; gap: 6px; width: 100%; padding-top: 10px; border-top: 1px solid var(--rule); }
-.agent-code label { font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
-.agent-code-row { display: flex; align-items: center; gap: 8px; }
-.agent-code-row input { flex: 1; min-width: 0; padding: 4px 0; border: 0; border-bottom: 1px solid var(--rule); background: none; font-family: var(--font-mono); font-size: 13px; color: var(--ink); }
-.agent-code-row input:focus { outline: none; border-bottom-color: var(--ink); }
-.agent-code-row input::placeholder { font-family: var(--font-serif); font-style: italic; color: var(--ink-4); }
+.agent-welcome .agent-login-error { padding-left: 10px; border-left: 2px solid var(--bad); font-size: 14px; color: var(--bad); }
+.agent-welcome .agent-login-fallback { width: 100%; margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--rule); font-size: 14px; color: var(--ink-3); }
 .agent-suggestions { display: flex; flex-direction: column; width: 100%; margin-top: 14px; border-bottom: 1px solid var(--rule); }
 .agent-suggestions::before { content: 'Try'; padding-bottom: 6px; font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
 .suggestion {

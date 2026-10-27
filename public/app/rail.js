@@ -178,11 +178,12 @@ function signInPanel(agent) {
   const login = agent.login;
   const canConnect = agent.connection !== 'error';
   if (login?.status === 'starting' || login?.status === 'waiting') {
-    const code = agent.provider === 'claude'
-      ? `<form class="agent-code" data-login-code-form><label for="agent-login-code">If the browser shows a code instead, paste it here</label><div class="agent-code-row"><input id="agent-login-code" name="code" autocomplete="off" spellcheck="false" aria-label="Sign-in code" placeholder="Code from the browser"><button type="submit" class="button small">Continue</button></div></form>`
+    // Claude's code fallback stays in Claude Code's own prompt: LifeOS never relays any part of a sign-in.
+    const fallback = agent.provider === 'claude'
+      ? '<p class="agent-login-fallback">If the browser shows a code instead, press Cancel and run <code>claude auth login</code> in Terminal. Paste the code there, then press Retry.</p>'
       : '';
     const note = login.error ? `<p class="agent-login-error" role="alert">${esc(login.error)}</p>` : '';
-    return `<div class="agent-welcome"><b>${login.status === 'starting' ? `Opening ${esc(spec.name)} sign-in…` : 'Finish signing in'}</b><p>Complete the sign-in in your browser. This panel connects by itself as soon as you are done.</p>${note}${code}<div class="agent-actions">${login.url ? '<button type="button" class="button small" data-action="agent-login-open">Open sign-in page again</button>' : ''}<button type="button" class="button small" data-action="agent-login-cancel">Cancel</button></div></div>`;
+    return `<div class="agent-welcome"><b>${login.status === 'starting' ? `Opening ${esc(spec.name)} sign-in…` : 'Finish signing in'}</b><p>Complete the sign-in in your browser. This panel connects by itself as soon as you are done.</p>${note}<div class="agent-actions">${login.url ? '<button type="button" class="button small" data-action="agent-login-open">Open sign-in page again</button>' : ''}<button type="button" class="button small" data-action="agent-login-cancel">Cancel</button></div>${fallback}</div>`;
   }
   const failure = login?.status === 'failed' ? `<p class="agent-login-error" role="alert">${esc(login.error || 'Sign-in did not finish.')}</p>` : '';
   return `<div class="agent-welcome"><b>${esc(spec.name)} needs your sign-in</b><p>${esc(spec.signIn(agent))}</p>${failure}<div class="agent-actions">${canConnect ? `<button type="button" class="button small is-primary" data-action="agent-login-start">Connect ${esc(spec.name)}</button>` : ''}<button type="button" class="button small" data-action="agent-retry">Retry</button></div></div>`;
@@ -364,7 +365,6 @@ async function startLogin(agent) {
     agent.login = { status: 'failed', error: error.message };
   }
   render();
-  requestAnimationFrame(() => document.querySelector('#agent-login-code')?.focus());
 }
 
 async function loginAction(agent, action) {
@@ -376,19 +376,6 @@ async function loginAction(agent, action) {
   }
   if (action === 'cancel') agent.login = null;
   render();
-}
-
-export async function submitLoginCode(form) {
-  const agent = current();
-  const code = String(new FormData(form).get('code') || '').trim();
-  if (!code) return;
-  try {
-    await postJson(api(agent, 'login/code'), { code });
-    form.querySelector('input')?.setAttribute('disabled', '');
-  } catch (error) {
-    agent.login = { status: 'failed', error: error.message };
-    render();
-  }
 }
 
 async function refreshThreads(agent) {

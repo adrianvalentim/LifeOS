@@ -24,7 +24,7 @@ async function signedOutClaude(page) {
   return calls;
 }
 
-test('a signed-out Claude can be connected from the rail, with a code fallback and a way out', async ({ app, page }) => {
+test('a signed-out Claude can be connected from the rail, with a Terminal fallback and a way out', async ({ app, page }) => {
   const calls = await signedOutClaude(page);
   await app.goto('/projects');
   const rail = page.getByRole('complementary', { name: 'Agent rail' });
@@ -38,12 +38,12 @@ test('a signed-out Claude can be connected from the rail, with a code fallback a
   await expect(rail.getByRole('alert')).toContainText('Could not start Claude Code');
   await rail.getByRole('button', { name: 'Connect Claude' }).click();
 
-  // The browser does the signing in; the rail waits and offers the page and a code box.
+  // The browser does the signing in; the rail waits and offers the page again.
+  // A code fallback belongs in Terminal: the rail has nowhere to type one.
   await expect(rail).toContainText('Finish signing in');
   await expect(rail.getByRole('button', { name: 'Open sign-in page again' })).toBeVisible();
-  await rail.getByLabel('Sign-in code').fill('abc#123');
-  await rail.getByRole('button', { name: 'Continue' }).click();
-  await expect.poll(() => calls.find((call) => call.action === 'code')?.body).toEqual({ code: 'abc#123' });
+  await expect(rail).toContainText('If the browser shows a code instead, press Cancel and run claude auth login in Terminal.');
+  await expect(rail.locator('.agent-welcome input, .agent-welcome textarea')).toHaveCount(0);
 
   await rail.getByRole('button', { name: 'Open sign-in page again' }).click();
   await expect.poll(() => calls.some((call) => call.action === 'open')).toBe(true);
@@ -51,5 +51,5 @@ test('a signed-out Claude can be connected from the rail, with a code fallback a
   await rail.getByRole('button', { name: 'Cancel' }).click();
   await expect(rail).toContainText('Claude needs your sign-in');
   await expect(rail.getByRole('button', { name: 'Connect Claude' })).toBeVisible();
-  expect(calls.map((call) => call.action)).toEqual(['start', 'start', 'code', 'open', 'cancel']);
+  expect(calls.map((call) => call.action)).toEqual(['start', 'start', 'open', 'cancel']);
 });

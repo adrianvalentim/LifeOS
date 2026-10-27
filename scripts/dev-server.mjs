@@ -186,18 +186,13 @@ const server = createServer(async (req, res) => {
       });
     }
     if (url.pathname.startsWith('/api/claude/') && req.method === 'POST') assertJsonPost(req);
-    // The CLI opens the browser itself; these only start, finish or abandon its sign-in.
+    // The CLI opens the browser itself; these only start, re-open or abandon its
+    // sign-in. Nothing from the sign-in (a code, a token) is ever sent to LifeOS.
     if (url.pathname === '/api/claude/login/start' && req.method === 'POST') {
       return sendJson(res, { login: await claudeCodeAgent.startLogin() });
     }
     if (url.pathname === '/api/claude/login/open' && req.method === 'POST') {
       return sendJson(res, await openSignInPage(claudeCodeAgent.loginState()?.url));
-    }
-    if (url.pathname === '/api/claude/login/code' && req.method === 'POST') {
-      const body = await readJson(req);
-      requireString(body.code, 'code');
-      await claudeCodeAgent.submitLoginCode(body.code);
-      return sendJson(res, { ok: true });
     }
     if (url.pathname === '/api/claude/login/cancel' && req.method === 'POST') {
       claudeCodeAgent.cancelLogin();

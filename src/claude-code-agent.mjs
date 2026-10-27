@@ -119,15 +119,17 @@ export class ClaudeCodeAgent {
 
   // ——— Sign-in ———
   // `claude auth login` opens the person's browser itself and finishes when the
-  // browser reaches its local callback; if the browser shows a code instead, it
-  // reads that code from stdin. LifeOS never sees a password or token.
+  // browser reaches its local callback. No part of the sign-in passes through
+  // LifeOS: if the browser shows a code instead, the rail sends the person to
+  // `claude auth login` in Terminal. stdin stays an open pipe that is never
+  // written, so the CLI keeps waiting for the callback instead of reading
+  // end-of-file at its code prompt.
   async startLogin() {
     if (this.login) return this.loginState();
     const executable = this.resolveExecutable();
     const child = spawn(executable, ['auth', 'login', '--claudeai'], { cwd: this.cwd, env: this.env, stdio: ['pipe', 'pipe', 'pipe'] });
     const login = { child, url: null, cancelled: false, output: [], timer: setTimeout(() => child.kill('SIGTERM'), LOGIN_TIMEOUT_MS) };
     this.login = login;
-    child.stdin.on('error', () => undefined);
     const onLine = (line) => {
       const text = line.trim();
       if (!text) return;
@@ -157,13 +159,6 @@ export class ClaudeCodeAgent {
     child.on('close', (code) => void finish(code));
     this.emit({ type: 'login', status: 'waiting', url: null });
     return this.loginState();
-  }
-
-  async submitLoginCode(code) {
-    const text = String(code || '').trim();
-    if (!this.login) throw new Error('No sign-in is waiting for a code. Press Connect to start one.');
-    if (!text || /\s/.test(text) || text.length > 2048) throw new Error('Paste the code exactly as the browser shows it.');
-    await new Promise((resolve, reject) => this.login.child.stdin.write(`${text}\n`, (error) => (error ? reject(error) : resolve())));
   }
 
   cancelLogin() {

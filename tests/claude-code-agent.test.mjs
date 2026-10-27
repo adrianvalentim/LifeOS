@@ -50,11 +50,14 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
-// A stand-in for `claude auth login`: prints the sign-in page, waits for a code
-// on stdin like the real fallback prompt, and only then records the account.
+// A stand-in for `claude auth login`: prints the sign-in page and the code
+// prompt like the real CLI, then finishes when "the browser" reaches its local
+// callback (a file the test writes). Anything LifeOS writes to its stdin, or
+// closing it, fails the sign-in: no part of a sign-in may pass through LifeOS.
 const SIGN_IN_CLAUDE = `#!/usr/bin/env node
 const fs = require('node:fs');
 const marker = process.env.FAKE_CLAUDE_SIGNED_IN;
+const callback = process.env.FAKE_CLAUDE_CALLBACK;
 const args = process.argv.slice(2);
 if (args[0] === 'auth' && args[1] === 'status') {
   const signedIn = fs.existsSync(marker);
@@ -64,11 +67,15 @@ if (args[0] === 'auth' && args[1] === 'status') {
 if (args[0] === 'auth' && args[1] === 'login') {
   process.stdout.write('Opening browser to sign in…\\n');
   process.stdout.write("If the browser didn't open, visit: https://claude.example.com/authorize?code=true\\nPaste code here if prompted > ");
-  process.stdin.once('data', (chunk) => {
-    if (chunk.toString().trim() === 'good-code') { fs.writeFileSync(marker, 'yes'); process.stdout.write('Login successful.\\n'); process.exit(0); }
-    process.stderr.write('Invalid code.\\n');
-    process.exit(1);
-  });
+  process.stdin.on('data', () => { process.stderr.write('Something was typed at the code prompt.\\n'); process.exit(3); });
+  process.stdin.on('end', () => { process.stderr.write('The code prompt was closed.\\n'); process.exit(4); });
+  setInterval(() => {
+    if (!fs.existsSync(callback)) return;
+    if (fs.readFileSync(callback, 'utf8') === 'deny') { process.stderr.write('Sign-in was denied.\\n'); process.exit(1); }
+    fs.writeFileSync(marker, 'yes');
+    process.stdout.write('Login successful.\\n');
+    process.exit(0);
+  }, 20);
   return;
 }
 process.exit(2);
@@ -88,7 +95,9 @@ async function setup(script = FAKE_CLAUDE) {
 async function setupSignIn() {
   const { dir, agent, events } = await setup(SIGN_IN_CLAUDE);
   agent.env.FAKE_CLAUDE_SIGNED_IN = path.join(dir, 'signed-in');
-  return { dir, agent, events };
+  agent.env.FAKE_CLAUDE_CALLBACK = path.join(dir, 'callback');
+  const browser = (outcome) => writeFile(agent.env.FAKE_CLAUDE_CALLBACK, outcome);
+  return { dir, agent, events, browser };
 }
 
 function waitFor(events, predicate, timeout = 5000) {
@@ -197,12 +206,13 @@ test('Claude helpers strip an embedding session and describe tool requests', () 
   assert.deepEqual(parseTranscript('not json\n'), []);
 });
 
-test('Claude sign-in reports the page, takes a pasted code and ends signed in', async (t) => {
-  const { dir, agent, events } = await setupSignIn();
+test('Claude sign-in reports the page, waits for the browser and ends signed in', async (t) => {
+  const { dir, agent, events, browser } = await setupSignIn();
   t.after(async () => { await agent.stop(); await rm(dir, { recursive: true, force: true }); });
 
   assert.equal((await agent.account()).loggedIn, false);
   assert.equal(agent.loginState(), null);
+  assert.equal(agent.submitLoginCode, undefined, 'LifeOS offers no way to relay a sign-in code');
 
   await agent.startLogin();
   assert.equal(agent.loginState().status, 'waiting');
@@ -210,25 +220,26 @@ test('Claude sign-in reports the page, takes a pasted code and ends signed in', 
   assert.equal(page.url, 'https://claude.example.com/authorize?code=true');
   assert.equal(agent.loginState().url, page.url);
 
-  await agent.submitLoginCode('good-code');
+  // The CLI sits at its code prompt with stdin open and untouched until the browser finishes.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(agent.loginState().status, 'waiting');
+  await browser('ok');
   const done = await waitFor(events, (event) => event.type === 'login' && event.status === 'signedIn');
   assert.equal(done.account.email, 'person@example.com');
   assert.equal(agent.loginState(), null);
   assert.equal((await agent.account()).loggedIn, true);
 });
 
-test('Claude sign-in surfaces the CLI’s reason when the code is refused', async (t) => {
-  const { dir, agent, events } = await setupSignIn();
+test('Claude sign-in surfaces the CLI’s reason when the browser sign-in fails', async (t) => {
+  const { dir, agent, events, browser } = await setupSignIn();
   t.after(async () => { await agent.stop(); await rm(dir, { recursive: true, force: true }); });
 
   await agent.startLogin();
   await waitFor(events, (event) => event.type === 'login' && event.url);
-  await assert.rejects(agent.submitLoginCode('two words'), /exactly as the browser shows/);
-  await agent.submitLoginCode('wrong-code');
+  await browser('deny');
   const failed = await waitFor(events, (event) => event.type === 'login' && event.status === 'failed');
-  assert.equal(failed.error, 'Invalid code.');
+  assert.equal(failed.error, 'Sign-in was denied.');
   assert.equal(agent.loginState(), null);
-  await assert.rejects(agent.submitLoginCode('good-code'), /No sign-in is waiting/);
 });
 
 test('Claude sign-in can be cancelled and is only started once at a time', async (t) => {
