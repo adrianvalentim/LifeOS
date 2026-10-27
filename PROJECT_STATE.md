@@ -1261,9 +1261,16 @@ Never add:
 The bridge checks candidates in this order, deduplicated:
 
 1. `CODEX_EXECUTABLE`, when explicitly configured;
-2. macOS app bundle: `/Applications/ChatGPT.app/Contents/Resources/codex`;
-3. `/opt/homebrew/bin/codex` and `/usr/local/bin/codex` on non-Windows systems;
+2. macOS app bundle: `/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`
+   (then the older `.../Resources/codex`);
+3. `/opt/homebrew/bin/codex`, `/usr/local/bin/codex` and `~/.local/bin/codex` on
+   non-Windows systems;
 4. `codex` on `PATH`, or `codex.exe` on Windows.
+
+The explicit paths matter: the macOS desktop app does not inherit the shell's
+`PATH`, so a bare `codex` is never found there. (Until 2026-10-25 only the
+older bundle path and `PATH` were tried, which left the rail reporting Codex as
+unreachable.)
 
 It starts `codex app-server --stdio` with the LifeOS root as the working
 directory and communicates using newline-delimited JSON-RPC on standard I/O.
@@ -1273,7 +1280,12 @@ Standard error is diagnostic only and is not used as a chat protocol.
 
 1. Send `initialize` with LifeOS client metadata and then `initialized`.
 2. Read the installed account with `account/read`.
-3. Continue only as a full rail when the account type is `chatgpt`.
+3. Continue only as a full rail when the account type is `chatgpt`. Otherwise
+   the rail offers **Connect Codex**: `POST /api/codex/login/start` sends
+   `account/login/start {type: "chatgpt"}`, LifeOS opens the returned `authUrl`
+   in the default browser (`src/open-url.mjs`, https only, only a URL the server
+   itself received), and the `account/login/completed` notification ends the
+   sign-in and reconnects the rail. `login/cancel` sends `account/login/cancel`.
 4. List up to 500 unarchived CLI, VS Code, and app-server tasks, filtered by the
    exact LifeOS working directory and sorted by recency.
 5. Start or resume tasks with this workspace as both `cwd` and runtime root.
@@ -1320,9 +1332,25 @@ manual --allowedTools mcp__lifeos`, an appended LifeOS system prompt, and an
 and the app's `LIFEOS_DATA_DIR`. The child environment drops any embedding
 Claude session's variables (`CLAUDECODE`, `CLAUDE_CODE_*` except the temp dir).
 
-- Login status comes from `claude auth status --json`; without a login the rail
-  says how to sign in (`claude auth login`) and offers Retry. LifeOS never signs
-  in on the person's behalf.
+- Login status comes from `claude auth status --json` (it exits non-zero when
+  signed out but still prints its JSON). Without a login the rail offers
+  **Connect Claude** and Retry. Connect runs `claude auth login --claudeai`
+  (`POST /api/claude/login/start`): the CLI opens the person's browser and
+  finishes when the browser reaches its local callback. `login/open` re-opens
+  the page the CLI printed, `login/cancel` ends the process, and a sign-in that
+  is not finished in five minutes is abandoned. Progress reaches the rail as
+  `login` events (`waiting`, `signedIn`, `failed`, `cancelled`), and `bootstrap`
+  carries a pending sign-in so a reload keeps it.
+- No part of a Claude sign-in passes through LifeOS. Anthropic's terms require
+  sign-in to complete through its own flow and forbid apps that collect or
+  relay Claude credentials, so the rail has no field for the CLI's fallback
+  code: if the browser shows a code instead of finishing, the rail tells the
+  person to cancel, run `claude auth login` in Terminal, paste the code there
+  and press Retry. The login child's stdin is an open pipe LifeOS never writes,
+  so the CLI keeps waiting for the callback. LifeOS never sees a password, code,
+  token or API key. The Claude Code tab of the Claude desktop app is a separate
+  sign-in that LifeOS must not borrow: the `claude` CLI the rail drives needs
+  its own.
 - `--permission-mode manual` overrides a personal default such as
   bypassPermissions: only the journaled LifeOS MCP tools run unprompted; shell,
   file edits and web requests arrive as `can_use_tool` control requests and are
@@ -1852,8 +1880,8 @@ committing.
 4. Make the smallest deliberate schema/rule revision supported by that evidence.
 5. Refine task scheduling/edit/delete behavior only after real task use reveals
    the needed semantics; keep external calendars downstream of LifeOS.
-6. Sign Claude Code in (`claude auth login`) and verify a live rail
-   conversation, including an approval round-trip.
+6. Connect Claude Code from the rail (or `claude auth login`) and verify a live
+   rail conversation, including an approval round-trip.
 7. Add goals and import/export with a validation report, extending the browser
    end-to-end suite to each new flow.
 8. Replace the source-backed shell with a self-contained sidecar and add

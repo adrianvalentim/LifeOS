@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import os from 'node:os';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { ROOT_DIR } from './lifeos-data.mjs';
@@ -37,6 +38,7 @@ export class CodexAppServer {
     this.connectPromise = null;
     this.executable = null;
     this.lastDiagnostic = null;
+    this.login = null;                // { loginId, url } while a browser sign-in is pending
   }
 
   subscribe(listener) {
@@ -173,7 +175,35 @@ export class CodexAppServer {
     if (message.method === 'serverRequest/resolved' && params.requestId !== undefined) {
       this.serverRequests.delete(params.requestId);
     }
+    if (message.method === 'account/login/completed' && (!params.loginId || params.loginId === this.login?.loginId)) {
+      this.login = null;
+      this.emit({ type: 'login', status: params.success ? 'signedIn' : 'failed', error: params.success ? null : params.error || 'Codex sign-in did not finish.' });
+    }
     this.emit({ type: 'notification', method: message.method, params });
+  }
+
+  // Sign in with the person's ChatGPT account: the app server hands back the
+  // page to open and reports completion itself (account/login/completed).
+  async startLogin() {
+    await this.connect();
+    if (this.login) return this.login;
+    const result = await this.request('account/login/start', { type: 'chatgpt' });
+    if (result.type !== 'chatgpt' || !result.authUrl) throw new Error('Codex did not offer a ChatGPT sign-in page.');
+    this.login = { loginId: result.loginId, url: result.authUrl };
+    this.emit({ type: 'login', status: 'waiting', url: this.login.url });
+    return this.login;
+  }
+
+  async cancelLogin() {
+    const login = this.login;
+    if (!login) return;
+    this.login = null;
+    try { await this.request('account/login/cancel', { loginId: login.loginId }, 10_000); } catch { /* it times out by itself */ }
+    this.emit({ type: 'login', status: 'cancelled' });
+  }
+
+  loginState() {
+    return this.login ? { status: 'waiting', url: this.login.url } : null;
   }
 
   emit(event) {
@@ -313,6 +343,7 @@ export class CodexAppServer {
     this.connectPromise = null;
     this.loadedThreads.clear();
     this.serverRequests.clear();
+    this.login = null;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
       pending.reject(error);
@@ -321,13 +352,18 @@ export class CodexAppServer {
   }
 }
 
-export function codexExecutableCandidates(platform = process.platform, env = process.env) {
+export function codexExecutableCandidates(platform = process.platform, env = process.env, home = os.homedir()) {
   const candidates = [];
   if (env.CODEX_EXECUTABLE) candidates.push(env.CODEX_EXECUTABLE);
-  if (platform === 'darwin') candidates.push('/Applications/ChatGPT.app/Contents/Resources/codex');
+  if (platform === 'darwin') {
+    candidates.push('/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex');
+    candidates.push('/Applications/ChatGPT.app/Contents/Resources/codex');
+  }
   if (platform !== 'win32') {
     candidates.push('/opt/homebrew/bin/codex');
     candidates.push('/usr/local/bin/codex');
+    // The desktop app does not inherit the shell's PATH, so a per-user install is never found by name.
+    if (home) candidates.push(path.join(home, '.local', 'bin', 'codex'));
   }
   candidates.push(platform === 'win32' ? 'codex.exe' : 'codex');
   return [...new Set(candidates.filter(Boolean))];

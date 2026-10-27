@@ -17,7 +17,8 @@ import { DEFAULT_STORE_PATH, ROOT_DIR } from './lifeos-storage.mjs';
 
 const execFileAsync = promisify(execFile);
 const IDLE_MS = 15 * 60 * 1000;
-const NOT_SIGNED_IN = 'Claude Code is not signed in. Run “claude auth login” in Terminal, then reload LifeOS.';
+const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
+const NOT_SIGNED_IN = 'Claude Code is not signed in. Press Connect in the Agent panel, or run “claude auth login” in Terminal.';
 
 export const CLAUDE_RAIL_INSTRUCTIONS = `You are Claude Code running inside the LifeOS rail — the person's local-first personal almanac (projects, tasks, time, reading, creation, milestones).
 
@@ -68,6 +69,7 @@ export class ClaudeCodeAgent {
     this.serverRequests = new Map();  // request id → { request, threadId, raw }
     this.executable = null;
     this.accountCache = null;
+    this.login = null;                // { child, url, cancelled, timer } while a browser sign-in is pending
   }
 
   subscribe(listener) {
@@ -95,21 +97,78 @@ export class ClaudeCodeAgent {
   async account({ refresh = false } = {}) {
     if (!refresh && this.accountCache && Date.now() - this.accountCache.at < 60_000) return this.accountCache.value;
     const executable = this.resolveExecutable();
-    let value;
-    try {
-      const { stdout } = await execFileAsync(executable, ['auth', 'status', '--json'], { env: this.env, timeout: 15_000 });
+    const read = (stdout) => {
       const status = JSON.parse(stdout);
-      value = {
+      return {
         loggedIn: Boolean(status.loggedIn),
         authMethod: status.authMethod || null,
         email: status.email || status.emailAddress || null,
         subscriptionType: status.subscriptionType || null,
       };
+    };
+    let value;
+    try {
+      value = read((await execFileAsync(executable, ['auth', 'status', '--json'], { env: this.env, timeout: 15_000 })).stdout);
     } catch (error) {
-      value = { loggedIn: false, authMethod: null, error: error.message };
+      // Signed out, `auth status` exits non-zero but still says so on stdout.
+      try { value = read(error.stdout); } catch { value = { loggedIn: false, authMethod: null, error: error.message }; }
     }
     this.accountCache = { at: Date.now(), value };
     return value;
+  }
+
+  // ——— Sign-in ———
+  // `claude auth login` opens the person's browser itself and finishes when the
+  // browser reaches its local callback. No part of the sign-in passes through
+  // LifeOS: if the browser shows a code instead, the rail sends the person to
+  // `claude auth login` in Terminal. stdin stays an open pipe that is never
+  // written, so the CLI keeps waiting for the callback instead of reading
+  // end-of-file at its code prompt.
+  async startLogin() {
+    if (this.login) return this.loginState();
+    const executable = this.resolveExecutable();
+    const child = spawn(executable, ['auth', 'login', '--claudeai'], { cwd: this.cwd, env: this.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const login = { child, url: null, cancelled: false, output: [], timer: setTimeout(() => child.kill('SIGTERM'), LOGIN_TIMEOUT_MS) };
+    this.login = login;
+    const onLine = (line) => {
+      const text = line.trim();
+      if (!text) return;
+      login.output.push(text);
+      if (login.output.length > 10) login.output.shift();
+      const url = text.match(/https:\/\/\S+/)?.[0];
+      if (url && !login.url) {
+        login.url = url;
+        this.emit({ type: 'login', status: 'waiting', url });
+      }
+    };
+    createInterface({ input: child.stdout }).on('line', onLine);
+    createInterface({ input: child.stderr }).on('line', onLine);
+    let finished = false;
+    const finish = async (code, failure) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(login.timer);
+      if (this.login === login) this.login = null;
+      if (login.cancelled) return this.emit({ type: 'login', status: 'cancelled' });
+      const account = await this.account({ refresh: true });
+      if (account.loggedIn) return this.emit({ type: 'login', status: 'signedIn', account });
+      const reason = failure || login.output.filter((line) => !/^(opening browser|if the browser|paste code)/i.test(line)).pop();
+      this.emit({ type: 'login', status: 'failed', error: reason || `Sign-in did not finish (claude exited with status ${code}).` });
+    };
+    child.on('error', (error) => void finish(null, `Could not start Claude Code: ${error.message}`));
+    child.on('close', (code) => void finish(code));
+    this.emit({ type: 'login', status: 'waiting', url: null });
+    return this.loginState();
+  }
+
+  cancelLogin() {
+    if (!this.login) return;
+    this.login.cancelled = true;
+    this.login.child.kill('SIGTERM');
+  }
+
+  loginState() {
+    return this.login ? { status: 'waiting', url: this.login.url } : null;
   }
 
   // ——— Conversation index (only conversations started from the rail) ———
@@ -238,6 +297,7 @@ export class ClaudeCodeAgent {
   }
 
   async stop() {
+    this.cancelLogin();
     for (const session of this.sessions.values()) this.endSession(session);
     this.sessions.clear();
   }

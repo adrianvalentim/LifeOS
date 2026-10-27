@@ -12,6 +12,7 @@ import { DEFAULT_STORE_PATH, initializeDefaultStore } from '../src/lifeos-storag
 import { getState, purgeExpiredTaskTrash, readStore } from '../src/lifeos-data.mjs';
 import { readHistory } from '../src/lifeos-history.mjs';
 import { readWorkspace } from '../src/lifeos-workspace.mjs';
+import { openSignInPage } from '../src/open-url.mjs';
 import { openSavedTaskLink } from '../src/task-web-links.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -124,9 +125,22 @@ const server = createServer(async (req, res) => {
         threads,
         voice: CODEX_VOICE_CAPABILITY,
         pendingRequests: [...codexAppServer.serverRequests.values()],
+        login: codexAppServer.loginState(),
       });
     }
     if (url.pathname.startsWith('/api/codex/') && req.method === 'POST') assertJsonPost(req);
+    if (url.pathname === '/api/codex/login/start' && req.method === 'POST') {
+      const login = await codexAppServer.startLogin();
+      await openSignInPage(login.url).catch(() => undefined);   // the rail also links the page
+      return sendJson(res, { login: codexAppServer.loginState() });
+    }
+    if (url.pathname === '/api/codex/login/open' && req.method === 'POST') {
+      return sendJson(res, await openSignInPage(codexAppServer.loginState()?.url));
+    }
+    if (url.pathname === '/api/codex/login/cancel' && req.method === 'POST') {
+      await codexAppServer.cancelLogin();
+      return sendJson(res, { ok: true });
+    }
     if (url.pathname === '/api/codex/thread/start' && req.method === 'POST') {
       return sendJson(res, { thread: await codexAppServer.startThread() });
     }
@@ -168,9 +182,22 @@ const server = createServer(async (req, res) => {
         account,
         threads: await claudeCodeAgent.listThreads(),
         pendingRequests: [...claudeCodeAgent.serverRequests.values()].map((entry) => entry.request),
+        login: claudeCodeAgent.loginState(),
       });
     }
     if (url.pathname.startsWith('/api/claude/') && req.method === 'POST') assertJsonPost(req);
+    // The CLI opens the browser itself; these only start, re-open or abandon its
+    // sign-in. Nothing from the sign-in (a code, a token) is ever sent to LifeOS.
+    if (url.pathname === '/api/claude/login/start' && req.method === 'POST') {
+      return sendJson(res, { login: await claudeCodeAgent.startLogin() });
+    }
+    if (url.pathname === '/api/claude/login/open' && req.method === 'POST') {
+      return sendJson(res, await openSignInPage(claudeCodeAgent.loginState()?.url));
+    }
+    if (url.pathname === '/api/claude/login/cancel' && req.method === 'POST') {
+      claudeCodeAgent.cancelLogin();
+      return sendJson(res, { ok: true });
+    }
     if (url.pathname === '/api/claude/thread/start' && req.method === 'POST') {
       return sendJson(res, { thread: await claudeCodeAgent.startThread() });
     }
