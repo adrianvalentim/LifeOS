@@ -80,7 +80,8 @@ try {
     let status = null;
     for (let attempt = 0; attempt < 15 && !status; attempt++) {
       status = await repository(cloud).status().catch(error => {
-        if (error.status !== 401) throw error;
+        // A new secret takes a few seconds to reach every Cloudflare location.
+        if (![401, 503].includes(error.status)) throw error;
         return new Promise(resolve => setTimeout(() => resolve(null), 2000));
       });
     }
