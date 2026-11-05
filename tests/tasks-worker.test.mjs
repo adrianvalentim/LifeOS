@@ -19,13 +19,20 @@ const bundled = build({ entryPoints: ['workers/tasks-demo/worker.mjs'], bundle: 
 const privateBundle = build({ entryPoints: ['workers/tasks/worker.mjs'], bundle: true, write: false,
   format: 'esm', platform: 'browser', conditions: ['workerd', 'worker', 'browser'],
   external: ['cloudflare:workers'], target: 'es2022', logLevel: 'silent' });
+const durableBundle = build({ entryPoints: ['workers/lifeos/worker.mjs'], bundle: true, write: false,
+  format: 'esm', platform: 'browser', conditions: ['workerd', 'worker', 'browser'],
+  external: ['cloudflare:workers'], target: 'es2022', logLevel: 'silent' });
+const DEVICE_KEY = 'fixture-device-key-0123456789abcdefghijklmnopqrstuvwxyz';
 
-async function fixture(t, { owner = OWNER, login = true, upstreamScopes = '', privateStore = false } = {}) {
-  const script = (await (privateStore ? privateBundle : bundled)).outputFiles[0].text;
+async function fixture(t, { owner = OWNER, login = true, upstreamScopes = '', privateStore = false, durableStore = false } = {}) {
+  const script = (await (durableStore ? durableBundle : privateStore ? privateBundle : bundled)).outputFiles[0].text;
   const outbound = [];
   const miniflare = new Miniflare(convertV4MiniflareOptions({ modules: true, script, host: '127.0.0.1', port: 0,
     compatibilityDate: '2026-10-09', compatibilityFlags: ['global_fetch_strictly_public'],
-    kvNamespaces: ['OAUTH_KV'], ...(privateStore ? { d1Databases: ['TASKS_DB'] } : {}), bindings: { MCP_ORIGIN: ORIGIN, OWNER_GITHUB_ID: OWNER,
+    kvNamespaces: ['OAUTH_KV'], ...(privateStore ? { d1Databases: ['TASKS_DB'] } : {}),
+    ...(durableStore ? { durableObjects: { LIFEOS_STORE: { className: 'LifeOSStore', useSQLite: true } } } : {}),
+    bindings: { MCP_ORIGIN: ORIGIN, OWNER_GITHUB_ID: OWNER,
+      ...(durableStore ? { DEVICE_KEY_SHA256: createHash('sha256').update(DEVICE_KEY).digest('hex') } : {}),
       ...(login ? { GITHUB_CLIENT_ID: 'synthetic-client', GITHUB_CLIENT_SECRET: 'synthetic-secret' } : {}) },
     outboundService: async (request) => {
       outbound.push(request.url);
@@ -52,6 +59,12 @@ async function fixture(t, { owner = OWNER, login = true, upstreamScopes = '', pr
     await db.prepare(await readFile('workers/tasks/schema.sql', 'utf8')).run();
     await db.prepare('INSERT INTO lifeos_tasks (id, revision, document) VALUES (1, 1, ?)')
       .bind(JSON.stringify({ schemaVersion: 1, phase: 'active', timezone: 'Etc/UTC', projectIds: [], items: [] })).run();
+  }
+  if (durableStore) {
+    const seeded = await miniflare.dispatchFetch(`${ORIGIN}/device/v1/tasks/import`, { method: 'POST',
+      headers: { Authorization: `Bearer ${DEVICE_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ revision: 1, document: { schemaVersion: 1, phase: 'active', timezone: 'Etc/UTC', projectIds: [], items: [] } }) });
+    assert.equal(seeded.status, 200, await seeded.clone().text());
   }
   const request = async (path, init) => miniflare.dispatchFetch(new URL(path, ORIGIN).href, { ...init, redirect: 'manual' });
   return { miniflare, request, outbound, script };
@@ -227,4 +240,25 @@ test('Worker consent escapes client content and rejects CSRF, stale handles, wri
   assert.ok([400, 302].includes(wrongResource.status));
   if (wrongResource.status === 302) assert.equal(new URL(wrongResource.headers.get('location')).searchParams.get('error'), 'invalid_target');
   assert.equal((await request('/callback?state=stolen&code=synthetic-code')).status, 400);
+});
+
+test('LifeOS Worker serves the owner MCP task tools from the Durable Object store', async t => {
+  const { request, miniflare } = await fixture(t, { durableStore: true });
+  const c = new Client({ name: 'durable-fixture-client', version: '1' });
+  await c.connect(new StreamableHTTPClientTransport(new URL(RESOURCE), {
+    requestInit: { headers: { Authorization: `Bearer ${await token(request, { scope: 'tasks:read tasks:write', refresh: true })}` } },
+    fetch: (url, init) => miniflare.dispatchFetch(String(url), init),
+  }));
+  t.after(() => c.close());
+  async function call(name, args) { const response = await c.callTool({ name, arguments: args }); assert.ok(!response.isError, response.content?.[0]?.text); return response.structuredContent; }
+  const created = await call('create_task', { title: 'Durable MCP fixture', notes: 'Fixture notes' });
+  await call('complete_task', { taskId: created.task.id });
+  assert.equal((await call('list_tasks', { scope: 'completed' })).total, 1);
+  const device = await (await miniflare.dispatchFetch(`${ORIGIN}/device/v1/tasks`, { headers: { Authorization: `Bearer ${DEVICE_KEY}` } })).json();
+  assert.equal(device.row.revision, 3);
+  assert.deepEqual(device.row.document.items.map(task => [task.title, task.status]), [['Durable MCP fixture', 'completed']]);
+  // An MCP access token is not a device key, and the device key is not an MCP token.
+  const accessToken = await token(request, { scope: 'tasks:read', refresh: true });
+  assert.equal((await miniflare.dispatchFetch(`${ORIGIN}/device/v1/tasks`, { headers: { Authorization: `Bearer ${accessToken}` } })).status, 401);
+  assert.equal((await request('/mcp', { method: 'POST', headers: { Authorization: `Bearer ${DEVICE_KEY}` }, body: '{}' })).status, 401);
 });

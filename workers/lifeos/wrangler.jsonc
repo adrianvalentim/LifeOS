@@ -1,0 +1,25 @@
+{
+  // Template only. The deployed configuration lives outside Git (mode 0600) in
+  // ~/Library/Application Support/LifeOS/cloud/, with the approved host,
+  // account and namespace. Secrets: GITHUB_CLIENT_SECRET, DEVICE_KEY_SHA256.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "lifeos",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-09",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "send_metrics": false,
+  "observability": { "enabled": false },
+  "vars": {
+    "MCP_ORIGIN": "https://replace-with-approved-worker-host.invalid",
+    "OWNER_GITHUB_ID": "REPLACE_WITH_VERIFIED_OWNER_ID"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "LIFEOS_STORE", "class_name": "LifeOSStore" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LifeOSStore"] }],
+  "kv_namespaces": [
+    { "binding": "OAUTH_KV", "id": "REPLACE_WITH_APPROVED_OAUTH_NAMESPACE_ID" }
+  ]
+}
