@@ -5,6 +5,12 @@ import { toast } from './ui/toast.js';
 
 let lastMtime = 0;
 let refreshTimer = 0;
+// A window's own saves change the store file too. Their responses already carry
+// the new state, so the file-change event they cause must not reload it again.
+// While a save is in flight, change events wait; once it answers, only changes
+// newer than its state trigger a reload.
+let writesInFlight = 0;
+let changedMtime = 0;
 const eventHandlers = new Map();
 
 export async function request(url, options = {}) {
@@ -31,6 +37,26 @@ export const postJson = (url, body) => request(url, {
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify(body ?? {}),
 });
+
+function reconcileChanges() {
+  if (writesInFlight || !changedMtime) return;
+  const mtime = changedMtime;
+  changedMtime = 0;
+  if (mtime > lastMtime) scheduleRefresh();
+}
+
+// Runs a write command and returns its body with the resulting state.
+export async function postCommand(name, input) {
+  writesInFlight += 1;
+  try {
+    const body = await postJson(`/api/run/${name}?state=1`, input);
+    if (body.state?.storeMtime) lastMtime = Math.max(lastMtime, body.state.storeMtime);
+    return body;
+  } finally {
+    writesInFlight -= 1;
+    reconcileChanges();
+  }
+}
 
 export async function fetchState() {
   const range = store.prefs.insights.range || 'week';
@@ -67,9 +93,8 @@ export async function run(name, input = {}, options = {}) {
   for (const id of pending) store.ui.pending.add(id);
   if (pending.length) render();
   try {
-    const body = await postJson(`/api/run/${name}?state=1`, input);
+    const body = await postCommand(name, input);
     if (body.state) {
-      if (body.state.storeMtime) lastMtime = Math.max(lastMtime, body.state.storeMtime);
       setState(body.state);
     } else if (body.workspace) {
       setWorkspace(body.workspace);
@@ -97,7 +122,7 @@ export async function run(name, input = {}, options = {}) {
 
 export async function undo(operationId) {
   try {
-    const body = await postJson('/api/run/history.undo?state=1', operationId ? { operationId } : { source: 'app' });
+    const body = await postCommand('history.undo', operationId ? { operationId } : { source: 'app' });
     if (body.state) setState(body.state);
     if (body.result?.workspace) setWorkspace(body.result.workspace);
     toast(body.label || 'Undone', { tone: 'quiet', redo: true });
@@ -108,7 +133,7 @@ export async function undo(operationId) {
 
 export async function redo() {
   try {
-    const body = await postJson('/api/run/history.redo?state=1', {});
+    const body = await postCommand('history.redo', {});
     if (body.state) setState(body.state);
     if (body.result?.workspace) setWorkspace(body.result.workspace);
     toast(body.label || 'Redone', { tone: 'quiet', undo: body.operationId });
@@ -143,8 +168,9 @@ export function connectEvents() {
     current.addEventListener('lifeos', (event) => {
       let payload = {};
       try { payload = JSON.parse(event.data); } catch { /* ignore */ }
-      if (payload.mtime && payload.mtime <= lastMtime) return;
-      scheduleRefresh();
+      if (!payload.mtime) { scheduleRefresh(); return; }
+      changedMtime = Math.max(changedMtime, payload.mtime);
+      reconcileChanges();
     });
     for (const type of ['history', 'workspace', 'ui', 'codex', 'claude']) {
       current.addEventListener(type, (event) => {

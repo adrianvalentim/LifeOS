@@ -1,6 +1,6 @@
 import * as act from '../actions.js';
 import { agentName, attachContext } from '../agent-context.js';
-import { postJson, run } from '../api.js';
+import { postCommand, run } from '../api.js';
 import { cx, html } from '../dom.js';
 import { formatDate, IDEA_STATUS, ideaTypeLabel, normalize, plural, relativeDay, timeAgo } from '../format.js';
 import { icon } from '../icons.js';
@@ -342,7 +342,7 @@ export function saveIdea() {
       const patch = changes(editor);
       if (!Object.keys(patch).length) { editor.dirty = false; break; }
       try {
-        const body = await postJson('/api/run/creation.update?state=1', { ideaId: editor.id, expectedUpdatedAt: editor.base, ...patch });
+        const body = await postCommand('creation.update', { ideaId: editor.id, expectedUpdatedAt: editor.base, ...patch });
         if (body.state) setState(body.state);
         editor.base = body.result.idea.updatedAt;
         if (editor.revision === revision) editor.dirty = false;
