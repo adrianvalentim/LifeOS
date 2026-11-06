@@ -63,7 +63,7 @@ sidecar packaging, notarized distribution, and updates remain deferred.
 | Creation | Implemented | Five-lane board and list, Markdown editor with split preview and auto-save, dated Shorts linked to tasks |
 | Settings | Implemented | General, appearance, masthead, planning (daily plan, deep target, health thresholds, domains, weekly plan, categories), saved views, agents & MCP setup, data & backups, keyboard |
 | Data source | Implemented, demo-derived | macOS Application Support contains the active copy; `data/lifeos.demo.json` remains deterministic |
-| Persistence | Implemented | Validation, cross-process lock, atomic replacement, one local `.bak`, optional Google Drive snapshots, workspace sidecar and change journal beside the store; tasks shared with Cloudflare, moving from D1 to the LifeOS cloud store (a Durable Object on LifeOS's own account) |
+| Persistence | Implemented | Validation, cross-process lock, atomic replacement, one local `.bak`, optional Google Drive snapshots, workspace sidecar and change journal beside the store; tasks shared with Cloudflare in the LifeOS cloud store (a Durable Object on LifeOS's own account, moved from D1 on 2026-11-05) |
 | Agent rail | Implemented | Codex and Claude Code side by side: conversations, streaming, tool steps, stop, approvals and questions routed to the person, attached record context; Activity tab |
 | Voice | Intentionally unavailable | No subscription-authenticated dictation path exists; no fallback is allowed |
 | Native desktop app | Development shell implemented | `/Applications/LifeOS Dev.app` is source-backed and refreshes the workspace service in place; self-contained distribution is deferred |
@@ -1915,7 +1915,7 @@ copy that saves instantly and syncs in the background. Its steps, each shipped
 on its own:
 
 1. Move tasks from D1 to the Durable Object and give the Mac a device key
-   (built; see [`docs/tasks-cloud.md`](docs/tasks-cloud.md#the-lifeos-cloud-store-durable-object)).
+   (done 2026-11-05; see [`docs/tasks-cloud.md`](docs/tasks-cloud.md#the-lifeos-cloud-store-durable-object)).
 2. Make the commands run against either store and share them with the Worker.
 3. Move projects, time, reading, ideas and settings into the Durable Object;
    the Mac file becomes the synced copy with an outbox of pending changes, and

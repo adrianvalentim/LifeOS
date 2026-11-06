@@ -2,7 +2,7 @@
 
 ## The LifeOS cloud store (Durable Object)
 
-Tasks are moving from the D1 row described below to the **LifeOS cloud store**:
+Tasks moved on 2026-11-05 (UTC) from the D1 row described below to the **LifeOS cloud store**:
 one SQLite-backed Durable Object (`LifeOSStore`) behind the `lifeos` Worker, on
 a separate Free Cloudflare account that holds only LifeOS. Keeping LifeOS on its
 own account isolates its allowances, billing and access from other projects
@@ -66,7 +66,45 @@ closed) until **Refresh LifeOS**.
 After the move ChatGPT's connector must point at the new Worker's `/mcp`. The
 GitHub OAuth app's homepage and callback move to the new host, and the user
 puts a fresh `GITHUB_CLIENT_SECRET` into the new Worker themselves (Wrangler's
-`secret put` prompt in their terminal), as for the first setup below.
+`secret put` prompt in their terminal), as for the first setup below. ChatGPT
+cannot change a dev-mode app's server URL, so the connection is a new custom
+MCP server plugin rather than an edit of the old one.
+
+### Live state after the move
+
+- The Worker is deployed on the LifeOS account's `workers.dev` subdomain and
+  starts in about 50 ms. Before pairing, its device API answered 503, `/mcp`
+  401 without a token and `/authorize` 503 until the GitHub secret is set; the
+  health route shows no task data.
+- This Mac is paired. Device calls take about 150 ms (about 250 ms for the
+  first, which includes reading the Keychain), against about 1 s per Wrangler
+  call before.
+- The move took about 4 s and carried 54 tasks. Afterwards the Durable Object
+  held 54 active tasks at revision 34, the D1 row held the same 54 tasks fenced
+  as `staged` at revision 34, the authority named `cloudflare-do` with D1 under
+  `previous`, and no recovery journal was pending. The running app's full
+  `/api/state` read takes about 0.2 s and reports the tasks online. No real task
+  was edited to test the move; writes are covered by the fixtures.
+- The GitHub OAuth app's homepage points at the new Worker, and it accepts both
+  callbacks (the new Worker's and the old one's, kept for rollback). The user
+  generated a new client secret and entered it into the new Worker's
+  `GITHUB_CLIENT_SECRET`; the old secret still serves the old Worker.
+- ChatGPT has a new dev-mode plugin, **LifeOS** (custom MCP server, CIMD client
+  registration discovered automatically, `tasks:read` and `tasks:write`),
+  connected through the owner consent page and GitHub. A read-only `list_tasks`
+  call from ChatGPT returned 38 open tasks, matching the store (54 tasks: 38
+  open, 15 completed, 1 in Trash; still revision 34). The old **LifeOS Tasks**
+  plugin still points at the fenced D1 Worker; by design its task service refuses
+  a `staged` row ("Task cutover is not active."; not exercised live). Remove it
+  once rollback is no longer needed.
+- Right after a fresh `wrangler login`, one of two Wrangler commands run at the
+  same moment failed (probably while both refreshed the new grant); retries
+  succeeded. The desktop no longer depends on Wrangler for tasks.
+
+To roll back: stop task writes, export and verify the Durable Object's tasks,
+write them to the fenced D1 row with its revision, swap it back to `active`
+and restore the `previous` authority, all under the store lock. No automatic
+rollback command is provided.
 
 The rest of this document describes the D1 store, which stays fenced but
 intact after the move.
