@@ -18,6 +18,8 @@
     "mcp:demo:check": "WRANGLER_WRITE_LOGS=false WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --config workers/tasks-demo/wrangler.jsonc",
     "mcp:demo:test": "node --test tests/tasks-worker.test.mjs",
     "tasks:cloud": "node scripts/tasks-cloud.mjs",
+    "cloud": "node scripts/lifeos-cloud.mjs",
+    "cloud:check": "WRANGLER_WRITE_LOGS=false WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --config workers/lifeos/wrangler.jsonc",
     "mcp:private:check": "WRANGLER_WRITE_LOGS=false WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --config workers/tasks/wrangler.jsonc",
     "build:markdown": "node scripts/build-creation-markdown.mjs",
     "build:editor": "node scripts/build-creation-editor.mjs"

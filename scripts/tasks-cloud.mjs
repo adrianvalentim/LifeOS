@@ -26,7 +26,7 @@ async function cutoverWriterPreflight() {
   if (process.platform !== 'darwin') return;
   const installed = path.join(os.homedir(), 'Library/Application Support/LifeOS/browser-capture/src');
   try {
-    for (const name of ['lifeos-data.mjs', 'task-authority.mjs', 'task-online.mjs', 'cloud-task-service.mjs', 'cloud-task-repository.mjs', 'task-query-bootstrap.mjs']) {
+    for (const name of ['lifeos-data.mjs', 'task-authority.mjs', 'task-online.mjs', 'cloud-task-service.mjs', 'cloud-task-repository.mjs', 'cloud-task-http.mjs', 'task-query-bootstrap.mjs']) {
       if (digest(await readFile(path.join(installed, name))) !== digest(await readFile(path.join(ROOT_DIR, 'src', name)))) {
         throw new Error('Task capture runtime must be refreshed with npm run capture:install before cutover.');
       }

@@ -63,7 +63,7 @@ sidecar packaging, notarized distribution, and updates remain deferred.
 | Creation | Implemented | Five-lane board and list, Markdown editor with split preview and auto-save, dated Shorts linked to tasks |
 | Settings | Implemented | General, appearance, masthead, planning (daily plan, deep target, health thresholds, domains, weekly plan, categories), saved views, agents & MCP setup, data & backups, keyboard |
 | Data source | Implemented, demo-derived | macOS Application Support contains the active copy; `data/lifeos.demo.json` remains deterministic |
-| Persistence | Implemented | Validation, cross-process lock, atomic replacement, one local `.bak`, optional Google Drive snapshots, workspace sidecar and change journal beside the store |
+| Persistence | Implemented | Validation, cross-process lock, atomic replacement, one local `.bak`, optional Google Drive snapshots, workspace sidecar and change journal beside the store; tasks shared with Cloudflare in the LifeOS cloud store (a Durable Object on LifeOS's own account, moved from D1 on 2026-11-05) |
 | Agent rail | Implemented | Codex and Claude Code side by side: conversations, streaming, tool steps, stop, approvals and questions routed to the person, attached record context; Activity tab |
 | Voice | Intentionally unavailable | No subscription-authenticated dictation path exists; no fallback is allowed |
 | Native desktop app | Development shell implemented | `/Applications/LifeOS Dev.app` is source-backed and refreshes the workspace service in place; self-contained distribution is deferred |
@@ -132,6 +132,11 @@ scripts/lifeos-mcp.mjs (stdio MCP) ------> src/commands/ (every command as a too
 scripts/tasks-mcp-server.mjs (separate authenticated loopback MCP)
   `-- src/tasks-mcp*.mjs -> src/task-service.mjs -> src/lifeos-data.mjs
 
+workers/lifeos/worker.mjs (LifeOS account: the LifeOS cloud store)
+  |-- /device/v1/* (device key) ---------> src/lifeos-cloud-store.mjs (Durable Object, tasks)
+  `-- owner OAuth + /mcp (ChatGPT) ------> src/tasks-mcp.mjs -> same Durable Object
+desktop task reads/saves -> src/task-online.mjs -> src/cloud-task-http.mjs (HTTPS)
+
 workers/tasks-demo/worker.mjs (separate synthetic-only HTTPS MCP proof)
   `-- Workers OAuth Provider + OAuth KV -> src/tasks-mcp.mjs -> demo-tasks.mjs
       (no personal store, task database, app assets, or Mac proxy)
@@ -185,6 +190,9 @@ Run `npm run dev` and use the printed loopback URL.
 | `src/book-cover-cache.mjs` | Bounded medium-size local cover caching for saved Open Library books |
 | `src/commands/` | The command registry: one zod-validated command per capability (core, tasks, projects, time, reading, creation, planning, workspace, history, ui) |
 | `src/lifeos-history.mjs` | Change journal: patch diffing, append/coalesce/compaction, conflict-checked revert |
+| `src/lifeos-cloud-store.mjs` and `workers/lifeos/` | The LifeOS cloud store: a SQLite-backed Durable Object holding the shared task document, the Mac's device API and the owner OAuth + MCP boundary, deployed on LifeOS's own Cloudflare account |
+| `src/cloud-task-http.mjs` | Desktop HTTPS transport to the cloud store with a Keychain device key (only its SHA-256 is in the Worker) |
+| `src/task-move.mjs` and `scripts/lifeos-cloud.mjs` | The guarded one-time move of tasks from D1 to the cloud store, device pairing and status (`npm run cloud`) |
 | `src/lifeos-manage.mjs` | Project, time-entry, domain, category, settings, milestone, challenge and book-detail management operations |
 | `src/lifeos-workspace.mjs` | Workspace sidecar: start screen, theme, density, section order, saved views, pins |
 | `src/sdk.mjs` | `createLifeOS()` — the command layer as a JavaScript API (in-process or against the running app) |
@@ -210,6 +218,7 @@ Run `npm run dev` and use the printed loopback URL.
 | `src/creation-editor.mjs` and `scripts/build-creation-editor.mjs` | The Creation idea editor (Tiptap over Markdown) and its reproducible browser bundle, `public/vendor/creation-editor.js` (`npm run build:editor` after changing the entry or the pinned `@tiptap/*` versions) |
 | `tests/creation.test.mjs` | Idea migration, validation, conflicts, scheduling/Trash, cloud/offline atomicity and UI projection tests |
 | `tests/commands.test.mjs` | Command layer, journal/undo/redo, workspace, views, validation and MCP |
+| `tests/lifeos-cloud.test.mjs` and `tests/task-move.test.mjs` | Cloud store in local workerd (device-key boundary, import/swap/validation, desktop transport, authority checks) and every failure path of the move |
 | `tests/ui.test.mjs` and `tests/ui-harness.mjs` | Interface rendered in Node from derived state: scopes, grouping, drop targets, rows, sheets, screens, context, capture parsing, escaping, optimistic updates |
 | `tests/e2e/` and `scripts/e2e.mjs` | Browser end-to-end suite (Playwright, Chromium): one isolated demo store and server per test, the daily flows, and the runner that installs the pinned browser into the LifeOS cache |
 | `tests/claude-code-agent.test.mjs` | Claude bridge against a protocol-faithful fake CLI: streaming, approvals, decline, transcript reload |
@@ -961,6 +970,17 @@ production create/edit/Trash access. Live refresh-token rotation remains
 unverified. See
 [`docs/tasks-cloud.md`](docs/tasks-cloud.md) for offline/recovery limits,
 completed grants, main-conversation acceptance evidence and rollback.
+
+In November 2026 the owner found "LifeOS data is busy" while writing an idea:
+every store read and write in online mode started a Wrangler process for a
+D1 round trip (about 1 s) while holding the store lock, and the idea editor
+also reloaded its own state after each autosave. The editor now records its own
+saves (`postCommand` in `public/app/api.js`), and tasks move to the **LifeOS
+cloud store**: a Durable Object on a separate Free Cloudflare account, reached
+from the Mac over HTTPS with a Keychain device key (`src/cloud-task-http.mjs`)
+and from ChatGPT through the same OAuth boundary. The guarded one-time move is
+`npm run cloud -- move`; its steps, rollback and the device key are described
+in [`docs/tasks-cloud.md`](docs/tasks-cloud.md#the-lifeos-cloud-store-durable-object).
 
 ### Command layer
 
@@ -1888,8 +1908,21 @@ committing.
    notarized distribution only after those workflows stabilize.
 
 The interface and command layer were rebuilt in October 2026; the next agent
-should not redesign them again or add a database. Make the real-data transition
-safe, then let the real records determine the next structural change.
+should not redesign them again. In November 2026 the owner approved one
+structural direction: Cloudflare becomes the authority for **all** records,
+in one Durable Object on LifeOS's own account, while the Mac keeps a full local
+copy that saves instantly and syncs in the background. Its steps, each shipped
+on its own:
+
+1. Move tasks from D1 to the Durable Object and give the Mac a device key
+   (done 2026-11-05; see [`docs/tasks-cloud.md`](docs/tasks-cloud.md#the-lifeos-cloud-store-durable-object)).
+2. Make the commands run against either store and share them with the Worker.
+3. Move projects, time, reading, ideas and settings into the Durable Object;
+   the Mac file becomes the synced copy with an outbox of pending changes, and
+   the change journal moves to the cloud.
+4. Open remote agents (ChatGPT, Claude, a phone) to all records.
+5. Replace the per-save Google Drive snapshots with nightly exports; the
+   Durable Object's 30-day point-in-time recovery covers recent history.
 
 ## 20. Incoming-agent checklist
 

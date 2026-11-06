@@ -1,5 +1,116 @@
 # Private task authority and final MCP connection
 
+## The LifeOS cloud store (Durable Object)
+
+Tasks moved on 2026-11-05 (UTC) from the D1 row described below to the **LifeOS cloud store**:
+one SQLite-backed Durable Object (`LifeOSStore`) behind the `lifeos` Worker, on
+a separate Free Cloudflare account that holds only LifeOS. Keeping LifeOS on its
+own account isolates its allowances, billing and access from other projects
+(okcut and the sites stay on the main account). Account identifiers, the host,
+the namespace ID and the private configuration stay outside Git, in
+`~/Library/Application Support/LifeOS/cloud/` (mode 0700/0600).
+
+Why: every desktop task read and save went through a new Wrangler process and
+D1's administration API (about 1 s per call, two calls per save) while holding
+the store lock. Overlapping saves then waited past the 5 s lock timeout and
+failed with "LifeOS data is busy". This is the first step of moving all
+records to a cloud authority with a full local copy on the Mac; see
+[the plan](../PROJECT_STATE.md#19-recommended-next-implementation-order).
+
+- `src/lifeos-cloud-store.mjs` is the Durable Object and the Worker's device
+  API. The object keeps the same task document and `read` / compare-and-swap
+  contract as D1, validates every document it stores, and runs one request at a
+  time, so a swap needs no lock or retry. Cloudflare keeps 30 days of
+  point-in-time recovery for it.
+- `workers/lifeos/` serves two doors to that one object: `/device/v1/*` for the
+  owner's Mac, and the unchanged owner OAuth + MCP boundary
+  (`src/tasks-worker.mjs`) for ChatGPT. Both answer only on the configured
+  origin.
+- The Mac authenticates with a **device key**: 32 random bytes kept in the
+  macOS Keychain (service `lifeos-cloud-device`, account = the LifeOS Cloudflare
+  account ID). The Worker holds only its SHA-256 as the `DEVICE_KEY_SHA256`
+  secret, so its secrets never reveal the key. The key reaches only this Worker,
+  unlike Wrangler's account-wide administration grant. Requests with an
+  `Origin` header (browsers) are refused; bodies are limited to 2 MB.
+- `src/cloud-task-http.mjs` is the desktop transport. `src/task-online.mjs`
+  selects it when the authority's `source` is `cloudflare-do`; the coordinator,
+  recovery journal, offline cache and conflict rules are unchanged. A rejected
+  device key leaves reads cached with `offlineReason: 'device-key'`.
+- `npm run cloud -- pair --config <private config>` creates the key, stores it
+  in the Keychain through `security -i` (never in a command line) and sets the
+  Worker secret through Wrangler's stdin.
+
+### The one-time move
+
+`npm run cloud -- move --config <private config> --artifacts <private dir>`
+(`src/task-move.mjs`) runs under the store lock:
+
+1. back up the local store and authority record into the private artifact
+   directory and verify their hashes;
+2. read the D1 row and fence it by swapping its document to `staged`, which the
+   old Worker and the Wrangler path refuse; a racing cloud edit aborts the move
+   with nothing changed;
+3. import the same document into the Durable Object at the fenced revision (so
+   revisions keep increasing), read it back and compare;
+4. atomically replace the authority with `source: "cloudflare-do"`, keeping the
+   D1 connection under `previous` for rollback.
+
+Any failure after the fence swaps D1 back to `active`, so tasks always have one
+writable home. A retry replaces an older partial copy only by its exact
+revision, never a newer store. The move refuses while a cloud save awaits
+recovery, and refuses if the installed capture helper predates the new
+transport (run `npm run capture:install` first). The workspace server must run
+the new code before the move: an old server refuses the new authority (it fails
+closed) until **Refresh LifeOS**.
+
+After the move ChatGPT's connector must point at the new Worker's `/mcp`. The
+GitHub OAuth app's homepage and callback move to the new host, and the user
+puts a fresh `GITHUB_CLIENT_SECRET` into the new Worker themselves (Wrangler's
+`secret put` prompt in their terminal), as for the first setup below. ChatGPT
+cannot change a dev-mode app's server URL, so the connection is a new custom
+MCP server plugin rather than an edit of the old one.
+
+### Live state after the move
+
+- The Worker is deployed on the LifeOS account's `workers.dev` subdomain and
+  starts in about 50 ms. Before pairing, its device API answered 503, `/mcp`
+  401 without a token and `/authorize` 503 until the GitHub secret is set; the
+  health route shows no task data.
+- This Mac is paired. Device calls take about 150 ms (about 250 ms for the
+  first, which includes reading the Keychain), against about 1 s per Wrangler
+  call before.
+- The move took about 4 s and carried 54 tasks. Afterwards the Durable Object
+  held 54 active tasks at revision 34, the D1 row held the same 54 tasks fenced
+  as `staged` at revision 34, the authority named `cloudflare-do` with D1 under
+  `previous`, and no recovery journal was pending. The running app's full
+  `/api/state` read takes about 0.2 s and reports the tasks online. No real task
+  was edited to test the move; writes are covered by the fixtures.
+- The GitHub OAuth app's homepage points at the new Worker, and it accepts both
+  callbacks (the new Worker's and the old one's, kept for rollback). The user
+  generated a new client secret and entered it into the new Worker's
+  `GITHUB_CLIENT_SECRET`; the old secret still serves the old Worker.
+- ChatGPT has a new dev-mode plugin, **LifeOS** (custom MCP server, CIMD client
+  registration discovered automatically, `tasks:read` and `tasks:write`),
+  connected through the owner consent page and GitHub. A read-only `list_tasks`
+  call from ChatGPT returned 38 open tasks, matching the store (54 tasks: 38
+  open, 15 completed, 1 in Trash; still revision 34). The old **LifeOS Tasks**
+  plugin still points at the fenced D1 Worker; by design its task service refuses
+  a `staged` row ("Task cutover is not active."; not exercised live). Remove it
+  once rollback is no longer needed.
+- Right after a fresh `wrangler login`, one of two Wrangler commands run at the
+  same moment failed (probably while both refreshed the new grant); retries
+  succeeded. The desktop no longer depends on Wrangler for tasks.
+
+To roll back: stop task writes, export and verify the Durable Object's tasks,
+write them to the fenced D1 row with its revision, swap it back to `active`
+and restore the `previous` authority, all under the store lock. No automatic
+rollback command is provided.
+
+The rest of this document describes the D1 store, which stays fenced but
+intact after the move.
+
+## D1 task authority (before the move)
+
 The private read/write Worker is deployed on the existing Free account. The
 owner completed secure secret entry and connected the private LifeOS Tasks
 plugin through GitHub public identity and OAuth. ChatGPT discovered all eight

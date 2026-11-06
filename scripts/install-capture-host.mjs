@@ -16,7 +16,7 @@ const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 // credentials, development dependencies, or browser profile is copied.
 const RUNTIME_FILES = [
   'src/lifeos-data.mjs', 'src/lifeos-history.mjs', 'src/lifeos-storage.mjs', 'src/task-authority.mjs', 'src/task-online.mjs',
-  'src/cloud-task-service.mjs', 'src/cloud-task-repository.mjs', 'src/task-query-bootstrap.mjs', 'public/web-links.js',
+  'src/cloud-task-service.mjs', 'src/cloud-task-repository.mjs', 'src/cloud-task-http.mjs', 'src/task-query-bootstrap.mjs', 'public/web-links.js',
   'scripts/capture-native-host.mjs', 'scripts/capture-backup-worker.mjs',
 ];
 

@@ -1,14 +1,21 @@
 import { readFile } from 'node:fs/promises';
 
+const TASK_SOURCES = new Set(['cloudflare-d1', 'cloudflare-do']);
 export const taskAuthorityPath = storePath => `${storePath}.task-authority.json`;
 export async function readTaskAuthority(storePath) {
   let raw;
   try { raw = await readFile(taskAuthorityPath(storePath), 'utf8'); }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   const record = JSON.parse(raw);
-  if (record.source !== 'cloudflare-d1' || !['pending', 'active'].includes(record.phase)
+  if (!TASK_SOURCES.has(record.source) || !['pending', 'active'].includes(record.phase)
     || typeof record.taskDigest !== 'string' || new URL(record.origin).protocol !== 'https:') throw new Error('Task authority record is invalid; local task writes are blocked.');
-  if (record.mode === 'online' && (!record.configFile || !record.workspaceRoot || !record.databaseId || !record.accountId)) throw new Error('Online task authority needs its approved private connection.');
+  // cloudflare-d1: the first cloud store, reached through Wrangler's admin credentials.
+  // cloudflare-do: the LifeOS account's Durable Object, reached over HTTPS with a Keychain device key.
+  const connected = record.source === 'cloudflare-do'
+    ? record.accountId && record.keychainService && new URL(record.origin).origin === record.origin
+    : record.configFile && record.workspaceRoot && record.databaseId && record.accountId;
+  if (record.mode === 'online' && !connected) throw new Error('Online task authority needs its approved private connection.');
+  if (record.source === 'cloudflare-do' && (record.mode !== 'online' || record.phase !== 'active')) throw new Error('Task authority record is invalid; local task writes are blocked.');
   return record;
 }
 

@@ -6,6 +6,7 @@ import { readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { validateTaskDocument } from './cloud-task-service.mjs';
 import { createWranglerTaskConnection } from './cloud-task-repository.mjs';
+import { createHttpTaskRepository, readDeviceKey } from './cloud-task-http.mjs';
 
 const repositories = new AsyncLocalStorage();
 // Allows an embedded/fixture caller to supply the same repository contract,
@@ -14,6 +15,8 @@ export const withTaskRepository = (storePath, repository, callback) => repositor
 export async function taskRepositoryFor(storePath, authority) {
   const supplied = repositories.getStore();
   if (supplied?.storePath === path.resolve(storePath)) return supplied.repository;
+  if (authority.source === 'cloudflare-do') return createHttpTaskRepository({ origin: authority.origin,
+    key: () => readDeviceKey({ service: authority.keychainService, account: authority.accountId }) });
   return (await createWranglerTaskConnection({ configFile: authority.configFile, workspaceRoot: authority.workspaceRoot,
     expectedOrigin: authority.origin, expectedDatabaseId: authority.databaseId, expectedAccountId: authority.accountId })).repository;
 }
@@ -78,7 +81,10 @@ export function createOnlineTaskCoordinator({ storePath, repository, readLocal, 
   async function read() {
     let row;
     try { row = await repository.read(); }
-    catch { return { store: await readLocal(), online: false, pending: Boolean(await pending(storePath)) }; }
+    catch (error) {
+      return { store: await readLocal(), online: false, pending: Boolean(await pending(storePath)),
+        ...(error?.status === 401 ? { offlineReason: 'device-key' } : {}) };
+    }
     row = await recover(validRow(row));
     return { store: await persist(project(await readLocal(), row.document)), online: true, revision: row.revision };
   }

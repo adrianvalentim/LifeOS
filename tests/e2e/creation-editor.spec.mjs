@@ -158,3 +158,23 @@ test('punctuation is stored as typed, and whatever is typed reads back the same'
   });
   expect(failures).toEqual([]);
 });
+
+test('autosaving an idea does not reload the window, while changes from elsewhere still do', async ({ app, page }) => {
+  const idea = await create(app, 'Quiet saves', 'Start');
+  await app.goto(`/creation/${idea.id}`);
+  await expect(bodyOf(page)).toContainText('Start');
+  let reloads = 0;
+  page.on('request', (request) => { if (new URL(request.url()).pathname === '/api/state') reloads += 1; });
+
+  await bodyOf(page).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type(' and more');
+  await expect.poll(async () => (await stored(app, idea.id)).markdown).toBe('Start and more');
+  await page.keyboard.type(' words');
+  await expect.poll(async () => (await stored(app, idea.id)).markdown).toBe('Start and more words');
+  await page.waitForTimeout(800); // past the file-change event and the refresh delay
+  expect(reloads).toBe(0);
+
+  await app.cli(['run', 'tasks.create', '--title', 'Changed elsewhere']);
+  await expect.poll(() => reloads).toBeGreaterThan(0);
+});
